@@ -1,8 +1,12 @@
-torch>=2.0.0
+torch
 torchvision
 torchaudio
-escnn
-nibabel
 tqdm
+nibabel
 numpy
-scipy
+matplotlib
+streamlit
+python-dotenv
+pillow
+escnn
+openai
