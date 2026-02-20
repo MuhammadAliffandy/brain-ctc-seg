@@ -14,16 +14,83 @@ from torch.cuda.amp import autocast, GradScaler
 from escnn import gspaces
 import escnn.nn as enn
 
+# Normal Loader Data
+
+# class CTMultiFolderDataset(Dataset):
+#     def __init__(self, root_dir):
+#         self.root_dir = root_dir
+#         self.samples = []
+
+#         # Daftar sub-folder yang ingin diambil (CT_, CT_2, dll)
+#         sub_folders = [f for f in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, f))]
+
+#         print("🔍 Mulai menyisir data di semua folder...")
+
+#         for folder in sub_folders:
+#             folder_path = os.path.join(root_dir, folder)
+#             # Ambil semua file citra asli (bukan mask)
+#             images = sorted([f for f in os.listdir(folder_path) if f.endswith('.nii.gz') and '.seg.' not in f])
+
+#             for img_name in images:
+#                 mask_name = img_name.replace('.nii.gz', '.seg.nii.gz')
+#                 img_full_path = os.path.join(folder_path, img_name)
+#                 mask_full_path = os.path.join(folder_path, mask_name)
+
+#                 # Hanya masukkan jika pasangan mask-nya ada
+#                 if os.path.exists(mask_full_path):
+#                     self.samples.append((img_full_path, mask_full_path))
+
+#         print(f"✅ Total ditemukan {len(self.samples)} pasangan data dari {len(sub_folders)} folder.")
+
+#     def __len__(self):
+#         return len(self.samples)
+
+#     def __getitem__(self, idx):
+#       img_path, mask_path = self.samples[idx]
+#       image = nib.load(img_path).get_fdata()
+#       mask = nib.load(mask_path).get_fdata()
+
+#       mid = image.shape[2] // 2
+#       img_slice = image[:, :, mid]
+#       mask_slice = mask[:, :, mid]
+
+#       img_tensor = torch.tensor(img_slice, dtype=torch.float32).unsqueeze(0) # [1, H, W]
+#       mask_tensor = torch.tensor(mask_slice, dtype=torch.long).unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
+
+#       # --- RESIZE DI SINI ---
+#       img_tensor = F.interpolate(img_tensor.unsqueeze(0), size=(256, 256), mode='bilinear').squeeze(0).squeeze(0).unsqueeze(0)
+#       mask_tensor = F.interpolate(mask_tensor.float(), size=(256, 256), mode='nearest').long().squeeze()
+#       # ----------------------
+
+#       if img_tensor.max() > img_tensor.min():
+#           img_tensor = (img_tensor - img_tensor.min()) / (img_tensor.max() - img_tensor.min())
+
+#       return img_tensor, mask_tensor
+
+
+#Data loader for partial data
 
 class CTMultiFolderDataset(Dataset):
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, target_folder=None):
         self.root_dir = root_dir
         self.samples = []
+        skipped_count = 0  # 🌟 TAMBAHAN: Variabel untuk menghitung data yang di-skip
 
-        # Daftar sub-folder yang ingin diambil (CT_, CT_2, dll)
-        sub_folders = [f for f in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, f))]
+        # Ambil semua sub-folder yang ada
+        all_sub_folders = [f for f in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, f))]
 
-        print("🔍 Mulai menyisir data di semua folder...")
+        # --- LOGIKA PARTIAL DATA ---
+        if target_folder:
+            if target_folder in all_sub_folders:
+                sub_folders = [target_folder]
+                print(f"🎯 Mode Partial Aktif: Hanya menyisir data di folder '{target_folder}'")
+            else:
+                print(f"⚠️ Peringatan: Folder '{target_folder}' tidak ditemukan! Beralih menyisir semua folder...")
+                sub_folders = all_sub_folders
+        else:
+            sub_folders = all_sub_folders
+            print("🔍 Mulai menyisir data di SEMUA folder...")
+        # ---------------------------
 
         for folder in sub_folders:
             folder_path = os.path.join(root_dir, folder)
@@ -35,11 +102,18 @@ class CTMultiFolderDataset(Dataset):
                 img_full_path = os.path.join(folder_path, img_name)
                 mask_full_path = os.path.join(folder_path, mask_name)
 
-                # Hanya masukkan jika pasangan mask-nya ada
+                # --- FILTERING OTOMATIS ---
+                # Hanya masukkan jika pasangan mask-nya benar-benar ada di dalam folder
                 if os.path.exists(mask_full_path):
                     self.samples.append((img_full_path, mask_full_path))
+                else:
+                    skipped_count += 1 # Tambah hitungan data yang di-skip
 
-        print(f"✅ Total ditemukan {len(self.samples)} pasangan data dari {len(sub_folders)} folder.")
+        print(f"✅ Total ditemukan {len(self.samples)} pasangan data valid dari {len(sub_folders)} folder.")
+
+        # 🌟 Laporan akhir jika ada data yang bermasalah
+        if skipped_count > 0:
+            print(f"⚠️ Info: Ada {skipped_count} gambar CT yang DI-SKIP karena tidak memiliki file anotasi mask.")
 
     def __len__(self):
         return len(self.samples)
@@ -49,6 +123,7 @@ class CTMultiFolderDataset(Dataset):
       image = nib.load(img_path).get_fdata()
       mask = nib.load(mask_path).get_fdata()
 
+      # Mengambil slice (potongan) tepat di tengah otak
       mid = image.shape[2] // 2
       img_slice = image[:, :, mid]
       mask_slice = mask[:, :, mid]
@@ -56,11 +131,11 @@ class CTMultiFolderDataset(Dataset):
       img_tensor = torch.tensor(img_slice, dtype=torch.float32).unsqueeze(0) # [1, H, W]
       mask_tensor = torch.tensor(mask_slice, dtype=torch.long).unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
 
-      # --- RESIZE DI SINI ---
+      # --- RESIZE AMAN ---
       img_tensor = F.interpolate(img_tensor.unsqueeze(0), size=(256, 256), mode='bilinear').squeeze(0).squeeze(0).unsqueeze(0)
       mask_tensor = F.interpolate(mask_tensor.float(), size=(256, 256), mode='nearest').long().squeeze()
-      # ----------------------
 
+      # Normalisasi (Min-Max Scaling) agar nilai piksel antara 0 sampai 1
       if img_tensor.max() > img_tensor.min():
           img_tensor = (img_tensor - img_tensor.min()) / (img_tensor.max() - img_tensor.min())
 
@@ -176,7 +251,7 @@ class SE2_CNNET(nn.Module):
 
 def train():
     # 1. Update Path & Parameter
-    ROOT_DATA_PATH = "/content/drive/MyDrive/CT Brain Data"
+    ROOT_DATA_PATH = "/CT Brain Data"
     LEARNING_RATE = 1e-4
     BATCH_SIZE = 4      # Jika nanti Cuda Out of Memory, turunkan ke 2
     EPOCHS = 10
