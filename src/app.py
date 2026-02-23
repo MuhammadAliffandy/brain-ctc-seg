@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 from PIL import Image
 import sys
@@ -89,7 +90,20 @@ with st.sidebar:
     
     st.markdown("### Patient Information")
     patient_id = st.text_input("Patient ID / Case Number", placeholder="e.g., PT-2026-001")
-    
+
+    # Validate and sanitize patient_id (PHI protection — never log or persist raw value)
+    _PT_ID_RE = re.compile(r'^PT-\d{4}-\d{3}$')
+    if patient_id and not _PT_ID_RE.match(patient_id):
+        st.warning("Patient ID must follow the pattern PT-YYYY-NNN (e.g., PT-2026-001).")
+    # Sanitize: allow only alphanumerics and hyphens (whitelist approach)
+    _safe_patient_id = re.sub(r'[^A-Z0-9\-]', '', patient_id.strip().upper()) if patient_id else ''
+    # Masked display: show partial form (e.g., PT-****-001) to avoid exposing full PHI in UI
+    if _safe_patient_id:
+        _parts = _safe_patient_id.split('-')
+        _masked_patient_id = '-'.join(p if i != 1 else '****' for i, p in enumerate(_parts))
+    else:
+        _masked_patient_id = "Anonymous"
+
     st.markdown("---")
     st.markdown("### Modality Selection")
     modality = st.radio(
@@ -137,12 +151,12 @@ if uploaded_file is not None:
         with tab2:
             with st.container():
                 st.subheader("AI Analysis Report")
-                
+
                 # Metrics Row
                 m1, m2, m3 = st.columns(3)
-            m1.metric("Patient ID", patient_id if patient_id else "Anonymous")
-            m2.metric("Modality", modality)
-            m3.metric("Confidence", f"{confidence_threshold * 100:.0f}%")
+                m1.metric("Patient ID", _masked_patient_id)
+                m2.metric("Modality", modality)
+                m3.metric("Confidence", f"{confidence_threshold * 100:.0f}%")
             
             st.markdown("---")
             
@@ -162,24 +176,32 @@ if uploaded_file is not None:
             
             # Download Report Feature
             import textwrap
+            include_phi = st.checkbox(
+                "Include Patient ID in report (explicit PHI consent required)",
+                value=False,
+                help="Check this box only if you have obtained explicit patient consent to include identifying information."
+            )
+            _report_patient_id = _safe_patient_id if (include_phi and _safe_patient_id) else "[REDACTED]"
+            # Sanitize patient_id for safe use in filename (prevent path traversal)
+            _fn_patient_id = re.sub(r'[^a-zA-Z0-9_\-]', '', _safe_patient_id) if _safe_patient_id else 'anon'
             report_content = (
                 "BRAIN SEGMENTATION AI - CLINICAL REPORT\n"
                 "---------------------------------------\n"
-                f"Patient ID  : {patient_id if patient_id else 'Anonymous'}\n"
+                f"Patient ID  : {_report_patient_id}\n"
                 f"Modality    : {modality}\n"
                 f"Confidence  : {confidence_threshold}\n"
                 f"File        : {file_details['Filename']}\n"
                 "\n"
                 "INTERPRETATION:\n"
-                f"{explanation}\n"
+                f"{textwrap.fill(explanation, width=80)}\n"
                 "\n"
                 "Note: This is an AI-generated report and should be verified by a medical professional.\n"
             )
-            
+
             st.download_button(
                 label="Download Report (TXT)",
                 data=report_content,
-                file_name=f"report_{patient_id if patient_id else 'anon'}.txt",
+                file_name=f"report_{_fn_patient_id}.txt",
                 mime="text/plain"
             )
             
