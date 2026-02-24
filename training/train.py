@@ -251,7 +251,7 @@ class SE2_CNNET(nn.Module):
 
 def train():
     # 1. Update Path & Parameter
-    ROOT_DATA_PATH = "../../Dataset/Brain CT CTC"
+    ROOT_DATA_PATH = "../../Dataset/Brain CT-CTC"
     LEARNING_RATE = 1e-4
     BATCH_SIZE = 4      # Jika nanti Cuda Out of Memory, turunkan ke 2
     EPOCHS = 10
