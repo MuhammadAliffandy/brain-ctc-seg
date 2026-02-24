@@ -350,5 +350,32 @@ def train():
         # Paksa GPU buang sampah tiap ganti epoch
         torch.cuda.empty_cache()
 
+class Logger:
+    def __init__(self, filename, stream):
+        self.terminal = stream
+        self.log = open(filename, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
 if __name__ == "__main__":
+    import sys
+    import datetime
+    
+    # Generate timestamp for unique log file name
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"training_log_{timestamp}.txt"
+    
+    # Redirect stdout and stderr
+    sys.stdout = Logger(log_filename, sys.stdout)
+    sys.stderr = Logger(log_filename, sys.stderr)
+    
+    print(f"Mulai menyimpan log terminal ke {log_filename}")
+    
     train()
