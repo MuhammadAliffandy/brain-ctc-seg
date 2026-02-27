@@ -77,31 +77,42 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 class CTMultiFolderDataset(Dataset):
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, target_folder=None):
         """
-        Modified loader for preprocessed PyTorch (.pt) files.
+        Modified loader for preprocessed PyTorch (.pt) files with Partial Mode.
         root_dir: Path to 'Dataset_CT_Preprocessed'
+        target_folder: (Optional) Name of a specific patient folder to load.
         """
         self.root_dir = root_dir
         self.samples = []
+        
+        # List all sub-folders in the preprocessed directory
+        all_sub_folders = [f for f in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, f))]
 
-        # List all sub-folders (patients) in the preprocessed directory
-        sub_folders = [f for f in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, f))]
-
-        print("🔍 Scanning preprocessed .pt files...")
+        # --- PARTIAL MODE LOGIC ---
+        if target_folder:
+            if target_folder in all_sub_folders:
+                sub_folders = [target_folder]
+                print(f"🎯 Partial Mode Active: Loading data only from folder '{target_folder}'")
+            else:
+                print(f"⚠️ Warning: Folder '{target_folder}' not found! Falling back to scanning all folders...")
+                sub_folders = all_sub_folders
+        else:
+            sub_folders = all_sub_folders
+            print("🔍 Scanning all preprocessed patient folders...")
 
         for folder in sub_folders:
             folder_path = os.path.join(root_dir, folder)
-            # Find all preprocessed slices (.pt)
+            # Find all preprocessed slices (.pt) in the specific folder
             pt_files = sorted([f for f in os.listdir(folder_path) if f.endswith('.pt')])
 
             for pt_name in pt_files:
                 full_path = os.path.join(folder_path, pt_name)
-                # Ensure the file is not empty
-                if os.path.getsize(full_path) > 0:
+                # Double check file existence and size
+                if os.path.exists(full_path) and os.path.getsize(full_path) > 0:
                     self.samples.append(full_path)
 
-        print(f"✅ Found {len(self.samples)} slices from {len(sub_folders)} folders.")
+        print(f"✅ Ready! Found {len(self.samples)} valid slices in selected directory.")
 
     def __len__(self):
         return len(self.samples)
@@ -258,7 +269,7 @@ def train():
          print(f"⚠️ Warning: Directory '{ROOT_DATA_PATH}' not found. Please update ROOT_DATA_PATH.")
          return
 
-    full_dataset = CTMultiFolderDataset(root_dir=ROOT_DATA_PATH)
+    full_dataset = CTMultiFolderDataset(root_dir=ROOT_DATA_PATH, target_folder="CT_") 
 
     # Split Data
     n_val = int(len(full_dataset) * VALIDATION_SPLIT)
