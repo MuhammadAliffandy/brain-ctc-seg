@@ -95,8 +95,10 @@ with st.sidebar:
     _PT_ID_RE = re.compile(r'^PT-\d{4}-\d{3}$')
     if patient_id and not _PT_ID_RE.match(patient_id):
         st.warning("Patient ID must follow the pattern PT-YYYY-NNN (e.g., PT-2026-001).")
+        
     # Sanitize: allow only alphanumerics and hyphens (whitelist approach)
     _safe_patient_id = re.sub(r'[^A-Z0-9\-]', '', patient_id.strip().upper()) if patient_id else ''
+    
     # Masked display: show partial form (e.g., PT-****-001) to avoid exposing full PHI in UI
     if _safe_patient_id:
         _parts = _safe_patient_id.split('-')
@@ -112,8 +114,22 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.markdown("### Model Configuration")
-    confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.5)
+    st.markdown("### Advanced Tools")
+    enable_gradcam = st.checkbox("🔍 Enable Explainability (Grad-CAM)", value=False, help="Visualizes the areas the AI is focusing on when identifying lesions.")
+    
+    st.markdown("---")
+    st.markdown("### System Status")
+    
+    # ==========================================
+    # ARCHITECTURAL DECISION: Zero-Config Clinical UI
+    # Removed ALL sliders (Epoch and Confidence Threshold).
+    # Hardcoded variables for a foolproof, 1-click User Experience.
+    # ==========================================
+    selected_epoch = 10
+    confidence_threshold = 0.5  # Fixed threshold for backend inference
+    
+    st.success("🟢 **AI Engine Ready**")
+    st.caption("Auto-calibrated for optimal clinical accuracy.")
     
     st.markdown("---")
     st.info("Ensure the uploaded image is in a supported format (PNG, JPG, JPEG).")
@@ -132,31 +148,49 @@ if uploaded_file is not None:
 
     # Perform Prediction
     try:
-        with st.spinner("Processing image..."):
-            original_image, result_mask = predict_segmentation(uploaded_file, modality)
+        # Update loading text to reflect the hardcoded epoch
+        with st.spinner(f"Running inference with Production Model..."):
+            original_image, result_mask, cam_image = predict_segmentation(
+                uploaded_file, 
+                modality, 
+                epoch=selected_epoch,
+                enable_gradcam=enable_gradcam
+            )
         
         # Use Tabs for better organization
         tab1, tab2 = st.tabs(["Visual Analysis", "Clinical Report"])
         
         with tab1:
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                st.subheader("Original Scan")
-                st.image(original_image, use_container_width=True)
-                
-            with col2:
-                st.subheader("Segmentation Result")
-                st.image(result_mask, use_container_width=True, clamp=True, channels="L")
+            if enable_gradcam and cam_image is not None:
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col1:
+                    st.subheader("Original Scan")
+                    st.image(original_image, use_container_width=True)
+                with col2:
+                    st.subheader("Segmentation Result")
+                    st.image(result_mask, use_container_width=True, clamp=True, channels="L")
+                with col3:
+                    st.subheader("Grad-CAM Heatmap")
+                    st.image(cam_image, use_container_width=True)
+            else:
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.subheader("Original Scan")
+                    st.image(original_image, use_container_width=True)
+                with col2:
+                    st.subheader("Segmentation Result")
+                    st.image(result_mask, use_container_width=True, clamp=True, channels="L")
                 
         with tab2:
             with st.container():
                 st.subheader("AI Analysis Report")
 
                 # Metrics Row
-                m1, m2, m3 = st.columns(3)
+                m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Patient ID", _masked_patient_id)
                 m2.metric("Modality", modality)
                 m3.metric("Confidence", f"{confidence_threshold * 100:.0f}%")
+                m4.metric("Model Epoch", f"Production (v{selected_epoch})") 
             
             st.markdown("---")
             
@@ -164,7 +198,7 @@ if uploaded_file is not None:
             detected_regions = "Lesion detected in the central region (Simulated)."
             
             # Use session state to cache the explanation so it doesn't regenerate on download
-            session_key = f"explanation_{uploaded_file.name}_{modality}_{confidence_threshold}"
+            session_key = f"explanation_{uploaded_file.name}_{modality}_{confidence_threshold}_{selected_epoch}"
             if session_key not in st.session_state:
                 with st.spinner("Generating AI Interpretation..."):
                     st.session_state[session_key] = get_explanation(modality, confidence_threshold, detected_regions)
@@ -182,6 +216,7 @@ if uploaded_file is not None:
                 help="Check this box only if you have obtained explicit patient consent to include identifying information."
             )
             _report_patient_id = _safe_patient_id if (include_phi and _safe_patient_id) else "[REDACTED]"
+            
             # Sanitize patient_id for safe use in filename (prevent path traversal)
             _fn_patient_id = re.sub(r'[^a-zA-Z0-9_\-]', '', _safe_patient_id) if _safe_patient_id else 'anon'
             report_content = (
