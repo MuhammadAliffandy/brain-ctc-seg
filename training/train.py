@@ -234,13 +234,14 @@ class CombinedLoss(nn.Module):
 # ==========================================
 
 def train():
-    # PATH DEFINITIONS (Adjusted for DGX H100)
+    # ==========================================
+    # PATH DEFINITIONS (Adjusted based on actual DGX terminal output)
+    # ==========================================
     # Define the absolute path to where rclone is mounted
-    GDRIVE_ROOT = os.path.expanduser("~/Clara/new_drive/CT Brain Data")
+    GDRIVE_ROOT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive")
     
-    # Path to the zip files or preprocessed folders inside GDrive
-    # Change "Dataset_CT_Zipped" to "Dataset_CT_Preprocessed_NPY" if you didn't zip them
-    GDRIVE_DATA_DIR = os.path.join(GDRIVE_ROOT, "Dataset_CT_Zipped") 
+    # Path to the preprocessed .npy folders inside GDrive
+    GDRIVE_DATA_DIR = os.path.join(GDRIVE_ROOT, "Dataset_CT_Preprocessed_NPY") 
     CSV_REPORT = os.path.join(GDRIVE_ROOT, "Dataset_CT_Report.csv")
     
     # Fast local NVMe storage on DGX for maximum DataLoader speed
