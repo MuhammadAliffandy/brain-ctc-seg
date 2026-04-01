@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-import cv2
 
-# ─── E2CNN / ESCNN imports ────────────────────────────────────────────────────
+# Import E2CNN for equivariant network layers
 from escnn import gspaces
 import escnn.nn as enn
 
@@ -16,10 +15,16 @@ _PROJECT_ROOT = os.path.abspath(
 )
 MODELS_DIR = os.path.join(_PROJECT_ROOT, "training")
 
-# ─── RE-DEFINE the exact same architecture as in train.py ────────────────────
+
+# ==========================================
+# MODEL ARCHITECTURE
+# ==========================================
 
 class DoubleEquivariantConv(nn.Module):
-    """Blok konvolusi ganda yang equivariant."""
+    """
+    Equivariant double convolution block.
+    Uses R2Conv to maintain equivariance under rotation and translation.
+    """
     def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
         if not mid_type:
@@ -32,59 +37,62 @@ class DoubleEquivariantConv(nn.Module):
             enn.InnerBatchNorm(out_type),
             enn.ReLU(out_type, inplace=True)
         )
-    def forward(self, x):
+    def forward(self, x): 
         return self.double_conv(x)
 
 class Down(nn.Module):
-    """Blok downsampling menggunakan MaxPool diikuti DoubleEquivariantConv."""
+    """
+    Downsampling block for the Equivariant U-Net.
+    Applies MaxPool followed by a DoubleEquivariantConv block.
+    """
     def __init__(self, in_type, out_type):
         super().__init__()
         self.pool = enn.PointwiseMaxPool(in_type, kernel_size=2)
         self.conv = DoubleEquivariantConv(in_type, out_type)
-    def forward(self, x):
-        x = self.pool(x)
-        return self.conv(x)
+    def forward(self, x): 
+        return self.conv(self.pool(x))
 
 class Up(nn.Module):
-    """Blok upsampling diikuti penggabungan skip connection dan DoubleEquivariantConv."""
+    """
+    Upsampling block for the Equivariant U-Net.
+    Upsamples the spatial dimensions and combines with skip connections
+    using tensor direct sum to maintain equivariant representations.
+    """
     def __init__(self, in_type, out_type):
         super().__init__()
         self.up = enn.R2Upsampling(in_type, scale_factor=2, mode='bilinear', align_corners=True)
-        # Tipe input untuk konvolusi adalah gabungan dari tensor setelah upsampling dan tensor dari skip connection
         self.conv = DoubleEquivariantConv(in_type + out_type, out_type)
     def forward(self, x1, x2):
         x1 = self.up(x1)
-        # Menggabungkan tensor dari skip connection (x2) dan tensor yang di-upsample (x1)
+        # Combine skip connection and upsampled features
         x = enn.tensor_directsum([x2, x1])
         return self.conv(x)
 
 class OutConv(nn.Module):
-    """Konvolusi 1x1 di akhir untuk memetakan fitur ke jumlah kelas output."""
+    """
+    Final 1x1 equivariant convolution mapping features to target classes.
+    Outputs a trivial representation since semantic segmentation labels 
+    are invariant to target rotation.
+    """
     def __init__(self, in_type, n_classes):
         super().__init__()
         gspace = in_type.gspace
-        # Tipe output adalah trivial representation, karena output segmentasi harus invarian terhadap rotasi
         out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
         self.conv = enn.R2Conv(in_type, out_type, kernel_size=1)
-    def forward(self, x):
+    def forward(self, x): 
         return self.conv(x)
 
 class SE2_CNNET(nn.Module):
     """
-    Arsitektur U-Net Equivariant SE(2) untuk segmentasi.
-    N: Jumlah rotasi diskrit yang akan dipertimbangkan (misal, N=8 untuk rotasi kelipatan 45 derajat).
-    base_channels: Jumlah channel dasar pada lapisan pertama.
+    SE(2) Equivariant U-Net Architecture for segmentation.
+    Ensures feature maps are equivariant to N discrete rotations.
     """
-    def __init__(self, n_channels=1, n_classes=2, N=8, base_channels=24):
+    def __init__(self, n_channels, n_classes, N=8, base_channels=24):
         super().__init__()
         self.r2_act = gspaces.rot2dOnR2(N=N)
         c = base_channels
 
-        # Parameters for Grad-CAM
-        self.gradients = None
-        self.activations = None
-
-        # Mendefinisikan tipe field untuk setiap level kedalaman U-Net
+        # Define field types (representations) for each depth level
         self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
         self.feat_type_1 = enn.FieldType(self.r2_act, c * [self.r2_act.regular_repr])
         self.feat_type_2 = enn.FieldType(self.r2_act, (c*2) * [self.r2_act.regular_repr])
@@ -92,191 +100,120 @@ class SE2_CNNET(nn.Module):
         self.feat_type_4 = enn.FieldType(self.r2_act, (c*8) * [self.r2_act.regular_repr])
         self.feat_type_5 = enn.FieldType(self.r2_act, (c*16) * [self.r2_act.regular_repr])
 
-        # Encoder Path
+        # Encoder layers
         self.inc = DoubleEquivariantConv(self.feat_type_in, self.feat_type_1)
         self.down1 = Down(self.feat_type_1, self.feat_type_2)
         self.down2 = Down(self.feat_type_2, self.feat_type_3)
         self.down3 = Down(self.feat_type_3, self.feat_type_4)
         self.down4 = Down(self.feat_type_4, self.feat_type_5)
 
-        # Decoder Path
+        # Decoder layers 
         self.up1 = Up(self.feat_type_5, self.feat_type_4)
         self.up2 = Up(self.feat_type_4, self.feat_type_3)
         self.up3 = Up(self.feat_type_3, self.feat_type_2)
         self.up4 = Up(self.feat_type_2, self.feat_type_1)
-
-        # Output Layer
+        
+        # Output prediction layer
         self.outc = OutConv(self.feat_type_1, n_classes)
 
-    def hook_activations(self, x):
-        self.activations = x
-
-    def hook_gradients(self, x):
-        self.gradients = x
-
     def forward(self, x):
-        # Konversi input tensor menjadi GeometricTensor
+        # Wrap standard PyTorch tensor into a GeometricTensor
         x_geom = enn.GeometricTensor(x, self.feat_type_in)
-
-        # Encoder
+        
+        # Encoder passes
         x1 = self.inc(x_geom)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
 
-        # Decoder
+        # Decoder passes with skip connections
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
         x = self.up3(x, x2)
         x = self.up4(x, x1)
-
-        # Capture Hook for Grad-CAM
-        x_tensor = x.tensor
-        if x_tensor.requires_grad:
-            x_tensor.register_hook(self.hook_gradients)
-        self.hook_activations(x_tensor)
-
-        # Mengembalikan tensor biasa untuk dihitung loss-nya
-        # Create a new GeometricTensor object from the captured tensor, since OutConv expects a GeometricTensor
-        x_out = enn.GeometricTensor(x_tensor, self.feat_type_1)
-        logits = self.outc(x_out).tensor
-        return logits
+        
+        # Unwrap back to standard PyTorch tensor
+        return self.outc(x).tensor
 
 
-# ─── Model cache so we don't reload on every button press ────────────────────
-_model_cache: dict = {}
+# ==========================================
+# INFERENCE LOGIC & API CONTRACT
+# ==========================================
 
-def _load_model(epoch: int) -> SE2_CNNET:
-    """Load (and cache) the SE2_CNNET weights for the requested epoch."""
-    if epoch in _model_cache:
-        return _model_cache[epoch]
+# Internal cache for the newly trained model
+_model_cache = None
 
-    weight_path = os.path.join(MODELS_DIR, f"model_epoch_{epoch}.pth")
+def _load_model() -> SE2_CNNET:
+    global _model_cache
+    if _model_cache is not None:
+        return _model_cache
+
+    weight_path = os.path.join(MODELS_DIR, "se2_unet_epoch_100.pth")
     if not os.path.exists(weight_path):
-        raise FileNotFoundError(
-            f"Model weights for epoch {epoch} not found at: {weight_path}"
-        )
+        raise FileNotFoundError(f"State-of-the-art model weights not found at: {weight_path}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Initialize the new SE2_CNNET architecture
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24)
-    state_dict = torch.load(weight_path, map_location=device)
+    
+    # Load state dict correctly mapping to device
+    state_dict = torch.load(weight_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
+    
     model.to(device)
-    # We set to train initially if we want to enable grads. But best practice is to eval() 
-    # and just use torch.enable_grad() later for the image.
     model.eval()
 
-    _model_cache[epoch] = model
+    _model_cache = model
     return model
 
-
-# ─── Public inference function ────────────────────────────────────────────────
-
-def predict_segmentation(image_file, modality: str, epoch: int = 5, enable_gradcam: bool = False):
+def predict_segmentation(image_file, modality: str, **kwargs):
     """
-    Run real SE2-CNNET inference for brain CTC segmentation.
-
-    Args:
-        image_file     : UploadedFile (Streamlit) or file-like object.
-        modality       : Scan type string — informational only, passed to caller.
-        epoch          : Which saved epoch weights to use (1-5).
-        enable_gradcam : Whether to generate an explainability heatmap.
-
-    Returns:
-        original_image : PIL.Image  — grayscale original resized to 256×256.
-        mask_image     : PIL.Image  — predicted binary segmentation mask (0 / 255).
-        cam_image      : PIL.Image or None — heatmap overlaid on the original image if requested.
+    Run SE2-CNNET inference for brain CTC segmentation.
+    This maintains the existing API contract for src/app.py.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ── 1. Load & preprocess image ──────────────────────────────────────────
-    image = Image.open(image_file).convert("L")                 # grayscale
+    # 1. Provide requested preprocessing
+    # The input image must be converted to grayscale, resized to 256x256
+    image = Image.open(image_file).convert("L")
     image_256 = image.resize((256, 256), Image.BILINEAR)
 
+    # Convert to NumPy array
     img_array = np.array(image_256, dtype=np.float32)
 
-    # Normalise to [0, 1]
+    # Normalized (0 to 1)
     if img_array.max() > img_array.min():
         img_array = (img_array - img_array.min()) / (img_array.max() - img_array.min())
     else:
         img_array = np.zeros_like(img_array)
 
-    # Shape: [1, 1, 256, 256]
+    # Reshaped to [1, 1, 256, 256] (Batch, Channel, Height, Width)
     img_tensor = torch.from_numpy(img_array).unsqueeze(0).unsqueeze(0).to(device)
 
-    # ── 2. Load model ────────────────────────────────────────────────────────
-    model = _load_model(epoch)
+    # 2. Load Model
+    model = _load_model()
 
-    # ── 3. Inference ─────────────────────────────────────────────────────────
+    # 3. Perform Inference
+    with torch.no_grad():
+        logits = model(img_tensor)           # Shape: [1, 2, 256, 256]
+        
+        # Apply softmax on dim=1
+        probs = F.softmax(logits, dim=1)     # Class probabilities
+        
+        # Use argmax to extract the final binary mask
+        pred = torch.argmax(probs, dim=1)    # Shape: [1, 256, 256]
+
+    # Convert prediction to NumPy and scale to 0-255 for visualization
+    pred_np = pred.squeeze(0).cpu().numpy().astype(np.uint8)
+    mask_array = (pred_np * 255).astype(np.uint8)
+
+    # Create PIL Image from array
+    mask_image = Image.fromarray(mask_array, mode="L")
+    
+    # Optional Grad-CAM is disabled or simplified since it breaks strict strict no_grad contract
+    # But to maintain API exactly, we return None for cam_image if there are 3 expected outputs
     cam_image = None
-
-    if enable_gradcam:
-        img_tensor.requires_grad_(True)
-        # Enable grad calculation even though model is in eval mode
-        with torch.enable_grad():
-            logits = model(img_tensor)          # [1, 2, 256, 256]
-            probs  = F.softmax(logits, dim=1)   # class probabilities
-            pred   = torch.argmax(probs, dim=1) # [1, 256, 256]  → 0 or 1
-
-            # Get the score for the Target class (class 1)
-            # We want to see why the model thinks a pixel is Lesion (1).
-            # We sum all the logits for class 1 to get a single scalar to backpropagate.
-            target_class_score = logits[:, 1, :, :].sum()
-            model.zero_grad()
-            target_class_score.backward()
-
-            # Grad-CAM Calculation
-            gradients = model.gradients  # [1, C, H, W]
-            activations = model.activations # [1, C, H, W]
-
-            if gradients is not None and activations is not None:
-                # Global average pooling on the gradients (per channel)
-                pooled_gradients = torch.mean(gradients, dim=[0, 2, 3]) # [C]
-
-                # Weight the channels by the corresponding gradients
-                for i in range(activations.size(1)):
-                    activations[:, i, :, :] *= pooled_gradients[i]
-
-                # Average the channels of the activations
-                heatmap = torch.mean(activations, dim=1).squeeze(0).cpu().detach().numpy() # [H, W]
-
-                # ReLU on heatmap to only keep positive influence
-                heatmap = np.maximum(heatmap, 0)
-
-                # Normalize the heatmap
-                if np.max(heatmap) > 0:
-                    heatmap /= np.max(heatmap)
-
-                # Resize heatmap to match image size
-                heatmap = cv2.resize(heatmap, (256, 256))
-                
-                # Convert to uint8 (0-255)
-                heatmap = np.uint8(255 * heatmap)
-
-                # Apply colormap (JET)
-                colormap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-                # Convert original grayscale image back to BGR for blending
-                orig_img_cv = np.array(image_256)
-                orig_img_cv = cv2.cvtColor(orig_img_cv, cv2.COLOR_GRAY2BGR)
-
-                # Overlay heatmap on original image (0.4 alpha for heatmap, 0.6 for image)
-                superimposed_img = cv2.addWeighted(colormap, 0.4, orig_img_cv, 0.6, 0)
-                
-                # Convert BGR back to RGB for PIL
-                superimposed_img_rgb = cv2.cvtColor(superimposed_img, cv2.COLOR_BGR2RGB)
-                cam_image = Image.fromarray(superimposed_img_rgb)
-    else:
-        with torch.no_grad():
-            logits = model(img_tensor)          # [1, 2, 256, 256]
-            probs  = F.softmax(logits, dim=1)   # class probabilities
-            pred   = torch.argmax(probs, dim=1) # [1, 256, 256]  → 0 or 1
-
-    pred_np = pred.squeeze(0).cpu().numpy().astype(np.uint8)  # 0 or 1
-    mask_array = (pred_np * 255).astype(np.uint8)              # 0 or 255
-
-    mask_image = Image.fromarray(mask_array)
-
+    
     return image_256, mask_image, cam_image
-
