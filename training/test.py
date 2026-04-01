@@ -1,14 +1,15 @@
 import os
 import torch
-import numpy as np
 import torch.nn as nn
-import matplotlib.pyplot as plt
+import numpy as np
+from tqdm import tqdm
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 from escnn import gspaces
 import escnn.nn as enn
-import torch.nn.functional as F
 
 # ==========================================
-# 1. MODEL ARCHITECTURE (Copied for standalone execution)
+# 1. MODEL ARCHITECTURE
 # ==========================================
 
 class DoubleEquivariantConv(nn.Module):
@@ -24,14 +25,16 @@ class DoubleEquivariantConv(nn.Module):
             enn.InnerBatchNorm(out_type),
             enn.ReLU(out_type, inplace=True)
         )
-    def forward(self, x): return self.double_conv(x)
+    def forward(self, x): 
+        return self.double_conv(x)
 
 class Down(nn.Module):
     def __init__(self, in_type, out_type):
         super().__init__()
         self.pool = enn.PointwiseMaxPool(in_type, kernel_size=2)
         self.conv = DoubleEquivariantConv(in_type, out_type)
-    def forward(self, x): return self.conv(self.pool(x))
+    def forward(self, x): 
+        return self.conv(self.pool(x))
 
 class Up(nn.Module):
     def __init__(self, in_type, out_type):
@@ -49,7 +52,8 @@ class OutConv(nn.Module):
         gspace = in_type.gspace
         out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
         self.conv = enn.R2Conv(in_type, out_type, kernel_size=1)
-    def forward(self, x): return self.conv(x)
+    def forward(self, x): 
+        return self.conv(x)
 
 class SE2_CNNET(nn.Module):
     def __init__(self, n_channels, n_classes, N=8, base_channels=24):
@@ -91,123 +95,134 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. METRICS CALCULATION
+# 2. GLOBAL DATASET LOADER
 # ==========================================
 
-def calculate_metrics(pred, target):
+class FullCTDataset(Dataset):
     """
-    Calculate essential medical image segmentation metrics.
-    pred: Flattened binary prediction array
-    target: Flattened binary ground truth array
+    Scans the entire local workspace for all folders and slice pairs.
     """
-    tp = np.sum((pred == 1) & (target == 1))
-    tn = np.sum((pred == 0) & (target == 0))
-    fp = np.sum((pred == 1) & (target == 0))
-    fn = np.sum((pred == 0) & (target == 1))
+    def __init__(self, root_dir):
+        self.slice_pairs = []
+        
+        print("🔍 Scanning all directories for evaluation data...")
+        # Get all subdirectories (CT_, CT_2, etc.)
+        sub_folders = [f for f in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, f))]
+        
+        for folder in sub_folders:
+            folder_path = os.path.join(root_dir, folder)
+            # Find all image arrays
+            img_files = sorted([f for f in os.listdir(folder_path) if f.endswith('_img.npy')])
+            
+            for img_name in img_files:
+                img_path = os.path.join(folder_path, img_name)
+                mask_path = img_path.replace('_img.npy', '_mask.npy')
+                
+                # Verify that the corresponding mask actually exists
+                if os.path.exists(mask_path):
+                    self.slice_pairs.append((img_path, mask_path))
+                    
+        print(f"✅ Found a total of {len(self.slice_pairs)} valid image-mask pairs across {len(sub_folders)} folders.")
 
-    # Add a small epsilon to prevent division by zero
-    epsilon = 1e-6
-    
-    dice = (2.0 * tp) / ((2.0 * tp) + fp + fn + epsilon)
-    iou = tp / (tp + fp + fn + epsilon)
-    accuracy = (tp + tn) / (tp + tn + fp + fn + epsilon)
-    precision = tp / (tp + fp + epsilon)
-    recall = tp / (tp + fn + epsilon) # Also known as Sensitivity
+    def __len__(self):
+        return len(self.slice_pairs)
 
-    return dice, iou, accuracy, precision, recall
+    def __getitem__(self, idx):
+        img_path, mask_path = self.slice_pairs[idx]
+        
+        # Load numpy arrays
+        image = np.load(img_path).astype(np.float32)
+        mask = np.load(mask_path).astype(np.uint8)
+        
+        # Convert to tensors (C, H, W for image)
+        image_tensor = torch.from_numpy(image).unsqueeze(0)
+        mask_tensor = torch.from_numpy(mask).long()
+        
+        return image_tensor, mask_tensor
 
 # ==========================================
-# 3. MAIN EVALUATION FUNCTION
+# 3. GLOBAL EVALUATION ENGINE
 # ==========================================
 
-def test_single_slice():
+def evaluate_all():
     # --- CONFIGURATION ---
-    # Point this to your best saved model weights
     MODEL_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
+    LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace")
+    BATCH_SIZE = 32 # Large batch size for inference on DGX H100
     
-    # Point this to ONE specific image and its corresponding mask in your local NVMe storage
-    # IMPORTANT: Change this path to an actual file that exists in your dataset!
-    # Point this to ONE specific image and its corresponding mask in your local NVMe storage
-    TEST_IMAGE_PATH = os.path.expanduser("~/Clara/local_ct_workspace/CT_/0_Brain_Routine_20190226124853_2_z085_img.npy")
-    TEST_MASK_PATH = os.path.expanduser("~/Clara/local_ct_workspace/CT_/0_Brain_Routine_20190226124853_2_z085_mask.npy")
-    
-    OUTPUT_IMAGE_NAME = "test_result_epoch100.png"
-
-    # --- DEVICE SETUP ---
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🚀 Using device: {device}")
+    print(f"\n🚀 Hardware accelerated on: {device}")
 
     # --- LOAD MODEL ---
-    print(f"Loading weights from {MODEL_WEIGHTS_PATH}...")
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
-    
     try:
         model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True))
-        print("✅ Model weights loaded successfully!")
+        print(f"✅ Loaded weights from {MODEL_WEIGHTS_PATH}")
     except Exception as e:
-        print(f"❌ Failed to load model weights: {e}")
+        print(f"❌ Critical Error loading weights: {e}")
         return
-
+        
     model.eval()
 
-    # --- LOAD DATA ---
-    print(f"Loading image from {TEST_IMAGE_PATH}...")
-    try:
-        img_np = np.load(TEST_IMAGE_PATH).astype(np.float32)
-        mask_np = np.load(TEST_MASK_PATH).astype(np.uint8)
-    except Exception as e:
-        print(f"❌ Failed to load data. Please check the paths. Error: {e}")
+    # --- SETUP DATA LOADER ---
+    dataset = FullCTDataset(LOCAL_DATA_PATH)
+    if len(dataset) == 0:
+        print("❌ No data found! Please check the LOCAL_DATA_PATH.")
         return
+        
+    num_workers = min(os.cpu_count(), 8) if os.cpu_count() else 4
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, 
+                            num_workers=num_workers, pin_memory=True)
 
-    # Prepare tensor (add Batch and Channel dimensions: B, C, H, W)
-    img_tensor = torch.from_numpy(img_np).unsqueeze(0).unsqueeze(0).to(device)
+    # Variables to accumulate global confusion matrix values
+    total_tp = 0
+    total_tn = 0
+    total_fp = 0
+    total_fn = 0
 
-    # --- INFERENCE ---
-    print("Running inference...")
+    print("\n⚡ Beginning massive parallel evaluation...")
+    
+    # --- INFERENCE LOOP ---
     with torch.no_grad():
-        logits = model(img_tensor)
-        # Apply Softmax to get probabilities, then Argmax to get the predicted class (0 or 1)
-        probs = F.softmax(logits, dim=1)
-        pred_mask_tensor = torch.argmax(probs, dim=1).squeeze().cpu().numpy()
+        for images, masks in tqdm(dataloader, desc="Evaluating Dataset"):
+            # Move to GPU
+            images = images.to(device, non_blocking=True)
+            masks = masks.to(device, non_blocking=True)
+            
+            # Predict
+            logits = model(images)
+            probs = F.softmax(logits, dim=1)
+            preds = torch.argmax(probs, dim=1) 
+            
+            # Flatten tensors for metric calculation
+            preds_flat = preds.view(-1)
+            masks_flat = masks.view(-1)
+            
+            # Accumulate metrics
+            total_tp += torch.sum((preds_flat == 1) & (masks_flat == 1)).item()
+            total_tn += torch.sum((preds_flat == 0) & (masks_flat == 0)).item()
+            total_fp += torch.sum((preds_flat == 1) & (masks_flat == 0)).item()
+            total_fn += torch.sum((preds_flat == 0) & (masks_flat == 1)).item()
 
-    # --- CALCULATE METRICS ---
-    dice, iou, acc, prec, rec = calculate_metrics(pred_mask_tensor.flatten(), mask_np.flatten())
+    # --- CALCULATE FINAL GLOBAL METRICS ---
+    epsilon = 1e-6 # Prevent division by zero
     
-    print("\n" + "="*30)
-    print("📊 PERFORMANCE METRICS")
-    print("="*30)
-    print(f"Dice Score : {dice:.4f}")
-    print(f"IoU Score  : {iou:.4f}")
-    print(f"Accuracy   : {acc:.4f}")
-    print(f"Precision  : {prec:.4f}")
-    print(f"Recall     : {rec:.4f}")
-    print("="*30 + "\n")
+    global_dice = (2.0 * total_tp) / ((2.0 * total_tp) + total_fp + total_fn + epsilon)
+    global_iou = total_tp / (total_tp + total_fp + total_fn + epsilon)
+    global_acc = (total_tp + total_tn) / (total_tp + total_tn + total_fp + total_fn + epsilon)
+    global_prec = total_tp / (total_tp + total_fp + epsilon)
+    global_rec = total_tp / (total_tp + total_fn + epsilon)
 
-    # --- VISUALIZATION ---
-    print(f"Saving visual comparison to {OUTPUT_IMAGE_NAME}...")
-    plt.figure(figsize=(15, 5))
-    
-    # Original Image
-    plt.subplot(1, 3, 1)
-    plt.title("Original CT Image")
-    plt.imshow(img_np, cmap='gray')
-    plt.axis('off')
-    
-    # Ground Truth Mask
-    plt.subplot(1, 3, 2)
-    plt.title("Ground Truth Mask")
-    plt.imshow(mask_np, cmap='gray')
-    plt.axis('off')
-    
-    # Model Prediction
-    plt.subplot(1, 3, 3)
-    plt.title(f"Model Prediction\nDice: {dice:.4f}")
-    plt.imshow(pred_mask_tensor, cmap='gray')
-    plt.axis('off')
-    
-    plt.tight_layout()
-    plt.savefig(OUTPUT_IMAGE_NAME, dpi=150, bbox_inches='tight')
-    print(f"✅ Result saved! You can download or view {OUTPUT_IMAGE_NAME} to inspect the segmentation.")
+    # --- PRINT REPORT ---
+    print("\n" + "🌟"*20)
+    print(f"  GLOBAL PERFORMANCE REPORT (Across {len(dataset)} Slices)")
+    print("🌟"*20)
+    print(f"🔥 Global Dice Score : {global_dice:.4f} ({(global_dice*100):.2f}%)")
+    print(f"🎯 Global IoU Score  : {global_iou:.4f} ({(global_iou*100):.2f}%)")
+    print(f"✅ Global Accuracy   : {global_acc:.4f} ({(global_acc*100):.2f}%)")
+    print(f"📌 Global Precision  : {global_prec:.4f} ({(global_prec*100):.2f}%)")
+    print(f"🔍 Global Recall     : {global_rec:.4f} ({(global_rec*100):.2f}%)")
+    print("🌟"*20 + "\n")
 
 if __name__ == "__main__":
-    test_single_slice()
+    evaluate_all()
