@@ -127,8 +127,9 @@ def test_single_slice():
     
     # Point this to ONE specific image and its corresponding mask in your local NVMe storage
     # IMPORTANT: Change this path to an actual file that exists in your dataset!
-    TEST_IMAGE_PATH = os.path.expanduser("~/Clara/local_ct_workspace/NAMA_FOLDER_PASIEN/NAMA_FILE_img.npy")
-    TEST_MASK_PATH = os.path.expanduser("~/Clara/local_ct_workspace/NAMA_FOLDER_PASIEN/NAMA_FILE_mask.npy")
+    # Point this to ONE specific image and its corresponding mask in your local NVMe storage
+    TEST_IMAGE_PATH = os.path.expanduser("~/Clara/local_ct_workspace/CT_/0_Brain_Routine_20190226124853_2_z085_img.npy")
+    TEST_MASK_PATH = os.path.expanduser("~/Clara/local_ct_workspace/CT_/0_Brain_Routine_20190226124853_2_z085_mask.npy")
     
     OUTPUT_IMAGE_NAME = "test_result_epoch100.png"
 
