@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import torch.nn as nn
 import matplotlib.pyplot as plt
 from escnn import gspaces
 import escnn.nn as enn
