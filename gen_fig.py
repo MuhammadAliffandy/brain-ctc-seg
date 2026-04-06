@@ -93,7 +93,7 @@ def generate_pipeline_and_prediction():
     print("Generating Preprocessing and Prediction Figures on DGX Server...")
     
     # --- PATHS ON DGX SERVER ---
-    MODEL_WEIGHTS = "./trainig/model_epoch_100.pth" 
+    MODEL_WEIGHTS = "./training/model_epoch_100.pth" 
     SAMPLE_IMG_PATH = os.path.expanduser("~/Clara/local_ct_workspace/CT_/0_Brain_Routine_20190226124853_2_z085_img.npy")
     SAMPLE_MASK_PATH = os.path.expanduser("~/Clara/local_ct_workspace/CT_/0_Brain_Routine_20190226124853_2_z085_mask.npy")
     
