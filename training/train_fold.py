@@ -25,7 +25,6 @@ import escnn.nn as enn
 def prepare_local_data(gdrive_dir, local_extract_dir):
     """
     Checks if data needs to be copied/extracted from rclone mount to local server storage.
-    Prevents massive I/O bottlenecks during training.
     """
     os.makedirs(local_extract_dir, exist_ok=True)
     
@@ -60,22 +59,11 @@ def prepare_local_data(gdrive_dir, local_extract_dir):
 
 class CTBrainDataset(Dataset):
     """
-    Robust Loader for preprocessed .npy slices.
+    Modified for Slice-Level Cross Validation.
+    Receives a direct list of (image_path, mask_path) tuples.
     """
-    def __init__(self, dataframe, root_dir):
-        self.root_dir = root_dir
-        self.slice_pairs = []
-        patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
-
-        for patient in dataframe[patient_col].unique():
-            patient_dir = os.path.join(root_dir, patient)
-            if os.path.exists(patient_dir):
-                img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')])
-                for img_name in img_files:
-                    img_path = os.path.join(patient_dir, img_name)
-                    mask_path = img_path.replace('_img.npy', '_mask.npy')
-                    if os.path.exists(mask_path):
-                        self.slice_pairs.append((img_path, mask_path))
+    def __init__(self, slice_pairs):
+        self.slice_pairs = slice_pairs
 
     def __len__(self):
         return len(self.slice_pairs)
@@ -89,29 +77,26 @@ class CTBrainDataset(Dataset):
             mask = torch.from_numpy(mask).long() 
             return image, mask
         except Exception as e:
+            # Fallback if a specific slice is corrupted
             random_idx = random.randint(0, len(self.slice_pairs) - 1)
             return self.__getitem__(random_idx)
 
 # ==========================================
 # 2. EQUIVARIANT MODEL COMPONENTS (SE2-CNNET)
-# Note: Renamed components to explicitly use GConv (Group Convolution) 
-# and GDeconv (Group Deconvolution) terminology for the manuscript.
+# Emphasizing GConv (Group Convolution) and GDeconv (Group Deconvolution)
 # ==========================================
 
 class DoubleGConv(nn.Module):
-    """
-    Double Group Equivariant Convolution block.
-    Uses enn.R2Conv which is the mathematical implementation of GConv for SE(2).
-    """
+    """ Double Group Equivariant Convolution block (GConv). """
     def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
         if not mid_type:
             mid_type = out_type
         self.double_gconv = enn.SequentialModule(
-            enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False), # GConv
+            enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False), # First GConv
             enn.InnerBatchNorm(mid_type),
             enn.ReLU(mid_type, inplace=True),
-            enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False), # GConv
+            enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False), # Second GConv
             enn.InnerBatchNorm(out_type),
             enn.ReLU(out_type, inplace=True)
         )
@@ -128,8 +113,7 @@ class DownGConv(nn.Module):
 class UpGDeconv(nn.Module):
     """ 
     Group Equivariant Deconvolution (GDeconv) block.
-    Implemented via spatial upsampling followed by GConv to prevent checkerboard artifacts 
-    while strictly maintaining group equivariance.
+    Uses bilinear upsampling + GConv to prevent checkerboard artifacts.
     """
     def __init__(self, in_type, out_type):
         super().__init__()
@@ -145,7 +129,7 @@ class OutConv(nn.Module):
         super().__init__()
         gspace = in_type.gspace
         out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
-        self.conv = enn.R2Conv(in_type, out_type, kernel_size=1) # Final GConv mapping to trivial representation
+        self.conv = enn.R2Conv(in_type, out_type, kernel_size=1) 
     def forward(self, x): return self.conv(x)
 
 class SE2_CNNET(nn.Module):
@@ -224,7 +208,7 @@ class CombinedLoss(nn.Module):
         return (self.weight_ce * ce) + (self.weight_dice * dice)
 
 # ==========================================
-# 4. 10-FOLD CROSS VALIDATION TRAINING
+# 4. SLICE-LEVEL 10-FOLD CROSS VALIDATION
 # ==========================================
 
 def train():
@@ -240,7 +224,7 @@ def train():
     BATCH_SIZE = 8 
     ACCUMULATION_STEPS = 4  
     EPOCHS = 100
-    K_FOLDS = 10 # Defined by client request
+    K_FOLDS = 10 
     NUM_CLASSES = 2     
     INPUT_CHANNELS = 1  
 
@@ -251,25 +235,41 @@ def train():
         raise FileNotFoundError(f"Cannot find CSV report at {CSV_REPORT}")
     df = pd.read_csv(CSV_REPORT)
     patient_col = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
-    unique_patients = df[patient_col].unique()
+    
+    # 1. GATHER ALL SLICES INTO A GLOBAL LIST
+    print("Scanning directories for valid slices...")
+    all_slices_global = []
+    for patient in df[patient_col].unique():
+        patient_dir = os.path.join(local_root, patient)
+        if os.path.exists(patient_dir):
+            img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')])
+            for img_name in img_files:
+                img_path = os.path.join(patient_dir, img_name)
+                mask_path = img_path.replace('_img.npy', '_mask.npy')
+                if os.path.exists(mask_path):
+                    all_slices_global.append((img_path, mask_path))
 
-    # Initialize K-Fold on Patient Level (Prevents Data Leakage)
+    total_slices = len(all_slices_global)
+    print(f"✅ Found {total_slices} valid image-mask pairs in total.")
+    
+    # Convert to numpy array for easy indexing with KFold
+    all_slices_global = np.array(all_slices_global)
+
+    # 2. INITIALIZE SLICE-LEVEL K-FOLD
     kf = KFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
     fold_results = []
 
-    for fold, (train_idx, val_idx) in enumerate(kf.split(unique_patients)):
+    for fold, (train_idx, val_idx) in enumerate(kf.split(all_slices_global)):
         print(f"\n{'='*40}")
         print(f"🚀 STARTING FOLD {fold + 1}/{K_FOLDS}")
         print(f"{'='*40}")
 
-        train_patients = unique_patients[train_idx]
-        val_patients = unique_patients[val_idx]
+        # Extract train and val lists for this fold
+        train_pairs = all_slices_global[train_idx].tolist()
+        val_pairs = all_slices_global[val_idx].tolist()
 
-        train_df = df[df[patient_col].isin(train_patients)]
-        val_df = df[df[patient_col].isin(val_patients)]
-
-        train_set = CTBrainDataset(train_df, local_root)
-        val_set = CTBrainDataset(val_df, local_root)
+        train_set = CTBrainDataset(train_pairs)
+        val_set = CTBrainDataset(val_pairs)
 
         num_workers = min(os.cpu_count(), 16) if os.cpu_count() else 4
         
@@ -284,7 +284,6 @@ def train():
             prefetch_factor=2, persistent_workers=True
         )
 
-        # Reset model, optimizer, and scaler for each fold
         model = SE2_CNNET(n_channels=INPUT_CHANNELS, n_classes=NUM_CLASSES, N=8, base_channels=24).to(device)
         class_weights = torch.tensor([1.0, 50.0]).to(device)
         criterion = CombinedLoss(weight_ce=1.0, weight_dice=1.0, class_weights=class_weights)
@@ -347,7 +346,6 @@ def train():
             avg_val_loss = val_loss / len(val_loader)
             print(f"Fold {fold+1} | Epoch {epoch+1}/{EPOCHS} -> Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
 
-            # Save only the best model for this specific fold
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 save_path = f'se2_unet_best_fold_{fold+1}.pth'
@@ -384,7 +382,7 @@ class Logger:
 
 if __name__ == "__main__":
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"training_10fold_cv_log_{timestamp}.txt"
+    log_filename = f"training_10fold_slice_cv_log_{timestamp}.txt"
     sys.stdout = Logger(log_filename, sys.stdout)
     sys.stderr = Logger(log_filename, sys.stderr)
     
