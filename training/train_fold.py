@@ -221,8 +221,8 @@ def train():
 
     # HYPERPARAMETERS
     LEARNING_RATE = 1e-4
-    BATCH_SIZE = 8 
-    ACCUMULATION_STEPS = 4  
+    BATCH_SIZE = 4
+    ACCUMULATION_STEPS = 8
     EPOCHS = 100
     K_FOLDS = 10 
     NUM_CLASSES = 2     
