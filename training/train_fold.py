@@ -1,0 +1,392 @@
+import os
+import sys
+import datetime
+import zipfile
+import shutil
+import random
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import KFold
+from tqdm import tqdm
+
+# E2CNN Specific Libraries
+from escnn import gspaces
+import escnn.nn as enn
+
+# ==========================================
+# 1. DATA PREPARATION (DGX Local NVMe Optimized)
+# ==========================================
+
+def prepare_local_data(gdrive_dir, local_extract_dir):
+    """
+    Checks if data needs to be copied/extracted from rclone mount to local server storage.
+    Prevents massive I/O bottlenecks during training.
+    """
+    os.makedirs(local_extract_dir, exist_ok=True)
+    
+    zip_files = [f for f in os.listdir(gdrive_dir) if f.endswith('.zip')]
+    if zip_files:
+        print(f"📦 Found {len(zip_files)} .zip files. Extracting to {local_extract_dir}...")
+        for z_file in tqdm(zip_files, desc="Extracting Zips"):
+            patient_name = z_file.replace('.zip', '')
+            target_folder = os.path.join(local_extract_dir, patient_name)
+            if not os.path.exists(target_folder):
+                try:
+                    with zipfile.ZipFile(os.path.join(gdrive_dir, z_file), 'r') as zip_ref:
+                        zip_ref.extractall(target_folder)
+                except Exception as e:
+                    print(f"⚠️ Error extracting {z_file}: {e}")
+        print("✅ Zip extraction complete!")
+        return local_extract_dir
+    
+    sub_folders = [f for f in os.listdir(gdrive_dir) if os.path.isdir(os.path.join(gdrive_dir, f))]
+    if sub_folders:
+        print(f"📁 Found standard folders. Copying to {local_extract_dir}...")
+        for folder in tqdm(sub_folders, desc="Copying Folders"):
+            src = os.path.join(gdrive_dir, folder)
+            dst = os.path.join(local_extract_dir, folder)
+            if not os.path.exists(dst):
+                shutil.copytree(src, dst)
+        print("✅ Data copy complete!")
+        return local_extract_dir
+        
+    print("⚠️ No valid data found in the GDrive path!")
+    return local_extract_dir
+
+class CTBrainDataset(Dataset):
+    """
+    Robust Loader for preprocessed .npy slices.
+    """
+    def __init__(self, dataframe, root_dir):
+        self.root_dir = root_dir
+        self.slice_pairs = []
+        patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
+
+        for patient in dataframe[patient_col].unique():
+            patient_dir = os.path.join(root_dir, patient)
+            if os.path.exists(patient_dir):
+                img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')])
+                for img_name in img_files:
+                    img_path = os.path.join(patient_dir, img_name)
+                    mask_path = img_path.replace('_img.npy', '_mask.npy')
+                    if os.path.exists(mask_path):
+                        self.slice_pairs.append((img_path, mask_path))
+
+    def __len__(self):
+        return len(self.slice_pairs)
+
+    def __getitem__(self, idx):
+        img_path, mask_path = self.slice_pairs[idx]
+        try:
+            image = np.load(img_path).astype(np.float32)
+            mask = np.load(mask_path).astype(np.uint8)
+            image = torch.from_numpy(image).unsqueeze(0)
+            mask = torch.from_numpy(mask).long() 
+            return image, mask
+        except Exception as e:
+            random_idx = random.randint(0, len(self.slice_pairs) - 1)
+            return self.__getitem__(random_idx)
+
+# ==========================================
+# 2. EQUIVARIANT MODEL COMPONENTS (SE2-CNNET)
+# Note: Renamed components to explicitly use GConv (Group Convolution) 
+# and GDeconv (Group Deconvolution) terminology for the manuscript.
+# ==========================================
+
+class DoubleGConv(nn.Module):
+    """
+    Double Group Equivariant Convolution block.
+    Uses enn.R2Conv which is the mathematical implementation of GConv for SE(2).
+    """
+    def __init__(self, in_type, out_type, mid_type=None):
+        super().__init__()
+        if not mid_type:
+            mid_type = out_type
+        self.double_gconv = enn.SequentialModule(
+            enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False), # GConv
+            enn.InnerBatchNorm(mid_type),
+            enn.ReLU(mid_type, inplace=True),
+            enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False), # GConv
+            enn.InnerBatchNorm(out_type),
+            enn.ReLU(out_type, inplace=True)
+        )
+    def forward(self, x): return self.double_gconv(x)
+
+class DownGConv(nn.Module):
+    """ Downsampling followed by GConv. """
+    def __init__(self, in_type, out_type):
+        super().__init__()
+        self.pool = enn.PointwiseMaxPool(in_type, kernel_size=2)
+        self.gconv = DoubleGConv(in_type, out_type)
+    def forward(self, x): return self.gconv(self.pool(x))
+
+class UpGDeconv(nn.Module):
+    """ 
+    Group Equivariant Deconvolution (GDeconv) block.
+    Implemented via spatial upsampling followed by GConv to prevent checkerboard artifacts 
+    while strictly maintaining group equivariance.
+    """
+    def __init__(self, in_type, out_type):
+        super().__init__()
+        self.up = enn.R2Upsampling(in_type, scale_factor=2, mode='bilinear', align_corners=True)
+        self.gconv = DoubleGConv(in_type + out_type, out_type)
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        x = enn.tensor_directsum([x2, x1])
+        return self.gconv(x)
+
+class OutConv(nn.Module):
+    def __init__(self, in_type, n_classes):
+        super().__init__()
+        gspace = in_type.gspace
+        out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
+        self.conv = enn.R2Conv(in_type, out_type, kernel_size=1) # Final GConv mapping to trivial representation
+    def forward(self, x): return self.conv(x)
+
+class SE2_CNNET(nn.Module):
+    def __init__(self, n_channels, n_classes, N=8, base_channels=24):
+        super().__init__()
+        self.r2_act = gspaces.rot2dOnR2(N=N)
+        c = base_channels
+
+        self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
+        self.feat_type_1 = enn.FieldType(self.r2_act, c * [self.r2_act.regular_repr])
+        self.feat_type_2 = enn.FieldType(self.r2_act, (c*2) * [self.r2_act.regular_repr])
+        self.feat_type_3 = enn.FieldType(self.r2_act, (c*4) * [self.r2_act.regular_repr])
+        self.feat_type_4 = enn.FieldType(self.r2_act, (c*8) * [self.r2_act.regular_repr])
+        self.feat_type_5 = enn.FieldType(self.r2_act, (c*16) * [self.r2_act.regular_repr])
+
+        self.inc = DoubleGConv(self.feat_type_in, self.feat_type_1)
+        self.down1 = DownGConv(self.feat_type_1, self.feat_type_2)
+        self.down2 = DownGConv(self.feat_type_2, self.feat_type_3)
+        self.down3 = DownGConv(self.feat_type_3, self.feat_type_4)
+        self.down4 = DownGConv(self.feat_type_4, self.feat_type_5)
+
+        self.up1 = UpGDeconv(self.feat_type_5, self.feat_type_4)
+        self.up2 = UpGDeconv(self.feat_type_4, self.feat_type_3)
+        self.up3 = UpGDeconv(self.feat_type_3, self.feat_type_2)
+        self.up4 = UpGDeconv(self.feat_type_2, self.feat_type_1)
+        self.outc = OutConv(self.feat_type_1, n_classes)
+
+    def forward(self, x):
+        x_geom = enn.GeometricTensor(x, self.feat_type_in)
+        x1 = self.inc(x_geom)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        return self.outc(x).tensor
+
+# ==========================================
+# 3. LOSS FUNCTIONS
+# ==========================================
+
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1e-5):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+
+    def forward(self, logits, true_masks):
+        num_classes = logits.shape[1]
+        true_masks_one_hot = F.one_hot(true_masks, num_classes).permute(0, 3, 1, 2).float()
+        probs = F.softmax(logits, dim=1)
+        
+        probs_target = probs[:, 1, :, :]
+        true_target = true_masks_one_hot[:, 1, :, :]
+        
+        intersection = (probs_target * true_target).sum(dim=(1, 2))
+        union = probs_target.sum(dim=(1, 2)) + true_target.sum(dim=(1, 2))
+        dice_score = (2. * intersection + self.smooth) / (union + self.smooth)
+        
+        return 1.0 - dice_score.mean()
+
+class CombinedLoss(nn.Module):
+    def __init__(self, weight_ce=1.0, weight_dice=1.0, class_weights=None):
+        super(CombinedLoss, self).__init__()
+        self.weight_ce = weight_ce
+        self.weight_dice = weight_dice
+        self.ce_loss = nn.CrossEntropyLoss(weight=class_weights)
+        self.dice_loss = DiceLoss()
+
+    def forward(self, logits, targets):
+        ce = self.ce_loss(logits, targets)
+        dice = self.dice_loss(logits, targets)
+        return (self.weight_ce * ce) + (self.weight_dice * dice)
+
+# ==========================================
+# 4. 10-FOLD CROSS VALIDATION TRAINING
+# ==========================================
+
+def train():
+    GDRIVE_ROOT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive")
+    GDRIVE_DATA_DIR = os.path.join(GDRIVE_ROOT, "Dataset_CT_Preprocessed_NPY") 
+    CSV_REPORT = os.path.join(GDRIVE_ROOT, "Dataset_CT_Report.csv")
+    LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
+    
+    local_root = prepare_local_data(GDRIVE_DATA_DIR, LOCAL_DATA_PATH)
+
+    # HYPERPARAMETERS
+    LEARNING_RATE = 1e-4
+    BATCH_SIZE = 8 
+    ACCUMULATION_STEPS = 4  
+    EPOCHS = 100
+    K_FOLDS = 10 # Defined by client request
+    NUM_CLASSES = 2     
+    INPUT_CHANNELS = 1  
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"🖥️  Device configured: {device}")
+
+    if not os.path.exists(CSV_REPORT):
+        raise FileNotFoundError(f"Cannot find CSV report at {CSV_REPORT}")
+    df = pd.read_csv(CSV_REPORT)
+    patient_col = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
+    unique_patients = df[patient_col].unique()
+
+    # Initialize K-Fold on Patient Level (Prevents Data Leakage)
+    kf = KFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
+    fold_results = []
+
+    for fold, (train_idx, val_idx) in enumerate(kf.split(unique_patients)):
+        print(f"\n{'='*40}")
+        print(f"🚀 STARTING FOLD {fold + 1}/{K_FOLDS}")
+        print(f"{'='*40}")
+
+        train_patients = unique_patients[train_idx]
+        val_patients = unique_patients[val_idx]
+
+        train_df = df[df[patient_col].isin(train_patients)]
+        val_df = df[df[patient_col].isin(val_patients)]
+
+        train_set = CTBrainDataset(train_df, local_root)
+        val_set = CTBrainDataset(val_df, local_root)
+
+        num_workers = min(os.cpu_count(), 16) if os.cpu_count() else 4
+        
+        train_loader = DataLoader(
+            train_set, batch_size=BATCH_SIZE, shuffle=True, 
+            pin_memory=True, num_workers=num_workers, 
+            prefetch_factor=2, persistent_workers=True
+        )
+        val_loader = DataLoader(
+            val_set, batch_size=BATCH_SIZE, shuffle=False, 
+            pin_memory=True, num_workers=num_workers,
+            prefetch_factor=2, persistent_workers=True
+        )
+
+        # Reset model, optimizer, and scaler for each fold
+        model = SE2_CNNET(n_channels=INPUT_CHANNELS, n_classes=NUM_CLASSES, N=8, base_channels=24).to(device)
+        class_weights = torch.tensor([1.0, 50.0]).to(device)
+        criterion = CombinedLoss(weight_ce=1.0, weight_dice=1.0, class_weights=class_weights)
+        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+        scaler = torch.amp.GradScaler('cuda')
+
+        best_val_loss = float('inf')
+
+        # Epoch Loop
+        for epoch in range(EPOCHS):
+            model.train()
+            running_loss = 0.0
+            optimizer.zero_grad()
+
+            pbar_train = tqdm(train_loader, desc=f"Fold {fold+1} - Epoch {epoch+1}/{EPOCHS} [Train]")
+            for i, (images, labels) in enumerate(pbar_train):
+                images = images.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
+
+                with torch.amp.autocast('cuda'):
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                    loss = loss / ACCUMULATION_STEPS 
+
+                scaler.scale(loss).backward()
+
+                if (i + 1) % ACCUMULATION_STEPS == 0:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
+                running_loss += loss.item() * ACCUMULATION_STEPS
+                pbar_train.set_postfix({'loss': loss.item() * ACCUMULATION_STEPS})
+                del outputs, loss
+
+            if len(train_loader) % ACCUMULATION_STEPS != 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+
+            avg_train_loss = running_loss / len(train_loader)
+
+            # Validation Phase
+            model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                pbar_val = tqdm(val_loader, desc=f"Fold {fold+1} - Epoch {epoch+1}/{EPOCHS} [Val]")
+                for images, labels in pbar_val:
+                    images = images.to(device, non_blocking=True)
+                    labels = labels.to(device, non_blocking=True)
+
+                    with torch.amp.autocast('cuda'): 
+                        outputs = model(images)
+                        loss = criterion(outputs, labels)
+
+                    val_loss += loss.item()
+                    pbar_val.set_postfix({'val_loss': loss.item()})
+                    del outputs, loss
+
+            avg_val_loss = val_loss / len(val_loader)
+            print(f"Fold {fold+1} | Epoch {epoch+1}/{EPOCHS} -> Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+
+            # Save only the best model for this specific fold
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                save_path = f'se2_unet_best_fold_{fold+1}.pth'
+                torch.save(model.state_dict(), save_path)
+                print(f"🌟 Best model saved for Fold {fold+1} with Val Loss: {best_val_loss:.4f}")
+                
+            torch.cuda.empty_cache()
+        
+        fold_results.append(best_val_loss)
+        print(f"✅ Fold {fold+1} Complete. Best Val Loss: {best_val_loss:.4f}")
+
+    print(f"\n{'='*40}")
+    print(f"🎉 10-FOLD CROSS VALIDATION FINISHED!")
+    print(f"Average Best Validation Loss across 10 folds: {sum(fold_results)/K_FOLDS:.4f}")
+    print(f"{'='*40}")
+
+# ==========================================
+# 5. LOGGING UTILITY
+# ==========================================
+
+class Logger:
+    def __init__(self, filename, stream):
+        self.terminal = stream
+        self.log = open(filename, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+if __name__ == "__main__":
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"training_10fold_cv_log_{timestamp}.txt"
+    sys.stdout = Logger(log_filename, sys.stdout)
+    sys.stderr = Logger(log_filename, sys.stderr)
+    
+    print(f"📝 Logging 10-Fold CV terminal output to {log_filename}")
+    train()
