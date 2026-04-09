@@ -275,7 +275,7 @@ def generate_robustness_proof(test_loader, se2_model, unet_model, device):
 
 
 # ==========================================
-# 4. MAIN EVALUATION SCRIPT
+# 4. MAIN EVALUATION SCRIPT (DUAL REPORT)
 # ==========================================
 
 def evaluate_all():
@@ -311,54 +311,80 @@ def evaluate_all():
     unet_model.load_state_dict(torch.load(UNET_MODEL_WEIGHTS, map_location=device))
     unet_model.eval()
 
-    # Confusion Matrix accumulators (For SE2-CNNET Report)
-    TP, FP, TN, FN = 0, 0, 0, 0
+    # Confusion Matrix accumulators for BOTH models
+    TP_se2, FP_se2, TN_se2, FN_se2 = 0, 0, 0, 0
+    TP_unet, FP_unet, TN_unet, FN_unet = 0, 0, 0, 0
 
-    print("🚀 Starting voxel-wise evaluation for SE2-CNNET...")
+    print("🚀 Starting voxel-wise evaluation for BOTH models...")
     with torch.no_grad():
         for images, labels in tqdm(test_loader, desc="Evaluating"):
             images = images.to(device)
             labels = labels.to(device)
-
-            logits = se2_model(images)
-            probs = F.softmax(logits, dim=1)
-            preds = torch.argmax(probs, dim=1)
-
-            preds_flat = preds.view(-1)
             labels_flat = labels.view(-1)
 
-            TP += ((preds_flat == 1) & (labels_flat == 1)).sum().item()
-            FP += ((preds_flat == 1) & (labels_flat == 0)).sum().item()
-            TN += ((preds_flat == 0) & (labels_flat == 0)).sum().item()
-            FN += ((preds_flat == 0) & (labels_flat == 1)).sum().item()
+            # --- EVALUATE SE2-CNNET ---
+            logits_se2 = se2_model(images)
+            preds_se2 = torch.argmax(F.softmax(logits_se2, dim=1), dim=1).view(-1)
+            
+            TP_se2 += ((preds_se2 == 1) & (labels_flat == 1)).sum().item()
+            FP_se2 += ((preds_se2 == 1) & (labels_flat == 0)).sum().item()
+            TN_se2 += ((preds_se2 == 0) & (labels_flat == 0)).sum().item()
+            FN_se2 += ((preds_se2 == 0) & (labels_flat == 1)).sum().item()
 
-    # Calculate Metrics
-    epsilon = 1e-7 
-    precision_1 = TP / (TP + FP + epsilon)
-    recall_1 = TP / (TP + FN + epsilon)
-    f1_score_1 = 2 * (precision_1 * recall_1) / (precision_1 + recall_1 + epsilon)
-    iou_1 = TP / (TP + FP + FN + epsilon)
+            # --- EVALUATE STANDARD U-NET ---
+            logits_unet = unet_model(images)
+            preds_unet = torch.argmax(F.softmax(logits_unet, dim=1), dim=1).view(-1)
+            
+            TP_unet += ((preds_unet == 1) & (labels_flat == 1)).sum().item()
+            FP_unet += ((preds_unet == 1) & (labels_flat == 0)).sum().item()
+            TN_unet += ((preds_unet == 0) & (labels_flat == 0)).sum().item()
+            FN_unet += ((preds_unet == 0) & (labels_flat == 1)).sum().item()
 
-    precision_0 = TN / (TN + FN + epsilon)
-    recall_0 = TN / (TN + FP + epsilon)
-    f1_score_0 = 2 * (precision_0 * recall_0) / (precision_0 + recall_0 + epsilon)
+    # --- CALCULATE METRICS FUNCTION ---
+    def calculate_metrics(TP, FP, TN, FN):
+        epsilon = 1e-7 
+        precision_1 = TP / (TP + FP + epsilon)
+        recall_1 = TP / (TP + FN + epsilon)
+        f1_score_1 = 2 * (precision_1 * recall_1) / (precision_1 + recall_1 + epsilon)
+        iou_1 = TP / (TP + FP + FN + epsilon)
 
-    total_voxels = TP + FP + TN + FN
-    accuracy = (TP + TN) / total_voxels
+        precision_0 = TN / (TN + FN + epsilon)
+        recall_0 = TN / (TN + FP + epsilon)
+        f1_score_0 = 2 * (precision_0 * recall_0) / (precision_0 + recall_0 + epsilon)
+        
+        accuracy = (TP + TN) / (TP + FP + TN + FN)
+        return precision_0, recall_0, f1_score_0, precision_1, recall_1, f1_score_1, iou_1, accuracy, (TP + FP + TN + FN)
 
-    # Print Report
+    # Get metrics for both
+    p0_se2, r0_se2, f0_se2, p1_se2, r1_se2, f1_se2, iou_se2, acc_se2, total_voxels = calculate_metrics(TP_se2, FP_se2, TN_se2, FN_se2)
+    p0_unet, r0_unet, f0_unet, p1_unet, r1_unet, f1_unet, iou_unet, acc_unet, _ = calculate_metrics(TP_unet, FP_unet, TN_unet, FN_unet)
+
+    # --- PRINT REPORT FOR STANDARD U-NET ---
     print("\n" + "="*60)
-    print("VOXEL-WISE CLASSIFICATION REPORT (SE2-CNNET)")
+    print("VOXEL-WISE CLASSIFICATION REPORT (STANDARD U-NET BASELINE)")
     print("="*60)
-    print(f"{'Class':<15} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10} | {'Support':<15}")
+    print(f"{'Class':<15} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
     print("-" * 60)
-    print(f"{'0 (Background)':<15} | {precision_0:<10.4f} | {recall_0:<10.4f} | {f1_score_0:<10.4f} | {(TN + FP):<15,}")
-    print(f"{'1 (Brain Target)':<15} | {precision_1:<10.4f} | {recall_1:<10.4f} | {f1_score_1:<10.4f} | {(TP + FN):<15,}")
+    print(f"{'0 (Background)':<15} | {p0_unet:<10.4f} | {r0_unet:<10.4f} | {f0_unet:<10.4f}")
+    print(f"{'1 (Brain Target)':<15} | {p1_unet:<10.4f} | {r1_unet:<10.4f} | {f1_unet:<10.4f}")
     print("-" * 60)
-    print(f"{'Accuracy':<15} | {' ':<10} | {' ':<10} | {accuracy:<10.4f} | {total_voxels:<15,}")
+    print(f"Accuracy: {acc_unet:.4f}")
+    print(f"🔥 Target Class IoU : {iou_unet:.4f} ({iou_unet*100:.2f}%)")
+    print(f"🎯 Target Class Dice: {f1_unet:.4f} ({f1_unet*100:.2f}%)")
     print("="*60)
-    print(f"🔥 Target Class IoU (Jaccard Index) : {iou_1:.4f} ({iou_1*100:.2f}%)")
-    print(f"🎯 Target Class Dice Score (F1)     : {f1_score_1:.4f} ({f1_score_1*100:.2f}%)")
+
+    # --- PRINT REPORT FOR SE2-CNNET ---
+    print("\n" + "="*60)
+    print("VOXEL-WISE CLASSIFICATION REPORT (SE2-CNNET - OURS)")
+    print("="*60)
+    print(f"{'Class':<15} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
+    print("-" * 60)
+    print(f"{'0 (Background)':<15} | {p0_se2:<10.4f} | {r0_se2:<10.4f} | {f0_se2:<10.4f}")
+    print(f"{'1 (Brain Target)':<15} | {p1_se2:<10.4f} | {r1_se2:<10.4f} | {f1_se2:<10.4f}")
+    print("-" * 60)
+    print(f"Accuracy: {acc_se2:.4f}")
+    print(f"🔥 Target Class IoU : {iou_se2:.4f} ({iou_se2*100:.2f}%)")
+    print(f"🎯 Target Class Dice: {f1_se2:.4f} ({f1_se2*100:.2f}%)")
     print("="*60)
 
     # CALL VISUALIZATION FUNCTION
