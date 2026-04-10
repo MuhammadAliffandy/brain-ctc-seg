@@ -1,8 +1,4 @@
 import os
-
-os.environ["KAGGLE_USERNAME"] = "muhammadaliffandy"
-os.environ["KAGGLE_KEY"] = "KGAT_6cf20e173408038efc8c307643a53392"
-
 import torch
 import torch.nn as nn
 import numpy as np
@@ -220,7 +216,8 @@ def run_inference():
         return
 
     # --- CONFIGURATION ---
-    MODEL_WEIGHTS_PATH = "model_epoch_100.pth" 
+    # NAMA MODEL DIKEMBALIKAN KE VERSI AWAL
+    MODEL_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
     OUTPUT_DIR = os.path.expanduser("~/Clara/inference_results")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
