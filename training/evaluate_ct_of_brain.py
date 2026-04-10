@@ -262,7 +262,7 @@ def evaluate_all():
     # --- CONFIGURATION ---
     # Path model tetap seperti aslinya
     MODEL_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
-    BATCH_SIZE = 32 # Large batch size for inference on DGX H100
+    BATCH_SIZE = 4 # Large batch size for inference on DGX H100
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n🚀 Hardware accelerated on: {device}")
