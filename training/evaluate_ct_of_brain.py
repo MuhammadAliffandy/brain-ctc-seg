@@ -26,7 +26,7 @@ def download_and_prepare_kaggle_data():
     print("="*50)
     
     try:
-        download_path = kagglehub.dataset_download("trainingdatapro/computed-tomography-ct-of-the-brain")
+        download_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
         print(f"✅ Download berhasil! Cache: {download_path}")
     except Exception as e:
         print(f"❌ Gagal mendownload dataset. Error: {e}")
