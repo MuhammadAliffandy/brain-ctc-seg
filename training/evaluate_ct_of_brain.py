@@ -4,6 +4,7 @@ os.environ["KAGGLE_USERNAME"] = "muhammadaliffandy"
 os.environ["KAGGLE_KEY"] = "KGAT_6cf20e173408038efc8c307643a53392"
 
 import torch
+import shutil
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
@@ -20,12 +21,19 @@ import escnn.nn as enn
 # 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING
 # ==========================================
 
+# Pastikan Anda punya 'import shutil' di baris atas bersama import lainnya
+
+# ==========================================
+# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING
+# ==========================================
+
 def download_and_prepare_kaggle_data():
     print("\n" + "="*50)
     print("📥 TAHAP 1: DOWNLOAD DATASET DARI KAGGLE")
     print("="*50)
     
     try:
+        # Sudah mengarah ke dataset yang benar
         download_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
         print(f"✅ Download berhasil! Cache: {download_path}")
     except Exception as e:
@@ -33,6 +41,11 @@ def download_and_prepare_kaggle_data():
         return None
 
     TARGET_DIR = os.path.expanduser("~/Clara/public_dataset_npy")
+    
+    # Bersihkan folder dari error yang sebelumnya agar tidak menumpuk
+    if os.path.exists(TARGET_DIR):
+        import shutil
+        shutil.rmtree(TARGET_DIR)
     os.makedirs(TARGET_DIR, exist_ok=True)
     
     print("\n" + "="*50)
@@ -44,20 +57,31 @@ def download_and_prepare_kaggle_data():
         for f in files:
             all_files.append(os.path.join(root, f))
             
-    img_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg')) and 'mask' not in f.lower()]
-    mask_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg')) and 'mask' in f.lower()]
+    # --- PERBAIKAN LOGIKA PENCARIAN MASK ---
+    # Sekarang kita deteksi file yang mengandung kata 'mask' ATAU 'seg'
+    mask_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg')) and ('mask' in f.lower() or 'seg' in f.lower())]
+    # File gambar adalah sisanya
+    img_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg')) and f not in mask_files]
     
     if len(img_files) == 0:
         print("⚠️ Tidak menemukan gambar berformat .png/.jpg. Mengecek file .npy...")
         return TARGET_DIR
 
-    print(f"🔍 Ditemukan {len(img_files)} Gambar dan {len(mask_files)} Mask.")
-    print("Memulai konversi ke format Array Numpy (.npy)...")
+    print(f"🔍 Ditemukan {len(img_files)} Gambar CT dan {len(mask_files)} Mask Segmentasi.")
+    print("Memulai konversi ke format Array Numpy (.npy) & Pemasangan Data...")
     
     processed_count = 0
     for img_path in tqdm(img_files, desc="Konversi Data"):
+        # Ambil angka ID gambar (contoh: "1.jpg" jadi "1")
         base_name = os.path.basename(img_path).split('.')[0]
-        matching_mask = next((m for m in mask_files if base_name in m), None)
+        
+        # Cari mask yang namanya diawali dengan ID gambar tersebut (contoh: "1_HGE_Seg.jpg")
+        matching_mask = None
+        for m in mask_files:
+            m_base = os.path.basename(m)
+            if m_base.startswith(base_name + "_") or m_base == os.path.basename(img_path):
+                matching_mask = m
+                break
         
         if matching_mask:
             try:
@@ -73,7 +97,7 @@ def download_and_prepare_kaggle_data():
             except Exception as e:
                 pass
 
-    print(f"✅ Konversi Selesai! {processed_count} data tersimpan di: {TARGET_DIR}")
+    print(f"✅ Konversi Selesai! {processed_count} pasang data tersimpan di: {TARGET_DIR}")
     return TARGET_DIR
 
 # ==========================================
