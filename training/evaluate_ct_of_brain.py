@@ -189,8 +189,10 @@ class SE2_CNNET(nn.Module):
         x = self.up4(x, x1)
         return self.outc(x).tensor
 
+
+
 # ==========================================
-# 2. GLOBAL DATASET LOADER
+# 2. GLOBAL DATASET LOADER (UPDATED WITH RESIZE)
 # ==========================================
 
 class FullCTDataset(Dataset):
@@ -202,14 +204,12 @@ class FullCTDataset(Dataset):
         
         print(f"🔍 Scanning directory for evaluation data: {root_dir}...")
         
-        # Menggunakan os.walk agar bisa mencari file di folder flat (hasil Kaggle) maupun sub-folder
         for root, dirs, files in os.walk(root_dir):
             img_files = sorted([f for f in files if f.endswith('_img.npy')])
             for img_name in img_files:
                 img_path = os.path.join(root, img_name)
                 mask_path = img_path.replace('_img.npy', '_mask.npy')
                 
-                # Verify that the corresponding mask actually exists
                 if os.path.exists(mask_path):
                     self.slice_pairs.append((img_path, mask_path))
                     
@@ -225,13 +225,27 @@ class FullCTDataset(Dataset):
         image = np.load(img_path).astype(np.float32)
         mask = np.load(mask_path).astype(np.uint8)
         
-        # Pastikan gambar punya dimensi channel (1, H, W)
         if len(image.shape) == 2:
             image = np.expand_dims(image, axis=0)
             
-        # Convert to tensors
-        image_tensor = torch.from_numpy(image)
-        mask_tensor = torch.from_numpy(mask).long()
+        # Convert to tensors and add batch dimension temporarily for interpolation
+        image_tensor = torch.from_numpy(image).unsqueeze(0) # Shape: [1, 1, H, W]
+        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() # Shape: [1, 1, H, W]
+        
+        # ==========================================
+        # 🪄 RESIZE MAGIC MENCEGAH U-NET CRASH
+        # ==========================================
+        # Ubah ukuran (512, 512) menjadi (256, 256) jika waktu training model 
+        # se2_unet_epoch_100.pth dulu Anda menggunakan ukuran 256x256.
+        TARGET_SIZE = (512, 512) 
+        
+        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
+        # Gunakan mode 'nearest' untuk mask agar labelnya tetap murni 0 atau 1 (tidak jadi desimal)
+        mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
+        
+        # Kembalikan ke dimensi aslinya
+        image_tensor = image_tensor.squeeze(0) # Shape: [1, 256, 256]
+        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long() # Shape: [256, 256]
         
         return image_tensor, mask_tensor
 
