@@ -10,3 +10,4 @@ python-dotenv
 pillow
 escnn
 openai
+kagglehub
