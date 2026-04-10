@@ -1,4 +1,8 @@
 import os
+
+os.environ["KAGGLE_USERNAME"] = "muhammadaliffandy"
+os.environ["KAGGLE_KEY"] = "KGAT_6cf20e173408038efc8c307643a53392"
+
 import torch
 import torch.nn as nn
 import numpy as np
