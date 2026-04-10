@@ -271,7 +271,7 @@ def generate_robustness_proof(test_loader, se2_model, unet_model, device):
     output_filename = "robustness_proof_visualization.png"
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     plt.close(fig)
-    print(f"✅ Visualization successfully saved to: {output_filename}")
+    print(f"✅ Visualization successfully saved to: {output_filename}\n")
 
 
 # ==========================================
