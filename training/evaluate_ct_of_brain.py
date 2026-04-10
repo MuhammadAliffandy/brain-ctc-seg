@@ -21,10 +21,8 @@ import escnn.nn as enn
 # 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING
 # ==========================================
 
-# Pastikan Anda punya 'import shutil' di baris atas bersama import lainnya
-
 # ==========================================
-# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING
+# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING (UPDATED LOGIC)
 # ==========================================
 
 def download_and_prepare_kaggle_data():
@@ -33,7 +31,6 @@ def download_and_prepare_kaggle_data():
     print("="*50)
     
     try:
-        # Sudah mengarah ke dataset yang benar
         download_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
         print(f"✅ Download berhasil! Cache: {download_path}")
     except Exception as e:
@@ -42,62 +39,68 @@ def download_and_prepare_kaggle_data():
 
     TARGET_DIR = os.path.expanduser("~/Clara/public_dataset_npy")
     
-    # Bersihkan folder dari error yang sebelumnya agar tidak menumpuk
+    import shutil
     if os.path.exists(TARGET_DIR):
-        import shutil
         shutil.rmtree(TARGET_DIR)
     os.makedirs(TARGET_DIR, exist_ok=True)
     
     print("\n" + "="*50)
-    print("⚙️ TAHAP 2: AUTO-PREPROCESSING (Konversi ke .npy)")
+    print("⚙️ TAHAP 2: PREPROCESSING MENGGUNAKAN LOGIKA ASLI AUTHOR KAGGLE")
     print("="*50)
     
-    all_files = []
-    for root, dirs, files in os.walk(download_path):
-        for f in files:
-            all_files.append(os.path.join(root, f))
-            
-    # --- PERBAIKAN LOGIKA PENCARIAN MASK ---
-    # Sekarang kita deteksi file yang mengandung kata 'mask' ATAU 'seg'
-    mask_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg')) and ('mask' in f.lower() or 'seg' in f.lower())]
-    # File gambar adalah sisanya
-    img_files = [f for f in all_files if f.lower().endswith(('.png', '.jpg', '.jpeg')) and f not in mask_files]
-    
-    if len(img_files) == 0:
-        print("⚠️ Tidak menemukan gambar berformat .png/.jpg. Mengecek file .npy...")
-        return TARGET_DIR
-
-    print(f"🔍 Ditemukan {len(img_files)} Gambar CT dan {len(mask_files)} Mask Segmentasi.")
-    print("Memulai konversi ke format Array Numpy (.npy) & Pemasangan Data...")
-    
     processed_count = 0
-    for img_path in tqdm(img_files, desc="Konversi Data"):
-        # Ambil angka ID gambar (contoh: "1.jpg" jadi "1")
-        base_name = os.path.basename(img_path).split('.')[0]
+    normal_count = 0
+    hemorrhage_count = 0
+    
+    for root, dirs, files in tqdm(list(os.walk(download_path)), desc="Scanning & Converting"):
         
-        # Cari mask yang namanya diawali dengan ID gambar tersebut (contoh: "1_HGE_Seg.jpg")
-        matching_mask = None
-        for m in mask_files:
-            m_base = os.path.basename(m)
-            if m_base.startswith(base_name + "_") or m_base == os.path.basename(img_path):
-                matching_mask = m
-                break
+        # HANYA proses folder yang bernama 'brain' (jaringan lunak)
+        if os.path.basename(root).lower() != 'brain':
+            continue
+            
+        # Ambil semua file gambar asli (abaikan file segmentasi)
+        img_files = [f for f in files if f.lower().endswith('.jpg') and 'seg' not in f.lower()]
         
-        if matching_mask:
+        for img_name in img_files:
+            base_name = img_name.split('.')[0]
+            img_path = os.path.join(root, img_name)
+            
+            # Berdasarkan struktur Kaggle, mask bernama "{base_name}_HGE_Seg.jpg"
+            mask_path = os.path.join(root, f"{base_name}_HGE_Seg.jpg")
+            
             try:
+                # 1. LOAD CITRA OTAK
                 img_array = np.array(Image.open(img_path).convert('L'), dtype=np.float32)
                 if img_array.max() > 1.0: img_array = img_array / 255.0
                 
-                mask_array = np.array(Image.open(matching_mask).convert('L'), dtype=np.uint8)
-                mask_array = np.where(mask_array > 128, 1, 0).astype(np.uint8)
+                # 2. LOAD ATAU BUAT MASK
+                if os.path.exists(mask_path):
+                    # Kasus Positif (Ada pendarahan)
+                    mask_array = np.array(Image.open(mask_path).convert('L'), dtype=np.uint8)
+                    mask_array = np.where(mask_array > 128, 1, 0).astype(np.uint8)
+                    hemorrhage_count += 1
+                else:
+                    # Kasus Negatif (Otak Sehat) -> Buat Mask Kosong (seperti kodingan asli Kaggle)
+                    mask_array = np.zeros_like(img_array, dtype=np.uint8)
+                    normal_count += 1
                 
-                np.save(os.path.join(TARGET_DIR, f"{base_name}_img.npy"), img_array)
-                np.save(os.path.join(TARGET_DIR, f"{base_name}_mask.npy"), mask_array)
+                # 3. SIMPAN KE NPY
+                patient_id = os.path.basename(os.path.dirname(root)) # Ambil ID pasien dari folder induk
+                unique_prefix = f"Patient_{patient_id}_{base_name}"
+                
+                np.save(os.path.join(TARGET_DIR, f"{unique_prefix}_img.npy"), img_array)
+                np.save(os.path.join(TARGET_DIR, f"{unique_prefix}_mask.npy"), mask_array)
                 processed_count += 1
+                
             except Exception as e:
                 pass
 
-    print(f"✅ Konversi Selesai! {processed_count} pasang data tersimpan di: {TARGET_DIR}")
+    print(f"\n✅ Preprocessing Selesai!")
+    print(f"📊 Total Data  : {processed_count} pasang (.npy)")
+    print(f"   -> Kasus Positif (Tumor/Pendarahan) : {hemorrhage_count} slice")
+    print(f"   -> Kasus Negatif (Otak Sehat)       : {normal_count} slice")
+    print(f"💾 Lokasi Tersimpan: {TARGET_DIR}")
+    
     return TARGET_DIR
 
 # ==========================================
