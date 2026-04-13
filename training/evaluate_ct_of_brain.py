@@ -1,5 +1,6 @@
 import os
 
+# Set Kaggle Credentials (if needed)
 os.environ["KAGGLE_USERNAME"] = "muhammadaliffandy"
 os.environ["KAGGLE_KEY"] = "KGAT_6cf20e173408038efc8c307643a53392"
 
@@ -7,99 +8,21 @@ import torch
 import shutil
 import torch.nn as nn
 import numpy as np
-import pandas as pd # ADDED: For CSV Reporting
-import matplotlib.pyplot as plt # ADDED: For saving visual proofs
-plt.switch_backend('agg') # Safe backend for DGX server without display
+import pandas as pd 
+import matplotlib.pyplot as plt 
+plt.switch_backend('agg') 
 from tqdm import tqdm
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
-import kagglehub
 
 # E2CNN Specific Libraries
 from escnn import gspaces
 import escnn.nn as enn
 
 # ==========================================
-# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING 
-# ==========================================
-
-def download_and_prepare_kaggle_data():
-    print("\n" + "="*50)
-    print("📥 STAGE 1: DOWNLOAD DATASET FROM KAGGLE")
-    print("="*50)
-    
-    try:
-        download_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
-        print(f"✅ Download successful! Cache: {download_path}")
-    except Exception as e:
-        print(f"❌ Failed to download dataset. Error: {e}")
-        return None
-
-    TARGET_DIR = os.path.expanduser("~/Clara/public_dataset_npy")
-    
-    if os.path.exists(TARGET_DIR):
-        shutil.rmtree(TARGET_DIR)
-    os.makedirs(TARGET_DIR, exist_ok=True)
-    
-    print("\n" + "="*50)
-    print("⚙️ STAGE 2: PREPROCESSING USING AUTHOR'S LOGIC")
-    print("="*50)
-    
-    processed_count = 0
-    normal_count = 0
-    hemorrhage_count = 0
-    
-    for root, dirs, files in tqdm(list(os.walk(download_path)), desc="Scanning & Converting"):
-        
-        # ONLY process 'brain' folders (soft tissue)
-        if os.path.basename(root).lower() != 'brain':
-            continue
-            
-        img_files = [f for f in files if f.lower().endswith('.jpg') and 'seg' not in f.lower()]
-        
-        for img_name in img_files:
-            base_name = img_name.split('.')[0]
-            img_path = os.path.join(root, img_name)
-            
-            mask_path = os.path.join(root, f"{base_name}_HGE_Seg.jpg")
-            
-            try:
-                # 1. LOAD CT IMAGE
-                img_array = np.array(Image.open(img_path).convert('L'), dtype=np.float32)
-                if img_array.max() > 1.0: img_array = img_array / 255.0
-                
-                # 2. LOAD OR CREATE MASK
-                if os.path.exists(mask_path):
-                    mask_array = np.array(Image.open(mask_path).convert('L'), dtype=np.uint8)
-                    mask_array = np.where(mask_array > 128, 1, 0).astype(np.uint8)
-                    hemorrhage_count += 1
-                else:
-                    mask_array = np.zeros_like(img_array, dtype=np.uint8)
-                    normal_count += 1
-                
-                # 3. SAVE TO NPY
-                patient_id = os.path.basename(os.path.dirname(root)) 
-                unique_prefix = f"Patient_{patient_id}_{base_name}"
-                
-                np.save(os.path.join(TARGET_DIR, f"{unique_prefix}_img.npy"), img_array)
-                np.save(os.path.join(TARGET_DIR, f"{unique_prefix}_mask.npy"), mask_array)
-                processed_count += 1
-                
-            except Exception as e:
-                pass
-
-    print(f"\n✅ Preprocessing Complete!")
-    print(f"📊 Total Data  : {processed_count} pairs (.npy)")
-    print(f"   -> Positive Cases (Tumor) : {hemorrhage_count} slices")
-    print(f"   -> Negative Cases (Healthy) : {normal_count} slices")
-    
-    return TARGET_DIR
-
-# ==========================================
 # 1. MODEL ARCHITECTURE
 # ==========================================
-# (Architecture remains exactly the same)
 class DoubleEquivariantConv(nn.Module):
     def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
@@ -183,9 +106,8 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. DATASET LOADER (MODIFIED TO RETURN FILENAMES)
+# 2. DATASET LOADER 
 # ==========================================
-
 class FullCTDataset(Dataset):
     def __init__(self, root_dir):
         self.slice_pairs = []
@@ -202,7 +124,7 @@ class FullCTDataset(Dataset):
 
     def __getitem__(self, idx):
         img_path, mask_path = self.slice_pairs[idx]
-        filename = os.path.basename(img_path) # ADDED: Capture filename for reporting
+        filename = os.path.basename(img_path) 
         
         image = np.load(img_path).astype(np.float32)
         mask = np.load(mask_path).astype(np.uint8)
@@ -220,19 +142,12 @@ class FullCTDataset(Dataset):
         image_tensor = image_tensor.squeeze(0) 
         mask_tensor = mask_tensor.squeeze(0).squeeze(0).long() 
         
-        # RETURN FILENAME TOO
         return image_tensor, mask_tensor, filename
 
 # ==========================================
 # 3. GLOBAL EVALUATION ENGINE & CLIENT REPORTER
 # ==========================================
-
-# HELPER FUNCTION: Calculate physical size
 def calculate_tumor_size(binary_mask, pixel_spacing_mm=0.5, slice_thickness_mm=1.0):
-    """
-    Calculates estimated area and volume from the segmented pixels.
-    Assumes standard CT spacing if not provided in metadata.
-    """
     pixel_count = np.sum(binary_mask == 1)
     area_mm2 = pixel_count * (pixel_spacing_mm ** 2)
     volume_mm3 = area_mm2 * slice_thickness_mm
@@ -244,19 +159,20 @@ def calculate_tumor_size(binary_mask, pixel_spacing_mm=0.5, slice_thickness_mm=1
     }
 
 def evaluate_all():
-    PUBLIC_DATA_PATH = download_and_prepare_kaggle_data()
-    if not PUBLIC_DATA_PATH:
+    PUBLIC_DATA_PATH = os.path.expanduser("~/Clara/public_dataset_npy")
+    if not os.path.exists(PUBLIC_DATA_PATH):
+        print("❌ Dataset tidak ditemukan. Harap pastikan data NPY sudah ada.")
         return
 
-    # --- CLIENT DELIVERABLES DIRECTORY ---
-    CLIENT_REPORTS_DIR = os.path.expanduser("~/Clara/client_reports")
+    # --- NEW CLIENT DIRECTORY ---
+    CLIENT_REPORTS_DIR = os.path.expanduser("~/Clara/client_reports_finetuned")
     VISUALS_DIR = os.path.join(CLIENT_REPORTS_DIR, "visual_proofs")
     os.makedirs(VISUALS_DIR, exist_ok=True)
     
-    # Store data for Excel/CSV
     report_data_list = []
 
-    MODEL_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
+    # --- USE NEW FINETUNED WEIGHTS ---
+    MODEL_WEIGHTS_PATH = "se2_unet_finetuned.pth" 
     BATCH_SIZE = 4 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -264,9 +180,9 @@ def evaluate_all():
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
     try:
         model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True))
-        print(f"✅ Loaded weights from {MODEL_WEIGHTS_PATH}")
+        print(f"✅ Loaded NEW FINETUNED weights from {MODEL_WEIGHTS_PATH}")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error loading weights: {e}")
         return
         
     model.eval()
@@ -277,7 +193,7 @@ def evaluate_all():
 
     total_tp, total_tn, total_fp, total_fn = 0, 0, 0, 0
 
-    print("\n⚡ Running Inference & Generating Client Reports...")
+    print("\n⚡ Running Evaluation & Generating Client Reports (Finetuned Version)...")
     
     with torch.no_grad():
         for images, masks, filenames in tqdm(dataloader, desc="Evaluating"):
@@ -288,7 +204,6 @@ def evaluate_all():
             probs = F.softmax(logits, dim=1)
             preds = torch.argmax(probs, dim=1) 
             
-            # --- GLOBAL METRICS ACCUMULATION ---
             preds_flat = preds.view(-1)
             masks_flat = masks.view(-1)
             total_tp += torch.sum((preds_flat == 1) & (masks_flat == 1)).item()
@@ -296,17 +211,14 @@ def evaluate_all():
             total_fp += torch.sum((preds_flat == 1) & (masks_flat == 0)).item()
             total_fn += torch.sum((preds_flat == 0) & (masks_flat == 1)).item()
 
-            # --- PER-SLICE REPORTING & VISUALIZATION ---
             for i in range(len(filenames)):
                 filename = filenames[i].replace('_img.npy', '')
                 true_mask_np = masks[i].cpu().numpy()
                 pred_mask_np = preds[i].cpu().numpy()
                 img_np = images[i].squeeze(0).cpu().numpy()
                 
-                # Calculate Size
                 size_metrics = calculate_tumor_size(pred_mask_np)
                 
-                # Append to CSV Report
                 report_data_list.append({
                     "Slice_ID": filename,
                     "Has_Ground_Truth_Tumor": "Yes" if np.sum(true_mask_np) > 0 else "No",
@@ -316,11 +228,10 @@ def evaluate_all():
                     "Detected_Pixels": size_metrics["Pixel_Count"]
                 })
                 
-                # SAVE VISUAL PROOF 
                 if np.sum(true_mask_np) > 0 or size_metrics["Pixel_Count"] > 0:
                     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
                     
-                    # Trik agar warna 0 jadi tembus pandang
+                    # --- MATPLOTLIB BACKGROUND FIX ---
                     true_masked = np.ma.masked_where(true_mask_np == 0, true_mask_np)
                     pred_masked = np.ma.masked_where(pred_mask_np == 0, pred_mask_np)
                     
@@ -339,12 +250,12 @@ def evaluate_all():
                     axes[2].axis('off')
                     
                     plt.tight_layout()
-                    plt.savefig(os.path.join(VISUALS_DIR, f"{filename}_proof.jpg"), dpi=150)
-                    plt.close(fig)
+                    plt.savefig(os.path.join(VISUALS_DIR, f"{filename}_proof.jpg"), dpi=150, bbox_inches='tight')
+                    plt.close(fig) 
 
     # --- SAVE CSV REPORT ---
     report_df = pd.DataFrame(report_data_list)
-    csv_path = os.path.join(CLIENT_REPORTS_DIR, "Tumor_Size_Estimation_Report.csv")
+    csv_path = os.path.join(CLIENT_REPORTS_DIR, "Tumor_Size_Estimation_Report_Finetuned.csv")
     report_df.to_csv(csv_path, index=False)
 
     # --- PRINT GLOBAL METRICS ---
@@ -353,13 +264,12 @@ def evaluate_all():
     global_iou = total_tp / (total_tp + total_fp + total_fn + epsilon)
 
     print("\n" + "🌟"*20)
-    print(f"  CLIENT DELIVERABLES READY!")
+    print(f"  CLIENT DELIVERABLES READY! (FINETUNED)")
     print("🌟"*20)
     print(f"🔥 Global Dice Score : {global_dice:.4f} ({(global_dice*100):.2f}%)")
     print(f"🎯 Global IoU Score  : {global_iou:.4f} ({(global_iou*100):.2f}%)")
     print(f"\n📁 VISUAL PROOFS SAVED TO : {VISUALS_DIR}")
     print(f"📄 EXCEL/CSV REPORT SAVED TO: {csv_path}")
-    print("-> Tunjukkan folder dan file CSV tersebut ke klien Anda sebagai bukti nyata!")
 
 if __name__ == "__main__":
     evaluate_all()
