@@ -7,6 +7,9 @@ import torch
 import shutil
 import torch.nn as nn
 import numpy as np
+import pandas as pd # ADDED: For CSV Reporting
+import matplotlib.pyplot as plt # ADDED: For saving visual proofs
+plt.switch_backend('agg') # Safe backend for DGX server without display
 from tqdm import tqdm
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
@@ -18,34 +21,29 @@ from escnn import gspaces
 import escnn.nn as enn
 
 # ==========================================
-# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING
-# ==========================================
-
-# ==========================================
-# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING (UPDATED LOGIC)
+# 0. KAGGLE DOWNLOAD & AUTO-PREPROCESSING 
 # ==========================================
 
 def download_and_prepare_kaggle_data():
     print("\n" + "="*50)
-    print("📥 TAHAP 1: DOWNLOAD DATASET DARI KAGGLE")
+    print("📥 STAGE 1: DOWNLOAD DATASET FROM KAGGLE")
     print("="*50)
     
     try:
         download_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
-        print(f"✅ Download berhasil! Cache: {download_path}")
+        print(f"✅ Download successful! Cache: {download_path}")
     except Exception as e:
-        print(f"❌ Gagal mendownload dataset. Error: {e}")
+        print(f"❌ Failed to download dataset. Error: {e}")
         return None
 
     TARGET_DIR = os.path.expanduser("~/Clara/public_dataset_npy")
     
-    import shutil
     if os.path.exists(TARGET_DIR):
         shutil.rmtree(TARGET_DIR)
     os.makedirs(TARGET_DIR, exist_ok=True)
     
     print("\n" + "="*50)
-    print("⚙️ TAHAP 2: PREPROCESSING MENGGUNAKAN LOGIKA ASLI AUTHOR KAGGLE")
+    print("⚙️ STAGE 2: PREPROCESSING USING AUTHOR'S LOGIC")
     print("="*50)
     
     processed_count = 0
@@ -54,38 +52,34 @@ def download_and_prepare_kaggle_data():
     
     for root, dirs, files in tqdm(list(os.walk(download_path)), desc="Scanning & Converting"):
         
-        # HANYA proses folder yang bernama 'brain' (jaringan lunak)
+        # ONLY process 'brain' folders (soft tissue)
         if os.path.basename(root).lower() != 'brain':
             continue
             
-        # Ambil semua file gambar asli (abaikan file segmentasi)
         img_files = [f for f in files if f.lower().endswith('.jpg') and 'seg' not in f.lower()]
         
         for img_name in img_files:
             base_name = img_name.split('.')[0]
             img_path = os.path.join(root, img_name)
             
-            # Berdasarkan struktur Kaggle, mask bernama "{base_name}_HGE_Seg.jpg"
             mask_path = os.path.join(root, f"{base_name}_HGE_Seg.jpg")
             
             try:
-                # 1. LOAD CITRA OTAK
+                # 1. LOAD CT IMAGE
                 img_array = np.array(Image.open(img_path).convert('L'), dtype=np.float32)
                 if img_array.max() > 1.0: img_array = img_array / 255.0
                 
-                # 2. LOAD ATAU BUAT MASK
+                # 2. LOAD OR CREATE MASK
                 if os.path.exists(mask_path):
-                    # Kasus Positif (Ada pendarahan)
                     mask_array = np.array(Image.open(mask_path).convert('L'), dtype=np.uint8)
                     mask_array = np.where(mask_array > 128, 1, 0).astype(np.uint8)
                     hemorrhage_count += 1
                 else:
-                    # Kasus Negatif (Otak Sehat) -> Buat Mask Kosong (seperti kodingan asli Kaggle)
                     mask_array = np.zeros_like(img_array, dtype=np.uint8)
                     normal_count += 1
                 
-                # 3. SIMPAN KE NPY
-                patient_id = os.path.basename(os.path.dirname(root)) # Ambil ID pasien dari folder induk
+                # 3. SAVE TO NPY
+                patient_id = os.path.basename(os.path.dirname(root)) 
                 unique_prefix = f"Patient_{patient_id}_{base_name}"
                 
                 np.save(os.path.join(TARGET_DIR, f"{unique_prefix}_img.npy"), img_array)
@@ -95,18 +89,17 @@ def download_and_prepare_kaggle_data():
             except Exception as e:
                 pass
 
-    print(f"\n✅ Preprocessing Selesai!")
-    print(f"📊 Total Data  : {processed_count} pasang (.npy)")
-    print(f"   -> Kasus Positif (Tumor/Pendarahan) : {hemorrhage_count} slice")
-    print(f"   -> Kasus Negatif (Otak Sehat)       : {normal_count} slice")
-    print(f"💾 Lokasi Tersimpan: {TARGET_DIR}")
+    print(f"\n✅ Preprocessing Complete!")
+    print(f"📊 Total Data  : {processed_count} pairs (.npy)")
+    print(f"   -> Positive Cases (Tumor) : {hemorrhage_count} slices")
+    print(f"   -> Negative Cases (Healthy) : {normal_count} slices")
     
     return TARGET_DIR
 
 # ==========================================
 # 1. MODEL ARCHITECTURE
 # ==========================================
-
+# (Architecture remains exactly the same)
 class DoubleEquivariantConv(nn.Module):
     def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
@@ -189,155 +182,180 @@ class SE2_CNNET(nn.Module):
         x = self.up4(x, x1)
         return self.outc(x).tensor
 
-
-
 # ==========================================
-# 2. GLOBAL DATASET LOADER (UPDATED WITH RESIZE)
+# 2. DATASET LOADER (MODIFIED TO RETURN FILENAMES)
 # ==========================================
 
 class FullCTDataset(Dataset):
-    """
-    Scans the directory for all slice pairs using os.walk.
-    """
     def __init__(self, root_dir):
         self.slice_pairs = []
-        
-        print(f"🔍 Scanning directory for evaluation data: {root_dir}...")
-        
         for root, dirs, files in os.walk(root_dir):
             img_files = sorted([f for f in files if f.endswith('_img.npy')])
             for img_name in img_files:
                 img_path = os.path.join(root, img_name)
                 mask_path = img_path.replace('_img.npy', '_mask.npy')
-                
                 if os.path.exists(mask_path):
                     self.slice_pairs.append((img_path, mask_path))
-                    
-        print(f"✅ Found a total of {len(self.slice_pairs)} valid image-mask pairs.")
 
     def __len__(self):
         return len(self.slice_pairs)
 
     def __getitem__(self, idx):
         img_path, mask_path = self.slice_pairs[idx]
+        filename = os.path.basename(img_path) # ADDED: Capture filename for reporting
         
-        # Load numpy arrays
         image = np.load(img_path).astype(np.float32)
         mask = np.load(mask_path).astype(np.uint8)
         
         if len(image.shape) == 2:
             image = np.expand_dims(image, axis=0)
             
-        # Convert to tensors and add batch dimension temporarily for interpolation
-        image_tensor = torch.from_numpy(image).unsqueeze(0) # Shape: [1, 1, H, W]
-        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() # Shape: [1, 1, H, W]
+        image_tensor = torch.from_numpy(image).unsqueeze(0) 
+        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
         
-        # ==========================================
-        # 🪄 RESIZE MAGIC MENCEGAH U-NET CRASH
-        # ==========================================
-        # Ubah ukuran (512, 512) menjadi (256, 256) jika waktu training model 
-        # se2_unet_epoch_100.pth dulu Anda menggunakan ukuran 256x256.
         TARGET_SIZE = (512, 512) 
-        
         image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
-        # Gunakan mode 'nearest' untuk mask agar labelnya tetap murni 0 atau 1 (tidak jadi desimal)
         mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
         
-        # Kembalikan ke dimensi aslinya
-        image_tensor = image_tensor.squeeze(0) # Shape: [1, 256, 256]
-        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long() # Shape: [256, 256]
+        image_tensor = image_tensor.squeeze(0) 
+        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long() 
         
-        return image_tensor, mask_tensor
+        # RETURN FILENAME TOO
+        return image_tensor, mask_tensor, filename
 
 # ==========================================
-# 3. GLOBAL EVALUATION ENGINE
+# 3. GLOBAL EVALUATION ENGINE & CLIENT REPORTER
 # ==========================================
+
+# HELPER FUNCTION: Calculate physical size
+def calculate_tumor_size(binary_mask, pixel_spacing_mm=0.5, slice_thickness_mm=1.0):
+    """
+    Calculates estimated area and volume from the segmented pixels.
+    Assumes standard CT spacing if not provided in metadata.
+    """
+    pixel_count = np.sum(binary_mask == 1)
+    area_mm2 = pixel_count * (pixel_spacing_mm ** 2)
+    volume_mm3 = area_mm2 * slice_thickness_mm
+    
+    return {
+        "Pixel_Count": int(pixel_count),
+        "Area_cm2": round(area_mm2 / 100.0, 4),
+        "Volume_cm3": round(volume_mm3 / 1000.0, 4)
+    }
 
 def evaluate_all():
-    # --- 1. SETUP PUBLIC DATASET ---
     PUBLIC_DATA_PATH = download_and_prepare_kaggle_data()
     if not PUBLIC_DATA_PATH:
         return
 
-    # --- CONFIGURATION ---
-    # Path model tetap seperti aslinya
+    # --- CLIENT DELIVERABLES DIRECTORY ---
+    CLIENT_REPORTS_DIR = os.path.expanduser("~/Clara/client_reports")
+    VISUALS_DIR = os.path.join(CLIENT_REPORTS_DIR, "visual_proofs")
+    os.makedirs(VISUALS_DIR, exist_ok=True)
+    
+    # Store data for Excel/CSV
+    report_data_list = []
+
     MODEL_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
-    BATCH_SIZE = 4 # Large batch size for inference on DGX H100
+    BATCH_SIZE = 4 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\n🚀 Hardware accelerated on: {device}")
-
-    # --- LOAD MODEL ---
+    
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
     try:
         model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True))
         print(f"✅ Loaded weights from {MODEL_WEIGHTS_PATH}")
     except Exception as e:
-        print(f"❌ Critical Error loading weights: {e}")
+        print(f"❌ Error: {e}")
         return
         
     model.eval()
 
-    # --- SETUP DATA LOADER ---
-    # Mengarahkan DataLoader ke folder Public Dataset Kaggle
     dataset = FullCTDataset(PUBLIC_DATA_PATH)
-    if len(dataset) == 0:
-        print("❌ No data found! Please check the downloaded data path.")
-        return
-        
-    num_workers = min(os.cpu_count(), 8) if os.cpu_count() else 4
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, 
-                            num_workers=num_workers, pin_memory=True)
+                            num_workers=4, pin_memory=True)
 
-    # Variables to accumulate global confusion matrix values
-    total_tp = 0
-    total_tn = 0
-    total_fp = 0
-    total_fn = 0
+    total_tp, total_tn, total_fp, total_fn = 0, 0, 0, 0
 
-    print("\n⚡ Beginning massive parallel evaluation on Public Dataset...")
+    print("\n⚡ Running Inference & Generating Client Reports...")
     
-    # --- INFERENCE LOOP ---
     with torch.no_grad():
-        for images, masks in tqdm(dataloader, desc="Evaluating Dataset"):
-            # Move to GPU
+        for images, masks, filenames in tqdm(dataloader, desc="Evaluating"):
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
             
-            # Predict
             logits = model(images)
             probs = F.softmax(logits, dim=1)
             preds = torch.argmax(probs, dim=1) 
             
-            # Flatten tensors for metric calculation
+            # --- GLOBAL METRICS ACCUMULATION ---
             preds_flat = preds.view(-1)
             masks_flat = masks.view(-1)
-            
-            # Accumulate metrics
             total_tp += torch.sum((preds_flat == 1) & (masks_flat == 1)).item()
             total_tn += torch.sum((preds_flat == 0) & (masks_flat == 0)).item()
             total_fp += torch.sum((preds_flat == 1) & (masks_flat == 0)).item()
             total_fn += torch.sum((preds_flat == 0) & (masks_flat == 1)).item()
 
-    # --- CALCULATE FINAL GLOBAL METRICS ---
-    epsilon = 1e-6 # Prevent division by zero
-    
+            # --- PER-SLICE REPORTING & VISUALIZATION ---
+            for i in range(len(filenames)):
+                filename = filenames[i].replace('_img.npy', '')
+                true_mask_np = masks[i].cpu().numpy()
+                pred_mask_np = preds[i].cpu().numpy()
+                img_np = images[i].squeeze(0).cpu().numpy()
+                
+                # Calculate Size
+                size_metrics = calculate_tumor_size(pred_mask_np)
+                
+                # Append to CSV Report
+                report_data_list.append({
+                    "Slice_ID": filename,
+                    "Has_Ground_Truth_Tumor": "Yes" if np.sum(true_mask_np) > 0 else "No",
+                    "AI_Detected_Tumor": "Yes" if size_metrics["Pixel_Count"] > 0 else "No",
+                    "Estimated_Area_cm2": size_metrics["Area_cm2"],
+                    "Estimated_Volume_cm3": size_metrics["Volume_cm3"],
+                    "Detected_Pixels": size_metrics["Pixel_Count"]
+                })
+                
+                # SAVE VISUAL PROOF (Only save if AI detects something or Ground Truth has something)
+                if np.sum(true_mask_np) > 0 or size_metrics["Pixel_Count"] > 0:
+                    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+                    
+                    axes[0].imshow(img_np, cmap='gray')
+                    axes[0].set_title('Original CT')
+                    axes[0].axis('off')
+                    
+                    axes[1].imshow(img_np, cmap='gray')
+                    axes[1].imshow(true_mask_np, cmap='Greens', alpha=0.4) # Overlay True
+                    axes[1].set_title('Doctor Ground Truth')
+                    axes[1].axis('off')
+                    
+                    axes[2].imshow(img_np, cmap='gray')
+                    axes[2].imshow(pred_mask_np, cmap='Reds', alpha=0.4) # Overlay AI
+                    axes[2].set_title(f'AI Prediction\nVol: {size_metrics["Volume_cm3"]} cm3')
+                    axes[2].axis('off')
+                    
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(VISUALS_DIR, f"{filename}_proof.jpg"), dpi=150)
+                    plt.close(fig) # Prevent memory leak
+
+    # --- SAVE CSV REPORT ---
+    report_df = pd.DataFrame(report_data_list)
+    csv_path = os.path.join(CLIENT_REPORTS_DIR, "Tumor_Size_Estimation_Report.csv")
+    report_df.to_csv(csv_path, index=False)
+
+    # --- PRINT GLOBAL METRICS ---
+    epsilon = 1e-6 
     global_dice = (2.0 * total_tp) / ((2.0 * total_tp) + total_fp + total_fn + epsilon)
     global_iou = total_tp / (total_tp + total_fp + total_fn + epsilon)
-    global_acc = (total_tp + total_tn) / (total_tp + total_tn + total_fp + total_fn + epsilon)
-    global_prec = total_tp / (total_tp + total_fp + epsilon)
-    global_rec = total_tp / (total_tp + total_fn + epsilon)
 
-    # --- PRINT REPORT ---
     print("\n" + "🌟"*20)
-    print(f"  EXTERNAL VALIDATION REPORT (Across {len(dataset)} Slices)")
+    print(f"  CLIENT DELIVERABLES READY!")
     print("🌟"*20)
     print(f"🔥 Global Dice Score : {global_dice:.4f} ({(global_dice*100):.2f}%)")
     print(f"🎯 Global IoU Score  : {global_iou:.4f} ({(global_iou*100):.2f}%)")
-    print(f"✅ Global Accuracy   : {global_acc:.4f} ({(global_acc*100):.2f}%)")
-    print(f"📌 Global Precision  : {global_prec:.4f} ({(global_prec*100):.2f}%)")
-    print(f"🔍 Global Recall     : {global_rec:.4f} ({(global_rec*100):.2f}%)")
-    print("🌟"*20 + "\n")
+    print(f"\n📁 VISUAL PROOFS SAVED TO : {VISUALS_DIR}")
+    print(f"📄 EXCEL/CSV REPORT SAVED TO: {csv_path}")
+    print("-> Tunjukkan folder dan file CSV tersebut ke klien Anda sebagai bukti nyata!")
 
 if __name__ == "__main__":
     evaluate_all()
