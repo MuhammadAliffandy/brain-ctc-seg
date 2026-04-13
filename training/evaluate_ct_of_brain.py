@@ -316,27 +316,31 @@ def evaluate_all():
                     "Detected_Pixels": size_metrics["Pixel_Count"]
                 })
                 
-                # SAVE VISUAL PROOF (Only save if AI detects something or Ground Truth has something)
+                # SAVE VISUAL PROOF 
                 if np.sum(true_mask_np) > 0 or size_metrics["Pixel_Count"] > 0:
                     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+                    
+                    # Trik agar warna 0 jadi tembus pandang
+                    true_masked = np.ma.masked_where(true_mask_np == 0, true_mask_np)
+                    pred_masked = np.ma.masked_where(pred_mask_np == 0, pred_mask_np)
                     
                     axes[0].imshow(img_np, cmap='gray')
                     axes[0].set_title('Original CT')
                     axes[0].axis('off')
                     
                     axes[1].imshow(img_np, cmap='gray')
-                    axes[1].imshow(true_mask_np, cmap='Greens', alpha=0.4) # Overlay True
+                    axes[1].imshow(true_masked, cmap='Greens', alpha=0.6, vmin=0, vmax=1) 
                     axes[1].set_title('Doctor Ground Truth')
                     axes[1].axis('off')
                     
                     axes[2].imshow(img_np, cmap='gray')
-                    axes[2].imshow(pred_mask_np, cmap='Reds', alpha=0.4) # Overlay AI
+                    axes[2].imshow(pred_masked, cmap='Reds', alpha=0.6, vmin=0, vmax=1) 
                     axes[2].set_title(f'AI Prediction\nVol: {size_metrics["Volume_cm3"]} cm3')
                     axes[2].axis('off')
                     
                     plt.tight_layout()
                     plt.savefig(os.path.join(VISUALS_DIR, f"{filename}_proof.jpg"), dpi=150)
-                    plt.close(fig) # Prevent memory leak
+                    plt.close(fig)
 
     # --- SAVE CSV REPORT ---
     report_df = pd.DataFrame(report_data_list)
