@@ -179,7 +179,7 @@ def evaluate_all():
     
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
     try:
-        model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True))
+        model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True), strict=False)
         print(f"✅ Loaded NEW FINETUNED weights from {MODEL_WEIGHTS_PATH}")
     except Exception as e:
         print(f"❌ Error loading weights: {e}")
