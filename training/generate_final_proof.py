@@ -97,6 +97,9 @@ class SE2_CNNET(nn.Module):
 # ==========================================
 # 2. DATASET LOADER (KAGGLE PUBLIC DATASET)
 # ==========================================
+# ==========================================
+# 2. DATASET LOADER (KAGGLE PUBLIC DATASET)
+# ==========================================
 class SimpleDatasetTest(Dataset):
     def __init__(self, root_dir):
         self.slice_pairs = []
@@ -118,8 +121,19 @@ class SimpleDatasetTest(Dataset):
         # Add channel dim if missing
         if len(image.shape) == 2: image = np.expand_dims(image, axis=0)
             
-        image_tensor = torch.from_numpy(image)
-        mask_tensor = torch.from_numpy(mask).long() 
+        # Temporarily add Batch dimension for interpolation
+        image_tensor = torch.from_numpy(image).unsqueeze(0)
+        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
+        
+        # MAGIC FIX: Force resize to 256x256 (Divisible by 16) to prevent U-Net shape mismatch
+        TARGET_SIZE = (256, 256)
+        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
+        mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
+        
+        # Remove Batch dimension back to original shape
+        image_tensor = image_tensor.squeeze(0) 
+        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long()
+        
         return image_tensor, mask_tensor
 
 # ==========================================
