@@ -10,8 +10,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+
+# LIBRARY AUGMENTASI (The "Vaccine" for Domain Gap)
+import albumentations as A
 
 # E2CNN Specific Libraries
 from escnn import gspaces
@@ -22,13 +25,7 @@ import escnn.nn as enn
 # ==========================================
 
 def prepare_local_data(gdrive_dir, local_extract_dir):
-    """
-    Checks if data needs to be copied/extracted from rclone mount to local server storage.
-    Prevents massive I/O bottlenecks during training.
-    """
     os.makedirs(local_extract_dir, exist_ok=True)
-    
-    # Check if data is stored as .zip files (from our chunking method)
     zip_files = [f for f in os.listdir(gdrive_dir) if f.endswith('.zip')]
     
     if zip_files:
@@ -36,19 +33,15 @@ def prepare_local_data(gdrive_dir, local_extract_dir):
         for z_file in tqdm(zip_files, desc="Extracting Zips"):
             patient_name = z_file.replace('.zip', '')
             target_folder = os.path.join(local_extract_dir, patient_name)
-            
             if not os.path.exists(target_folder):
                 try:
                     with zipfile.ZipFile(os.path.join(gdrive_dir, z_file), 'r') as zip_ref:
                         zip_ref.extractall(target_folder)
                 except Exception as e:
                     print(f"⚠️ Error extracting {z_file}: {e}")
-            else:
-                pass # Already extracted
         print("✅ Zip extraction complete!")
         return local_extract_dir
     
-    # Alternatively, if data is just standard folders, copy them
     sub_folders = [f for f in os.listdir(gdrive_dir) if os.path.isdir(os.path.join(gdrive_dir, f))]
     if sub_folders:
         print(f"📁 Found standard folders. Copying to {local_extract_dir}...")
@@ -63,29 +56,25 @@ def prepare_local_data(gdrive_dir, local_extract_dir):
     print("⚠️ No valid data found in the GDrive path!")
     return local_extract_dir
 
+# ==========================================
+# 2. DATASET LOADER DENGAN AUGMENTASI
+# ==========================================
+
 class CTBrainDataset(Dataset):
-    """
-    Robust Loader for preprocessed .npy slices.
-    Scans directory dynamically to prevent FileNotFoundError.
-    """
-    def __init__(self, dataframe, root_dir):
+    def __init__(self, dataframe, root_dir, transform=None):
         self.root_dir = root_dir
+        self.transform = transform # Menambahkan penerima fungsi augmentasi
         self.slice_pairs = []
 
-        # Support both CSV column name variants
         patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
 
         for patient in dataframe[patient_col].unique():
             patient_dir = os.path.join(root_dir, patient)
-            
             if os.path.exists(patient_dir):
-                # Fetch all valid image slices
                 img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')])
-                
                 for img_name in img_files:
                     img_path = os.path.join(patient_dir, img_name)
                     mask_path = img_path.replace('_img.npy', '_mask.npy')
-
                     if os.path.exists(mask_path):
                         self.slice_pairs.append((img_path, mask_path))
 
@@ -96,22 +85,28 @@ class CTBrainDataset(Dataset):
         img_path, mask_path = self.slice_pairs[idx]
 
         try:
-            # Load arrays
             image = np.load(img_path).astype(np.float32)
             mask = np.load(mask_path).astype(np.uint8)
 
-            # Reshape for PyTorch (C, H, W)
+            # 🪄 PROSES DATA AUGMENTASI MENGGUNAKAN ALBUMENTATIONS
+            if self.transform is not None:
+                # Albumentations memutar/menggeser image dan mask secara BERSAMAAN
+                augmented = self.transform(image=image, mask=mask)
+                image = augmented['image']
+                mask = augmented['mask']
+
+            # Reshape for PyTorch (Channels, Height, Width)
             image = torch.from_numpy(image).unsqueeze(0)
             mask = torch.from_numpy(mask).long() 
 
             return image, mask
         except Exception as e:
-            # Safety fallback mechanism
+            # Fallback
             random_idx = random.randint(0, len(self.slice_pairs) - 1)
             return self.__getitem__(random_idx)
 
 # ==========================================
-# 2. EQUIVARIANT MODEL COMPONENTS (SE2-CNNET)
+# 3. EQUIVARIANT MODEL COMPONENTS (SE2-CNNET)
 # ==========================================
 
 class DoubleEquivariantConv(nn.Module):
@@ -186,7 +181,6 @@ class SE2_CNNET(nn.Module):
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
-
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
         x = self.up3(x, x2)
@@ -194,7 +188,7 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 3. LOSS FUNCTIONS
+# 4. LOSS FUNCTIONS
 # ==========================================
 
 class DiceLoss(nn.Module):
@@ -230,50 +224,67 @@ class CombinedLoss(nn.Module):
         return (self.weight_ce * ce) + (self.weight_dice * dice)
 
 # ==========================================
-# 4. TRAINING EXECUTION
+# 5. TRAINING EXECUTION
 # ==========================================
 
 def train():
-    # ==========================================
-    # PATH DEFINITIONS (Adjusted based on actual DGX terminal output)
-    # ==========================================
-    # Define the absolute path to where rclone is mounted
+    # PATH DEFINITIONS
     GDRIVE_ROOT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive")
-    
-    # Path to the preprocessed .npy folders inside GDrive
     GDRIVE_DATA_DIR = os.path.join(GDRIVE_ROOT, "Dataset_CT_Preprocessed_NPY") 
     CSV_REPORT = os.path.join(GDRIVE_ROOT, "Dataset_CT_Report.csv")
-    
-    # Fast local NVMe storage on DGX for maximum DataLoader speed
     LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
     
-    # Extract/Copy data to local server storage
     local_root = prepare_local_data(GDRIVE_DATA_DIR, LOCAL_DATA_PATH)
 
     # HYPERPARAMETERS
     LEARNING_RATE = 1e-4
-    BATCH_SIZE = 8 # H100 has 80GB VRAM, you can try bumping this to 16 if memory permits
+    BATCH_SIZE = 8 
     ACCUMULATION_STEPS = 4  
     EPOCHS = 100
     VALIDATION_SPLIT = 0.15
-    NUM_CLASSES = 2     
-    INPUT_CHANNELS = 1  
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️  Device configured: {device}")
 
-    # Load Report
     if not os.path.exists(CSV_REPORT):
         raise FileNotFoundError(f"Cannot find CSV report at {CSV_REPORT}")
     df = pd.read_csv(CSV_REPORT)
 
-    # Patient-level Split (Prevents data leakage)
     train_df = df.sample(frac=(1 - VALIDATION_SPLIT), random_state=42)
     val_df = df.drop(train_df.index)
 
+    # ==========================================
+    # 🧬 DEFINISI PIPA AUGMENTASI DATA
+    # ==========================================
+    print("🧬 Setting up Data Augmentation Pipelines...")
+    
+    # Transformasi untuk Training: Memaksa model melihat berbagai kondisi RS ekstrem
+    train_transform = A.Compose([
+        # 1. Simulasi posisi pasien di mesin CT (Miring, Geser, Skala)
+        A.ShiftScaleRotate(shift_limit=0.06, scale_limit=0.1, rotate_limit=15, p=0.5),
+        
+        # 2. Simulasi perbedaan kalibrasi layar / Windowing dokter
+        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+        
+        # 3. Simulasi dosis radiasi rendah (Mesin CT ber-noise)
+        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+        
+        # 4. Simulasi Slice Thickness yang tebal (Efek Blur)
+        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+        
+        # 5. Mirroring karena otak manusia simetris kiri-kanan
+        A.HorizontalFlip(p=0.5)
+    ])
+    
+    # Transformasi untuk Validasi: KOSONG! (Evaluasi harus di data murni)
+    val_transform = None 
+    
+    # ==========================================
+
     print("Preparing Datasets...")
-    train_set = CTBrainDataset(train_df, local_root)
-    val_set = CTBrainDataset(val_df, local_root)
+    # Inject pipeline augmentasi ke DataLoader
+    train_set = CTBrainDataset(train_df, local_root, transform=train_transform)
+    val_set = CTBrainDataset(val_df, local_root, transform=val_transform)
 
     num_workers = min(os.cpu_count(), 16) if os.cpu_count() else 4
     
@@ -288,20 +299,21 @@ def train():
         prefetch_factor=2, persistent_workers=True
     )
 
-    print(f"📊 Data ready: {len(train_set)} training slices, {len(val_set)} validation slices. Workers: {num_workers}")
+    print(f"📊 Data ready: {len(train_set)} training slices, {len(val_set)} validation slices.")
 
     # Model Setup
-    model = SE2_CNNET(n_channels=INPUT_CHANNELS, n_classes=NUM_CLASSES, N=8, base_channels=24).to(device)
+    model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
 
     # Loss & Optimizer
-    class_weights = torch.tensor([1.0, 50.0]).to(device)
+    class_weights = torch.tensor([1.0, 50.0]).to(device) # Mengatasi imbalanse dataset
     criterion = CombinedLoss(weight_ce=1.0, weight_dice=1.0, class_weights=class_weights)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5) # Tambah Weight decay agar stabil
     
-    # Modern AMP configuration to avoid deprecation warnings
     scaler = torch.amp.GradScaler('cuda')
 
     # Training Loop
+    best_val_loss = float('inf')
+    
     for epoch in range(EPOCHS):
         model.train()
         running_loss = 0.0
@@ -329,7 +341,6 @@ def train():
             
             del outputs, loss
 
-        # Flush remaining gradients
         if len(train_loader) % ACCUMULATION_STEPS != 0:
             scaler.step(optimizer)
             scaler.update()
@@ -355,16 +366,22 @@ def train():
                 del outputs, loss
 
         avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch {epoch+1}/{EPOCHS} -> Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
+        print(f"📉 Epoch {epoch+1}/{EPOCHS} -> Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
-        # Save checkpoint every 10 epochs
+        # AUTO-SAVE BEST MODEL
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), 'se2_unet_best_robust.pth')
+            print("🌟 New Best Model Saved!")
+
+        # Save checkpoint periodically
         if (epoch+1) % 10 == 0:
             torch.save(model.state_dict(), f'se2_unet_epoch_{epoch+1}.pth')
             
         torch.cuda.empty_cache()
 
 # ==========================================
-# 5. LOGGING UTILITY
+# 6. LOGGING UTILITY
 # ==========================================
 
 class Logger:
@@ -382,11 +399,9 @@ class Logger:
         self.log.flush()
 
 if __name__ == "__main__":
-    # Generate timestamp for unique log file name
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"training_log_{timestamp}.txt"
+    log_filename = f"training_log_robust_{timestamp}.txt"
     
-    # Redirect stdout and stderr
     sys.stdout = Logger(log_filename, sys.stdout)
     sys.stderr = Logger(log_filename, sys.stderr)
     
