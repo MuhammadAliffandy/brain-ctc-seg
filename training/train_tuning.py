@@ -182,9 +182,9 @@ def fine_tune_model():
     OLD_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
     NEW_WEIGHTS_PATH = "se2_unet_finetuned.pth"
     
-    EPOCHS = 10         # Hanya 10 Epoch karena ini Transfer Learning!
+    EPOCHS = 50         # Hanya 10 Epoch karena ini Transfer Learning!
     BATCH_SIZE = 8      # Aman untuk H100
-    LEARNING_RATE = 1e-5 # Sangat kecil agar ilmu lama tidak hilang
+    LEARNING_RATE = 5e-6 # Sangat kecil agar ilmu lama tidak hilang
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n🚀 Hardware accelerated on: {device}")
