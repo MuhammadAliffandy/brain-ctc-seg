@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-# LIBRARY AUGMENTASI (The "Vaccine" for Domain Gap)
+# The "Vaccine" for Domain Gap
 import albumentations as A
 
 # E2CNN Specific Libraries
@@ -21,7 +21,7 @@ from escnn import gspaces
 import escnn.nn as enn
 
 # ==========================================
-# 1. DATA PREPARATION (DGX Local NVMe Optimized)
+# 1. DATA PREPARATION 
 # ==========================================
 
 def prepare_local_data(gdrive_dir, local_extract_dir):
@@ -57,13 +57,13 @@ def prepare_local_data(gdrive_dir, local_extract_dir):
     return local_extract_dir
 
 # ==========================================
-# 2. DATASET LOADER DENGAN AUGMENTASI
+# 2. DATASET LOADER WITH AUGMENTATION
 # ==========================================
 
 class CTBrainDataset(Dataset):
     def __init__(self, dataframe, root_dir, transform=None):
         self.root_dir = root_dir
-        self.transform = transform # Menambahkan penerima fungsi augmentasi
+        self.transform = transform 
         self.slice_pairs = []
 
         patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
@@ -88,9 +88,8 @@ class CTBrainDataset(Dataset):
             image = np.load(img_path).astype(np.float32)
             mask = np.load(mask_path).astype(np.uint8)
 
-            # 🪄 PROSES DATA AUGMENTASI MENGGUNAKAN ALBUMENTATIONS
+            # Apply Albumentations Transformations
             if self.transform is not None:
-                # Albumentations memutar/menggeser image dan mask secara BERSAMAAN
                 augmented = self.transform(image=image, mask=mask)
                 image = augmented['image']
                 mask = augmented['mask']
@@ -101,12 +100,12 @@ class CTBrainDataset(Dataset):
 
             return image, mask
         except Exception as e:
-            # Fallback
+            # Fallback to a random index if file is corrupted
             random_idx = random.randint(0, len(self.slice_pairs) - 1)
             return self.__getitem__(random_idx)
 
 # ==========================================
-# 3. EQUIVARIANT MODEL COMPONENTS (SE2-CNNET)
+# 3. SE2-CNNET ARCHITECTURE
 # ==========================================
 
 class DoubleEquivariantConv(nn.Module):
@@ -203,6 +202,25 @@ class FocalLoss(nn.Module):
         focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
         return focal_loss.mean()
 
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1e-5):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+
+    def forward(self, logits, true_masks):
+        num_classes = logits.shape[1]
+        true_masks_one_hot = F.one_hot(true_masks, num_classes).permute(0, 3, 1, 2).float()
+        probs = F.softmax(logits, dim=1)
+        
+        probs_target = probs[:, 1, :, :]
+        true_target = true_masks_one_hot[:, 1, :, :]
+        
+        intersection = (probs_target * true_target).sum(dim=(1, 2))
+        union = probs_target.sum(dim=(1, 2)) + true_target.sum(dim=(1, 2))
+        dice_score = (2. * intersection + self.smooth) / (union + self.smooth)
+        
+        return 1.0 - dice_score.mean()
+
 class CombinedLoss(nn.Module):
     def __init__(self, weight_focal=1.0, weight_dice=1.0):
         super(CombinedLoss, self).__init__()
@@ -215,7 +233,23 @@ class CombinedLoss(nn.Module):
         return (self.weight_focal * self.focal(logits, targets)) + (self.weight_dice * self.dice(logits, targets))
 
 # ==========================================
-# 5. TRAINING EXECUTION
+# 5. METRIC CALCULATION (FOR REPORTING)
+# ==========================================
+
+def calculate_metrics_tensors(preds, targets):
+    """Calculates True Positives, False Positives, False Negatives, True Negatives"""
+    preds = preds.view(-1)
+    targets = targets.view(-1)
+    
+    tp = torch.sum((preds == 1) & (targets == 1)).item()
+    fp = torch.sum((preds == 1) & (targets == 0)).item()
+    fn = torch.sum((preds == 0) & (targets == 1)).item()
+    tn = torch.sum((preds == 0) & (targets == 0)).item()
+    
+    return tp, fp, fn, tn
+
+# ==========================================
+# 6. TRAINING EXECUTION
 # ==========================================
 
 def train():
@@ -244,36 +278,19 @@ def train():
     train_df = df.sample(frac=(1 - VALIDATION_SPLIT), random_state=42)
     val_df = df.drop(train_df.index)
 
-    # ==========================================
-    # 🧬 DEFINISI PIPA AUGMENTASI DATA
-    # ==========================================
+    # 🧬 AUGMENTATION SETUP (WARNINGS FIXED)
     print("🧬 Setting up Data Augmentation Pipelines...")
-    
-    # Transformasi untuk Training: Memaksa model melihat berbagai kondisi RS ekstrem
     train_transform = A.Compose([
-        # 1. Simulasi posisi pasien di mesin CT (Miring, Geser, Skala)
-        A.ShiftScaleRotate(shift_limit=0.06, scale_limit=0.1, rotate_limit=15, p=0.5),
-        
-        # 2. Simulasi perbedaan kalibrasi layar / Windowing dokter
+        A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
-        
-        # 3. Simulasi dosis radiasi rendah (Mesin CT ber-noise)
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
-        
-        # 4. Simulasi Slice Thickness yang tebal (Efek Blur)
+        A.GaussNoise(p=0.3), # Removed invalid var_limit
         A.GaussianBlur(blur_limit=(3, 7), p=0.2),
-        
-        # 5. Mirroring karena otak manusia simetris kiri-kanan
         A.HorizontalFlip(p=0.5)
     ])
     
-    # Transformasi untuk Validasi: KOSONG! (Evaluasi harus di data murni)
     val_transform = None 
-    
-    # ==========================================
 
     print("Preparing Datasets...")
-    # Inject pipeline augmentasi ke DataLoader
     train_set = CTBrainDataset(train_df, local_root, transform=train_transform)
     val_set = CTBrainDataset(val_df, local_root, transform=val_transform)
 
@@ -295,16 +312,15 @@ def train():
     # Model Setup
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
 
-    # Loss & Optimizer
-    class_weights = torch.tensor([1.0, 50.0]).to(device) # Mengatasi imbalanse dataset
-    criterion = CombinedLoss(weight_ce=1.0, weight_dice=1.0, class_weights=class_weights)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5) # Tambah Weight decay agar stabil
+    # Loss & Optimizer (FIXED)
+    criterion = CombinedLoss(weight_focal=1.0, weight_dice=1.0).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5) 
     
     scaler = torch.amp.GradScaler('cuda')
 
-    # Training Loop
-    best_val_loss = float('inf')
+    best_val_dice = 0.0 # Track best DICE score instead of loss
     
+    # TRAINING LOOP
     for epoch in range(EPOCHS):
         model.train()
         running_loss = 0.0
@@ -328,7 +344,7 @@ def train():
                 optimizer.zero_grad()
 
             running_loss += loss.item() * ACCUMULATION_STEPS
-            pbar_train.set_postfix({'loss': loss.item() * ACCUMULATION_STEPS})
+            pbar_train.set_postfix({'loss': f"{loss.item() * ACCUMULATION_STEPS:.4f}"})
             
             del outputs, loss
 
@@ -339,9 +355,13 @@ def train():
 
         avg_train_loss = running_loss / len(train_loader)
 
-        # Validation Loop
+        # VALIDATION LOOP & METRICS REPORTING
         model.eval()
         val_loss = 0.0
+        
+        # Metric Trackers
+        total_tp, total_fp, total_fn, total_tn = 0, 0, 0, 0
+        
         with torch.no_grad():
             pbar_val = tqdm(val_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Validation]")
             for images, labels in pbar_val:
@@ -349,21 +369,47 @@ def train():
                 labels = labels.to(device, non_blocking=True)
 
                 with torch.amp.autocast('cuda'): 
-                    outputs = model(images)
-                    loss = criterion(outputs, labels)
+                    logits = model(images)
+                    loss = criterion(logits, labels)
 
                 val_loss += loss.item()
-                pbar_val.set_postfix({'val_loss': loss.item()})
-                del outputs, loss
+                pbar_val.set_postfix({'val_loss': f"{loss.item():.4f}"})
+                
+                # Calculate metrics for current batch
+                probs = F.softmax(logits, dim=1)
+                preds = torch.argmax(probs, dim=1)
+                
+                tp, fp, fn, tn = calculate_metrics_tensors(preds, labels)
+                total_tp += tp
+                total_fp += fp
+                total_fn += fn
+                total_tn += tn
+                
+                del logits, loss
 
         avg_val_loss = val_loss / len(val_loader)
-        print(f"📉 Epoch {epoch+1}/{EPOCHS} -> Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        
+        # Calculate Global Metrics for the Report
+        epsilon = 1e-7
+        epoch_dice = (2 * total_tp) / (2 * total_tp + total_fp + total_fn + epsilon)
+        epoch_iou = total_tp / (total_tp + total_fp + total_fn + epsilon)
+        epoch_precision = total_tp / (total_tp + total_fp + epsilon)
+        epoch_recall = total_tp / (total_tp + total_fn + epsilon)
+        
+        # PRINT THE REPORT
+        print(f"\n📉 Epoch {epoch+1} Summary -> Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(f"================== CLASSIFICATION & SEGMENTATION REPORT ==================")
+        print(f"  • Global Dice Score : {epoch_dice:.4f}")
+        print(f"  • Global IoU        : {epoch_iou:.4f}")
+        print(f"  • Precision         : {epoch_precision:.4f} (Ability to avoid false alarms)")
+        print(f"  • Recall            : {epoch_recall:.4f} (Ability to find all tumors)")
+        print(f"==========================================================================")
 
-        # AUTO-SAVE BEST MODEL
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
+        # AUTO-SAVE BEST MODEL BASED ON DICE SCORE
+        if epoch_dice > best_val_dice:
+            best_val_dice = epoch_dice
             torch.save(model.state_dict(), 'se2_unet_best_robust.pth')
-            print("🌟 New Best Model Saved!")
+            print(f"🌟 New Best Model Saved! (Dice Score improved to: {best_val_dice:.4f})")
 
         # Save checkpoint periodically
         if (epoch+1) % 10 == 0:
@@ -372,7 +418,7 @@ def train():
         torch.cuda.empty_cache()
 
 # ==========================================
-# 6. LOGGING UTILITY
+# 7. LOGGING UTILITY
 # ==========================================
 
 class Logger:
