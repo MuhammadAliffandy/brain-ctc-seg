@@ -215,7 +215,8 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
-            masked_ai = np.ma.masked_where(prob_map_ai < 0.1, prob_map_ai) 
+            # Kita naikkan threshold ke 0.3 (30%) agar videonya bersih dari noise debu
+            masked_ai = np.ma.masked_where(prob_map_ai < 0.3, prob_map_ai)
             axes[2].imshow(masked_ai, cmap='Reds', alpha=0.6, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction', fontsize=14)
             axes[2].axis('off')
