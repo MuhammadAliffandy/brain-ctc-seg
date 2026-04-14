@@ -233,7 +233,7 @@ def generate_client_final_visual():
     
     # 3. AI Prediction
     axes[2].imshow(img_np, cmap='gray')
-    masked_ai = np.ma.masked_where(prob_map_ai < 0.5, prob_map_ai) # Threshold 0.5
+    masked_ai = np.ma.masked_where(prob_map_ai < 0.1, prob_map_ai) # Threshold 0.5
     axes[2].imshow(masked_ai, cmap='Reds', alpha=0.6, vmin=0, vmax=1) 
     axes[2].set_title('AI Prediction\n(SE2-CNNET Robust)', fontsize=14)
     axes[2].axis('off')
