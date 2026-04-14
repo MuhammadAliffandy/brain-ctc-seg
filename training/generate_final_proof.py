@@ -216,8 +216,9 @@ def generate_gif_stitching():
         
         # Convert Matplotlib Figure to RGB array for GIF
         fig.canvas.draw()
-        frame = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-        frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        rgba_buffer = fig.canvas.buffer_rgba()
+        frame = np.asarray(rgba_buffer) # Formatnya masih RGBA (ada transparansi)
+        frame = frame[:, :, :3] # Buang channel Alpha (A) agar jadi RGB murni
         frames.append(frame)
         
         plt.close(fig) # Cegah Memory Leak
