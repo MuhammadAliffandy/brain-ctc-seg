@@ -191,37 +191,28 @@ class SE2_CNNET(nn.Module):
 # 4. LOSS FUNCTIONS
 # ==========================================
 
-class DiceLoss(nn.Module):
-    def __init__(self, smooth=1e-5):
-        super(DiceLoss, self).__init__()
-        self.smooth = smooth
-
-    def forward(self, logits, true_masks):
-        num_classes = logits.shape[1]
-        true_masks_one_hot = F.one_hot(true_masks, num_classes).permute(0, 3, 1, 2).float()
-        probs = F.softmax(logits, dim=1)
-        
-        probs_target = probs[:, 1, :, :]
-        true_target = true_masks_one_hot[:, 1, :, :]
-        
-        intersection = (probs_target * true_target).sum(dim=(1, 2))
-        union = probs_target.sum(dim=(1, 2)) + true_target.sum(dim=(1, 2))
-        dice_score = (2. * intersection + self.smooth) / (union + self.smooth)
-        
-        return 1.0 - dice_score.mean()
-
-class CombinedLoss(nn.Module):
-    def __init__(self, weight_ce=1.0, weight_dice=1.0, class_weights=None):
-        super(CombinedLoss, self).__init__()
-        self.weight_ce = weight_ce
-        self.weight_dice = weight_dice
-        self.ce_loss = nn.CrossEntropyLoss(weight=class_weights)
-        self.dice_loss = DiceLoss()
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
 
     def forward(self, logits, targets):
-        ce = self.ce_loss(logits, targets)
-        dice = self.dice_loss(logits, targets)
-        return (self.weight_ce * ce) + (self.weight_dice * dice)
+        bce_loss = F.cross_entropy(logits, targets, reduction='none')
+        pt = torch.exp(-bce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+        return focal_loss.mean()
+
+class CombinedLoss(nn.Module):
+    def __init__(self, weight_focal=1.0, weight_dice=1.0):
+        super(CombinedLoss, self).__init__()
+        self.weight_focal = weight_focal
+        self.weight_dice = weight_dice
+        self.focal = FocalLoss()
+        self.dice = DiceLoss()
+
+    def forward(self, logits, targets):
+        return (self.weight_focal * self.focal(logits, targets)) + (self.weight_dice * self.dice(logits, targets))
 
 # ==========================================
 # 5. TRAINING EXECUTION
