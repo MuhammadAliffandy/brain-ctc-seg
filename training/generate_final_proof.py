@@ -3,11 +3,11 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from scipy.ndimage import label 
-plt.switch_backend('agg') # Aman untuk DGX
+import imageio # LIBRARY BARU UNTUK BIKIN GIF
+plt.switch_backend('agg') # Aman untuk server DGX tanpa layar
 
 # E2CNN Specific Libraries
 from escnn import gspaces
@@ -19,15 +19,12 @@ import escnn.nn as enn
 class DoubleEquivariantConv(nn.Module):
     def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
-        if not mid_type:
-            mid_type = out_type
+        if not mid_type: mid_type = out_type
         self.double_conv = enn.SequentialModule(
             enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False),
-            enn.InnerBatchNorm(mid_type),
-            enn.ReLU(mid_type, inplace=True),
+            enn.InnerBatchNorm(mid_type), enn.ReLU(mid_type, inplace=True),
             enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False),
-            enn.InnerBatchNorm(out_type),
-            enn.ReLU(out_type, inplace=True)
+            enn.InnerBatchNorm(out_type), enn.ReLU(out_type, inplace=True)
         )
     def forward(self, x): return self.double_conv(x)
 
@@ -61,7 +58,6 @@ class SE2_CNNET(nn.Module):
         super().__init__()
         self.r2_act = gspaces.rot2dOnR2(N=N)
         c = base_channels
-
         self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
         self.feat_type_1 = enn.FieldType(self.r2_act, c * [self.r2_act.regular_repr])
         self.feat_type_2 = enn.FieldType(self.r2_act, (c*2) * [self.r2_act.regular_repr])
@@ -95,56 +91,59 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. DATASET LOADER (KAGGLE PUBLIC DATASET)
+# 2. LOGIC PENEMU PASIEN TERBAIK UNTUK GIF
 # ==========================================
-# ==========================================
-# 2. DATASET LOADER (KAGGLE PUBLIC DATASET)
-# ==========================================
-class SimpleDatasetTest(Dataset):
-    def __init__(self, root_dir):
-        self.slice_pairs = []
-        for root, dirs, files in os.walk(root_dir):
-            img_files = sorted([f for f in files if f.endswith('_img.npy')])
-            for img_name in img_files:
+def find_best_patient_for_gif(dataset_path):
+    print("🔍 Menganalisis semua pasien untuk mencari kandidat GIF terbaik...")
+    
+    patient_dict = {}
+    
+    # Kumpulkan semua file berdasarkan Patient ID
+    for root, dirs, files in os.walk(dataset_path):
+        img_files = [f for f in files if f.endswith('_img.npy')]
+        for img_name in img_files:
+            # Format file: Patient_130_12_img.npy
+            parts = img_name.split('_')
+            if len(parts) >= 3:
+                patient_id = f"{parts[0]}_{parts[1]}" # "Patient_130"
+                slice_num = int(parts[2]) # "12" -> Ini kedalaman slice-nya
+                
+                if patient_id not in patient_dict:
+                    patient_dict[patient_id] = []
+                    
                 img_path = os.path.join(root, img_name)
                 mask_path = img_path.replace('_img.npy', '_mask.npy')
+                
                 if os.path.exists(mask_path):
-                    self.slice_pairs.append((img_path, mask_path))
+                    patient_dict[patient_id].append({
+                        'slice': slice_num,
+                        'img_path': img_path,
+                        'mask_path': mask_path
+                    })
 
-    def __len__(self): return len(self.slice_pairs)
-
-    def __getitem__(self, idx):
-        img_path, mask_path = self.slice_pairs[idx]
-        image = np.load(img_path).astype(np.float32)
-        mask = np.load(mask_path).astype(np.uint8)
-        
-        # Add channel dim if missing
-        if len(image.shape) == 2: image = np.expand_dims(image, axis=0)
-            
-        # Temporarily add Batch dimension for interpolation
-        image_tensor = torch.from_numpy(image).unsqueeze(0)
-        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
-        
-        # MAGIC FIX: Force resize to 256x256 (Divisible by 16) to prevent U-Net shape mismatch
-        TARGET_SIZE = (256, 256)
-        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
-        mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
-        
-        # Remove Batch dimension back to original shape
-        image_tensor = image_tensor.squeeze(0) 
-        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long()
-        
-        return image_tensor, mask_tensor
-
-# ==========================================
-# 3. CLIENT VISUALIZATION ENGINE
-# ==========================================
-def generate_client_final_visual():
-    # PATHS
-    # Kita tes pakai data Kaggle (public_dataset_npy) untuk membuktikan model kebal Domain Gap
-    TEST_DATA_PATH = os.path.expanduser("~/Clara/public_dataset_npy") 
+    # Cari pasien yang punya slice dengan jumlah tumor terbanyak (misal 4+)
+    best_patient_id = None
+    max_tumor_in_any_slice = 0
     
-    # KITA GUNAKAN WEIGHTS TERBARU YANG ROBUST!
+    for patient_id, slices in patient_dict.items():
+        for s in slices:
+            mask_np = np.load(s['mask_path'])
+            _, num_tumors = label(mask_np)
+            if num_tumors > max_tumor_in_any_slice:
+                max_tumor_in_any_slice = num_tumors
+                best_patient_id = patient_id
+
+    print(f"🎯 Pasien Terpilih: {best_patient_id} (Memiliki slice dengan {max_tumor_in_any_slice} tumor terpisah!)")
+    
+    # Kembalikan daftar slice pasien tersebut, diurutkan dari atas kepala ke leher
+    sorted_slices = sorted(patient_dict[best_patient_id], key=lambda x: x['slice'])
+    return sorted_slices
+
+# ==========================================
+# 3. GIF GENERATOR ENGINE
+# ==========================================
+def generate_gif_stitching():
+    TEST_DATA_PATH = os.path.expanduser("~/Clara/public_dataset_npy") 
     ROBUST_MODEL_WEIGHTS = "se2_unet_best_robust.pth" 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -152,97 +151,87 @@ def generate_client_final_visual():
     
     print(f"📥 Loading Robust Weights from: {ROBUST_MODEL_WEIGHTS}...")
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
-    
-    # strict=False agar tidak error masalah cache wigner_D_matrix
     model.load_state_dict(torch.load(ROBUST_MODEL_WEIGHTS, map_location=device, weights_only=True), strict=False)
     model.eval()
 
-    print("🔍 Scanning test dataset...")
-    test_set = SimpleDatasetTest(TEST_DATA_PATH)
-    test_loader = DataLoader(test_set, batch_size=8, shuffle=False, num_workers=4)
+    # Cari urutan slice pasien terbaik
+    patient_slices = find_best_patient_for_gif(TEST_DATA_PATH)
+    if not patient_slices:
+        print("❌ Data tidak ditemukan.")
+        return
 
-    best_image = None
-    best_mask = None
-    target_tumor_count = 4
-    found_target = False
-    max_tumors_found = 0
-    fallback_image = None
-    fallback_mask = None
-
-    print(f"🚀 Hunting for a slice with EXACTLY {target_tumor_count} separate tumors...")
+    frames = []
     
-    for images, labels in tqdm(test_loader, desc="Hunting"):
-        for b in range(labels.size(0)):
-            gt_mask_np = labels[b].cpu().numpy()
-            
-            # Hitung jumlah tumor terpisah
-            labeled_array, num_features = label(gt_mask_np)
-            
-            if num_features > max_tumors_found:
-                max_tumors_found = num_features
-                fallback_image = images[b].unsqueeze(0)
-                fallback_mask = labels[b].unsqueeze(0)
-            
-            if num_features >= target_tumor_count:
-                best_image = images[b].unsqueeze(0)
-                best_mask = labels[b].unsqueeze(0)
-                target_tumor_count = num_features 
-                found_target = True
-                break
-                
-        if found_target:
-            print(f"\n🎯 BINGO! Found a slice with {target_tumor_count} distinct tumors.")
-            break
-
-    if not found_target:
-        print(f"\n⚠️ Could not find exactly {target_tumor_count}. Using the one with {max_tumors_found} tumors.")
-        best_image = fallback_image
-        best_mask = fallback_mask
-        target_tumor_count = max_tumors_found
-
-    best_image = best_image.to(device)
-    best_mask = best_mask.to(device)
-
-    # ==========================================
-    # PLOTTING
-    # ==========================================
-    print("🧠 Rendering Visualization...")
-    with torch.no_grad():
-        logits = model(best_image)
-        probs = F.softmax(logits, dim=1)
-        prob_map_ai = probs[0, 1, :, :].cpu().numpy() # Ambil probabilitas kelas 1 (Tumor)
-
-    img_np = best_image.cpu().squeeze().numpy()
-    gt_np = best_mask.cpu().squeeze().numpy()
+    print(f"🎥 Membuat {len(patient_slices)} Frame untuk Video GIF...")
     
-    # Bikin kanvas gambar
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    fig.suptitle(f"Robust Model Validation: Detecting {target_tumor_count} Separate Tumors", fontsize=16, fontweight='bold')
-    
-    # 1. Original CT
-    axes[0].imshow(img_np, cmap='gray')
-    axes[0].set_title('Original CT Scan', fontsize=14)
-    axes[0].axis('off')
+    for s_info in tqdm(patient_slices, desc="Rendering Frames"):
+        slice_idx = s_info['slice']
+        
+        # Load & Resize
+        img_np = np.load(s_info['img_path']).astype(np.float32)
+        gt_np = np.load(s_info['mask_path']).astype(np.uint8)
+        
+        if len(img_np.shape) == 2: img_np = np.expand_dims(img_np, axis=0)
+        
+        img_tensor = torch.from_numpy(img_np).unsqueeze(0).to(device)
+        gt_tensor = torch.from_numpy(gt_np).unsqueeze(0).unsqueeze(0).float().to(device)
+        
+        TARGET_SIZE = (256, 256)
+        img_tensor = F.interpolate(img_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
+        gt_tensor = F.interpolate(gt_tensor, size=TARGET_SIZE, mode='nearest')
+        
+        # AI Prediction
+        with torch.no_grad():
+            logits = model(img_tensor)
+            probs = F.softmax(logits, dim=1)
+            prob_map_ai = probs[0, 1, :, :].cpu().numpy()
 
-    # 2. Ground Truth Dokter
-    axes[1].imshow(img_np, cmap='gray')
-    masked_gt = np.ma.masked_where(gt_np == 0, gt_np) # Trik transparan
-    axes[1].imshow(masked_gt, cmap='Greens', alpha=0.6, vmin=0, vmax=1) 
-    axes[1].set_title(f'Ground Truth\n({target_tumor_count} Tumors)', fontsize=14)
-    axes[1].axis('off')
+        img_render = img_tensor.squeeze().cpu().numpy()
+        gt_render = gt_tensor.squeeze().cpu().numpy()
+        
+        # Hitung jumlah tumor aktif di slice ini untuk judul
+        _, num_tumors_gt = label(gt_render)
+
+        # Plotting Frame
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig.suptitle(f"3D Progression Scan - Slice #{slice_idx}\nActive Tumors: {num_tumors_gt}", fontsize=18, fontweight='bold', color='navy')
+        
+        axes[0].imshow(img_render, cmap='gray')
+        axes[0].set_title('Original CT Scan', fontsize=14)
+        axes[0].axis('off')
+
+        axes[1].imshow(img_render, cmap='gray')
+        masked_gt = np.ma.masked_where(gt_render == 0, gt_render)
+        axes[1].imshow(masked_gt, cmap='Greens', alpha=0.6, vmin=0, vmax=1) 
+        axes[1].set_title('Doctor Ground Truth', fontsize=14)
+        axes[1].axis('off')
+        
+        axes[2].imshow(img_render, cmap='gray')
+        masked_ai = np.ma.masked_where(prob_map_ai < 0.1, prob_map_ai) # Threshold 10%
+        axes[2].imshow(masked_ai, cmap='Reds', alpha=0.6, vmin=0, vmax=1) 
+        axes[2].set_title('AI Prediction (Robust)', fontsize=14)
+        axes[2].axis('off')
+        
+        plt.tight_layout()
+        
+        # Convert Matplotlib Figure to RGB array for GIF
+        fig.canvas.draw()
+        frame = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        frames.append(frame)
+        
+        plt.close(fig) # Cegah Memory Leak
+
+    # JAHIT MENJADI GIF
+    output_filename = "3D_Tumor_Progression.gif"
+    print(f"\n🎬 Menjahit frame menjadi file {output_filename}...")
     
-    # 3. AI Prediction
-    axes[2].imshow(img_np, cmap='gray')
-    masked_ai = np.ma.masked_where(prob_map_ai < 0.1, prob_map_ai) # Threshold 0.5
-    axes[2].imshow(masked_ai, cmap='Reds', alpha=0.6, vmin=0, vmax=1) 
-    axes[2].set_title('AI Prediction\n(SE2-CNNET Robust)', fontsize=14)
-    axes[2].axis('off')
+    # duration = 0.3 artinya jarak antar frame adalah 0.3 detik. 
+    # Semakin kecil angkanya, videonya akan semakin cepat.
+    imageio.mimsave(output_filename, frames, duration=0.3, loop=0)
     
-    plt.tight_layout()
-    save_filename = f"Final_Client_Proof_{target_tumor_count}_Tumors.png"
-    plt.savefig(save_filename, dpi=200, bbox_inches='tight')
-    plt.close(fig)
-    print(f"✅ Success! Please download: {save_filename} and send it to your client!")
+    print(f"✅ BINGO! Video GIF berhasil dibuat dan tersimpan sebagai: {output_filename}")
+    print("-> Segera download file ini dan presentasikan ke Profesor Anda!")
 
 if __name__ == "__main__":
-    generate_client_final_visual()
+    generate_gif_stitching()
