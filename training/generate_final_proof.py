@@ -92,7 +92,7 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. LOGIC PENEMU BANYAK PASIEN (LOCAL DATA FIX)
+# 2. LOGIC PENEMU BANYAK PASIEN
 # ==========================================
 def find_top_n_patients_for_gif(dataset_path, top_n=3):
     print(f"🔍 Menganalisis BASE DATA di {dataset_path} untuk mencari TOP {top_n} kandidat GIF terbaik...")
@@ -104,10 +104,7 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
         img_files = [f for f in files if f.endswith('_img.npy')]
         
         for img_name in img_files:
-            # Menggunakan nama folder sebagai Patient ID agar aman untuk data lokal
             patient_id = os.path.basename(root)
-            
-            # Mencoba mencari angka urutan slice di nama file
             numbers = re.findall(r'\d+', img_name)
             slice_num = int(numbers[-1]) if numbers else 0
             
@@ -145,13 +142,32 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
     return top_patients_data
 
 # ==========================================
-# 3. BATCH GIF GENERATOR ENGINE
+# 3. BATCH GIF GENERATOR ENGINE (CLIENT APPROVED VERSION)
 # ==========================================
 def generate_batch_gifs():
-    # MENGUBAH ALAMAT DATA KE BASE DATA (LOKAL) SESUAI REQUEST PROFESOR
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
     ROBUST_MODEL_WEIGHTS = "se2_unet_best_robust.pth" 
+    
+    # ⚙️ ========================================== ⚙️
+    #     CONTROL PANEL (SESUAI REQUEST KLIEN)
+    # ⚙️ ========================================== ⚙️
     TOTAL_SAMPLES = 4
+    
+    # 1. KECEPATAN (Semakin besar angka, semakin lambat)
+    GIF_SPEED = 0.8 # Sebelumnya 0.3 detik/frame, sekarang 0.8 detik/frame
+    
+    # 2. MATA KE ATAS (Rotasi)
+    # K=2 memutar 180 derajat (Bawah jadi Atas). Jika miring, ganti jadi 1 atau 3.
+    ROTATE_K = 2 
+    
+    # 3. FOKUS OTAK / BUANG TATAKAN (Cropping)
+    # Membuang 30 pixel dari sisi atas, bawah, kiri, dan kanan.
+    CROP_MARGIN = 30 
+    
+    # 4. WARNA AI PREDICTION
+    # 'Wistia' = Kuning Terang | 'autumn' = Kuning Kemerahan | 'spring' = Kuning Magenta
+    AI_COLORMAP = 'Wistia'
+    # ==================================================
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Using Device: {device}")
@@ -163,17 +179,17 @@ def generate_batch_gifs():
 
     top_patients = find_top_n_patients_for_gif(TEST_DATA_PATH, top_n=TOTAL_SAMPLES)
     if not top_patients:
-        print("❌ Data base tidak ditemukan. Pastikan folder local_ct_workspace ada isinya.")
+        print("❌ Data base tidak ditemukan.")
         return
 
-    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs")
+    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs_Final")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     for rank, (patient_id, patient_slices, max_tumor) in enumerate(top_patients):
-        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Merender Pasien: {patient_id} ({len(patient_slices)} frame)...")
+        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Merender Pasien: {patient_id}...")
         frames = []
         
-        for s_info in tqdm(patient_slices, desc=f"Rendering {patient_id}"):
+        for s_info in tqdm(patient_slices, desc=f"Rendering"):
             slice_idx = s_info['slice']
             
             img_np = np.load(s_info['img_path']).astype(np.float32)
@@ -196,13 +212,25 @@ def generate_batch_gifs():
             img_render = img_tensor.squeeze().cpu().numpy()
             gt_render = gt_tensor.squeeze().cpu().numpy()
             
+            # --- 🪄 PROSES REQUEST KLIEN: ROTASI & CROP ---
+            # 1. Rotasi (Mata ke atas)
+            img_render = np.rot90(img_render, k=ROTATE_K)
+            gt_render = np.rot90(gt_render, k=ROTATE_K)
+            prob_map_ai = np.rot90(prob_map_ai, k=ROTATE_K)
+            
+            # 2. Crop (Buang Tatakan)
+            img_render = img_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            gt_render = gt_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            prob_map_ai = prob_map_ai[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            # ----------------------------------------------
+            
             _, num_tumors_gt = label(gt_render)
 
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             fig.suptitle(f"Patient ID: {patient_id} - Slice #{slice_idx}\nActive Tumors Detected: {num_tumors_gt}", fontsize=18, fontweight='bold', color='navy')
             
             axes[0].imshow(img_render, cmap='gray')
-            axes[0].set_title('Original CT Scan', fontsize=14)
+            axes[0].set_title('Original CT Scan (Cropped)', fontsize=14)
             axes[0].axis('off')
 
             axes[1].imshow(img_render, cmap='gray')
@@ -212,10 +240,9 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
-            
-            # THRESHOLD 0.5 - STANDAR AKURASI TINGGI
             masked_ai = np.ma.masked_where(prob_map_ai < 0.5, prob_map_ai) 
-            axes[2].imshow(masked_ai, cmap='Reds', alpha=0.6, vmin=0, vmax=1) 
+            # --- 🪄 PROSES REQUEST KLIEN: WARNA KUNING ---
+            axes[2].imshow(masked_ai, cmap=AI_COLORMAP, alpha=0.8, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction (78% Dice Score)', fontsize=14)
             axes[2].axis('off')
             
@@ -229,11 +256,13 @@ def generate_batch_gifs():
             
             plt.close(fig) 
 
-        output_filename = os.path.join(OUTPUT_DIR, f"Tumor_Progression_BaseData_{patient_id}.gif")
-        imageio.mimsave(output_filename, frames, duration=0.3, loop=0)
+        output_filename = os.path.join(OUTPUT_DIR, f"Final_Tumor_GIF_{patient_id}.gif")
+        
+        # --- 🪄 PROSES REQUEST KLIEN: KECEPATAN ---
+        imageio.mimsave(output_filename, frames, duration=GIF_SPEED, loop=0)
         print(f"✅ GIF tersimpan: {output_filename}")
 
-    print("\n🌟 SEMUA SAMPEL SELESAI DIBUAT! 🌟")
+    print("\n🌟 SEMUA SAMPEL SELESAI DIBUAT (Versi Client Approved)! 🌟")
 
 if __name__ == "__main__":
     generate_batch_gifs()
