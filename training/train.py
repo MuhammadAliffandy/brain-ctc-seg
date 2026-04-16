@@ -211,15 +211,21 @@ class EdgeBoundaryLoss(nn.Module):
         super(EdgeBoundaryLoss, self).__init__()
 
     def forward(self, logits, targets):
-        probs = F.softmax(logits, dim=1)[:, 1, :, :] 
+        # We still need the targets as float for the max_pool2d operation
         targets_float = targets.float().unsqueeze(1)
         
+        # Morphological operations to find the boundary of the tumor
         dilated = F.max_pool2d(targets_float, kernel_size=5, stride=1, padding=2)
         eroded = -F.max_pool2d(-targets_float, kernel_size=5, stride=1, padding=2)
         boundary_mask = (dilated - eroded).squeeze(1) 
         
-        bce = F.binary_cross_entropy(probs, targets.float(), reduction='none')
-        edge_loss = bce * (1 + 5.0 * boundary_mask) 
+        # THE FIX: Use F.cross_entropy instead of binary_cross_entropy
+        # It takes raw 'logits' directly and is 100% safe for AMP/autocast!
+        base_loss = F.cross_entropy(logits, targets, reduction='none')
+        
+        # Apply the 5x penalty weight to the boundary pixels
+        edge_loss = base_loss * (1 + 5.0 * boundary_mask) 
+        
         return edge_loss.mean()
 
 class DiceLoss(nn.Module):
