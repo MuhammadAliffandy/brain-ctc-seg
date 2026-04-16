@@ -210,14 +210,13 @@ def generate_batch_gifs():
             img_tensor = torch.from_numpy(img_np).unsqueeze(0).to(device)
             gt_tensor = torch.from_numpy(gt_np).unsqueeze(0).unsqueeze(0).float().to(device)
             
-            # Standardize resolution for UNet Downsampling
+            # # Standardize resolution for UNet Downsampling
             TARGET_SIZE = (256, 256)
             img_tensor = F.interpolate(img_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
             gt_tensor = F.interpolate(gt_tensor, size=TARGET_SIZE, mode='nearest')
             
-            # Crop the images to focus on the brain and remove the scanner bed
-            img_tensor = img_tensor[:, :, CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
-            gt_tensor = gt_tensor[:, :, CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            # --- JANGAN CROP DI SINI ---
+            # Biarkan model memproses full 256x256 agar U-Net tidak error
             
             # AI Inference
             with torch.no_grad():
@@ -227,11 +226,18 @@ def generate_batch_gifs():
 
             img_render = img_tensor.squeeze().cpu().numpy()
             gt_render = gt_tensor.squeeze().cpu().numpy()
+            
+            # --- 🪄 PROSES REQUEST KLIEN: CROP & ROTASI DILAKUKAN DI SINI ---
+            # 1. CROP (Potong tatakan CT Scan SETELAH AI selesai menebak)
+            img_render = img_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            gt_render = gt_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            prob_map_ai = prob_map_ai[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
 
+            # 2. ROTASI (Mata ke atas)
             img_render = np.rot90(img_render, k=ROTATE_K)
             gt_render = np.rot90(gt_render, k=ROTATE_K)
             prob_map_ai = np.rot90(prob_map_ai, k=ROTATE_K)
-  
+            # --------------------------------------------------------
             
             _, num_tumors_gt = label(gt_render)
 
