@@ -190,7 +190,7 @@ def generate_batch_gifs():
         print("❌ Base data not found. Please verify local_ct_workspace path.")
         return
 
-    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs_Final")
+    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs_Finals")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # ITERATE THROUGH SELECTED PATIENTS
