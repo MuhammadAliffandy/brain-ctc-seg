@@ -92,10 +92,10 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. LOGIC PENEMU BANYAK PASIEN
+# 2. PATIENT DISCOVERY LOGIC (LOCAL DATA)
 # ==========================================
 def find_top_n_patients_for_gif(dataset_path, top_n=3):
-    print(f"🔍 Menganalisis BASE DATA di {dataset_path} untuk mencari TOP {top_n} kandidat GIF terbaik...")
+    print(f"🔍 Analyzing BASE DATA at {dataset_path} to find TOP {top_n} GIF candidates...")
     
     patient_dict = {}
     patient_max_tumors = {} 
@@ -104,7 +104,10 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
         img_files = [f for f in files if f.endswith('_img.npy')]
         
         for img_name in img_files:
+            # Extract patient ID from folder name safely
             patient_id = os.path.basename(root)
+            
+            # Extract slice number using regex
             numbers = re.findall(r'\d+', img_name)
             slice_num = int(numbers[-1]) if numbers else 0
             
@@ -116,6 +119,7 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
             mask_path = img_path.replace('_img.npy', '_mask.npy')
             
             if os.path.exists(mask_path):
+                # Count distinct tumors in the ground truth mask
                 mask_np = np.load(mask_path)
                 _, num_tumors = label(mask_np)
                 
@@ -128,6 +132,7 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
                     'mask_path': mask_path
                 })
 
+    # Sort patients by maximum number of tumors found
     sorted_patients = sorted(patient_max_tumors.items(), key=lambda item: item[1], reverse=True)
     
     top_patients_data = []
@@ -135,9 +140,10 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
         pat_id = sorted_patients[i][0]
         max_tumor = sorted_patients[i][1]
         
+        # Sort slices anatomically from top to bottom
         sorted_slices = sorted(patient_dict[pat_id], key=lambda x: x['slice'])
         top_patients_data.append((pat_id, sorted_slices, max_tumor))
-        print(f"🎯 Kandidat #{i+1}: Pasien [{pat_id}] (Rekor: {max_tumor} tumor terpisah)")
+        print(f"🎯 Candidate #{i+1}: Patient [{pat_id}] (Record: {max_tumor} separate tumors)")
         
     return top_patients_data
 
@@ -145,27 +151,27 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
 # 3. BATCH GIF GENERATOR ENGINE (CLIENT APPROVED VERSION)
 # ==========================================
 def generate_batch_gifs():
+    # PATH CONFIGURATIONS
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
     ROBUST_MODEL_WEIGHTS = "se2_unet_best_robust.pth" 
     
     # ⚙️ ========================================== ⚙️
-    #     CONTROL PANEL (SESUAI REQUEST KLIEN)
+    #     CONTROL PANEL (CLIENT REQUESTS APPLIED)
     # ⚙️ ========================================== ⚙️
     TOTAL_SAMPLES = 4
     
-    # 1. KECEPATAN (Semakin besar angka, semakin lambat)
-    GIF_SPEED = 0.8 # Sebelumnya 0.3 detik/frame, sekarang 0.8 detik/frame
+    # 1. GIF SPEED (Higher value = slower animation)
+    GIF_SPEED = 0.8 
     
-    # 2. MATA KE ATAS (Rotasi)
-    # K=2 memutar 180 derajat (Bawah jadi Atas). Jika miring, ganti jadi 1 atau 3.
+    # 2. ROTATION (k=2 means 180 degrees to put eyes on top)
     ROTATE_K = 2 
     
-    # 3. FOKUS OTAK / BUANG TATAKAN (Cropping)
-    # Membuang 30 pixel dari sisi atas, bawah, kiri, dan kanan.
-    CROP_MARGIN = 30 
+    # 3. CROP MARGIN (Remove the CT scanner bed)
+    # Will slice off 35 pixels from top, bottom, left, and right
+    CROP_MARGIN = 35 
     
-    # 4. WARNA AI PREDICTION
-    # 'Wistia' = Kuning Terang | 'autumn' = Kuning Kemerahan | 'spring' = Kuning Magenta
+    # 4. COLORMAP FOR AI PREDICTION
+    # 'Wistia' = Bright Yellow
     AI_COLORMAP = 'Wistia'
     # ==================================================
     
@@ -174,36 +180,46 @@ def generate_batch_gifs():
     
     print(f"📥 Loading Robust Weights from: {ROBUST_MODEL_WEIGHTS}...")
     model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
+    
+    # strict=False bypasses minor state_dict mismatches like wigner caches
     model.load_state_dict(torch.load(ROBUST_MODEL_WEIGHTS, map_location=device, weights_only=True), strict=False)
     model.eval()
 
     top_patients = find_top_n_patients_for_gif(TEST_DATA_PATH, top_n=TOTAL_SAMPLES)
     if not top_patients:
-        print("❌ Data base tidak ditemukan.")
+        print("❌ Base data not found. Please verify local_ct_workspace path.")
         return
 
     OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs_Final")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    # ITERATE THROUGH SELECTED PATIENTS
     for rank, (patient_id, patient_slices, max_tumor) in enumerate(top_patients):
-        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Merender Pasien: {patient_id}...")
+        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id}...")
         frames = []
         
-        for s_info in tqdm(patient_slices, desc=f"Rendering"):
+        for s_info in tqdm(patient_slices, desc="Rendering"):
             slice_idx = s_info['slice']
             
             img_np = np.load(s_info['img_path']).astype(np.float32)
             gt_np = np.load(s_info['mask_path']).astype(np.uint8)
             
+            # Ensure channel dimension exists
             if len(img_np.shape) == 2: img_np = np.expand_dims(img_np, axis=0)
             
             img_tensor = torch.from_numpy(img_np).unsqueeze(0).to(device)
             gt_tensor = torch.from_numpy(gt_np).unsqueeze(0).unsqueeze(0).float().to(device)
             
+            # Standardize resolution for UNet Downsampling
             TARGET_SIZE = (256, 256)
             img_tensor = F.interpolate(img_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
             gt_tensor = F.interpolate(gt_tensor, size=TARGET_SIZE, mode='nearest')
             
+            # Crop the images to focus on the brain and remove the scanner bed
+            img_tensor = img_tensor[:, :, CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            gt_tensor = gt_tensor[:, :, CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
+            
+            # AI Inference
             with torch.no_grad():
                 logits = model(img_tensor)
                 probs = F.softmax(logits, dim=1)
@@ -211,26 +227,20 @@ def generate_batch_gifs():
 
             img_render = img_tensor.squeeze().cpu().numpy()
             gt_render = gt_tensor.squeeze().cpu().numpy()
-            
-            # --- 🪄 PROSES REQUEST KLIEN: ROTASI & CROP ---
-            # 1. Rotasi (Mata ke atas)
+
             img_render = np.rot90(img_render, k=ROTATE_K)
             gt_render = np.rot90(gt_render, k=ROTATE_K)
             prob_map_ai = np.rot90(prob_map_ai, k=ROTATE_K)
-            
-            # 2. Crop (Buang Tatakan)
-            img_render = img_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
-            gt_render = gt_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
-            prob_map_ai = prob_map_ai[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
-            # ----------------------------------------------
+  
             
             _, num_tumors_gt = label(gt_render)
 
+            # Build the visualization plot
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             fig.suptitle(f"Patient ID: {patient_id} - Slice #{slice_idx}\nActive Tumors Detected: {num_tumors_gt}", fontsize=18, fontweight='bold', color='navy')
             
             axes[0].imshow(img_render, cmap='gray')
-            axes[0].set_title('Original CT Scan (Cropped)', fontsize=14)
+            axes[0].set_title('Original CT Scan (Zoomed & Upright)', fontsize=14)
             axes[0].axis('off')
 
             axes[1].imshow(img_render, cmap='gray')
@@ -240,29 +250,33 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
+            
+            # Masking with High Confidence Threshold (0.5)
             masked_ai = np.ma.masked_where(prob_map_ai < 0.5, prob_map_ai) 
-            # --- 🪄 PROSES REQUEST KLIEN: WARNA KUNING ---
+            
+            # Use requested Colormap
             axes[2].imshow(masked_ai, cmap=AI_COLORMAP, alpha=0.8, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction (78% Dice Score)', fontsize=14)
             axes[2].axis('off')
             
             plt.tight_layout()
             
+            # Extract RGB frame from matplotlib buffer
             fig.canvas.draw()
             rgba_buffer = fig.canvas.buffer_rgba()
             frame = np.asarray(rgba_buffer) 
             frame = frame[:, :, :3] 
             frames.append(frame)
             
+            # Close figure to prevent memory leaks
             plt.close(fig) 
 
+        # Save to GIF
         output_filename = os.path.join(OUTPUT_DIR, f"Final_Tumor_GIF_{patient_id}.gif")
-        
-        # --- 🪄 PROSES REQUEST KLIEN: KECEPATAN ---
         imageio.mimsave(output_filename, frames, duration=GIF_SPEED, loop=0)
-        print(f"✅ GIF tersimpan: {output_filename}")
+        print(f"✅ GIF successfully saved: {output_filename}")
 
-    print("\n🌟 SEMUA SAMPEL SELESAI DIBUAT (Versi Client Approved)! 🌟")
+    print("\n🌟 ALL CLIENT APPROVED SAMPLES GENERATED SUCCESSFULLY! 🌟")
 
 if __name__ == "__main__":
     generate_batch_gifs()
