@@ -4,6 +4,7 @@ import datetime
 import zipfile
 import shutil
 import random
+import re
 import numpy as np
 import pandas as pd
 import torch
@@ -13,7 +14,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-# The "Vaccine" for Domain Gap
 import albumentations as A
 
 # E2CNN Specific Libraries
@@ -23,13 +23,11 @@ import escnn.nn as enn
 # ==========================================
 # 1. DATA PREPARATION 
 # ==========================================
-
 def prepare_local_data(gdrive_dir, local_extract_dir):
     os.makedirs(local_extract_dir, exist_ok=True)
     zip_files = [f for f in os.listdir(gdrive_dir) if f.endswith('.zip')]
-    
     if zip_files:
-        print(f"📦 Found {len(zip_files)} .zip files. Extracting to {local_extract_dir}...")
+        print(f"📦 Found {len(zip_files)} .zip files. Extracting...")
         for z_file in tqdm(zip_files, desc="Extracting Zips"):
             patient_name = z_file.replace('.zip', '')
             target_folder = os.path.join(local_extract_dir, patient_name)
@@ -39,87 +37,95 @@ def prepare_local_data(gdrive_dir, local_extract_dir):
                         zip_ref.extractall(target_folder)
                 except Exception as e:
                     print(f"⚠️ Error extracting {z_file}: {e}")
-        print("✅ Zip extraction complete!")
         return local_extract_dir
     
     sub_folders = [f for f in os.listdir(gdrive_dir) if os.path.isdir(os.path.join(gdrive_dir, f))]
     if sub_folders:
-        print(f"📁 Found standard folders. Copying to {local_extract_dir}...")
+        print(f"📁 Copying Folders to {local_extract_dir}...")
         for folder in tqdm(sub_folders, desc="Copying Folders"):
             src = os.path.join(gdrive_dir, folder)
             dst = os.path.join(local_extract_dir, folder)
             if not os.path.exists(dst):
                 shutil.copytree(src, dst)
-        print("✅ Data copy complete!")
         return local_extract_dir
-        
-    print("⚠️ No valid data found in the GDrive path!")
     return local_extract_dir
 
 # ==========================================
-# 2. DATASET LOADER WITH AUGMENTATION
+# 2. 2.5D DATASET LOADER (Spatial Context)
 # ==========================================
-
-class CTBrainDataset(Dataset):
+class CTBrain25DDataset(Dataset):
     def __init__(self, dataframe, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform 
-        self.slice_pairs = []
+        self.patient_slices = {} 
+        self.all_samples = [] 
 
         patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
 
         for patient in dataframe[patient_col].unique():
             patient_dir = os.path.join(root_dir, patient)
             if os.path.exists(patient_dir):
-                img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')])
+                img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')],
+                                   key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+                
+                valid_pairs = []
                 for img_name in img_files:
                     img_path = os.path.join(patient_dir, img_name)
                     mask_path = img_path.replace('_img.npy', '_mask.npy')
                     if os.path.exists(mask_path):
-                        self.slice_pairs.append((img_path, mask_path))
+                        valid_pairs.append((img_path, mask_path))
+                
+                if valid_pairs:
+                    self.patient_slices[patient] = valid_pairs
+                    for i in range(len(valid_pairs)):
+                        self.all_samples.append((patient, i))
 
-    def __len__(self):
-        return len(self.slice_pairs)
+    def __len__(self): return len(self.all_samples)
 
     def __getitem__(self, idx):
-        img_path, mask_path = self.slice_pairs[idx]
-
+        patient, slice_idx = self.all_samples[idx]
+        slices = self.patient_slices[patient]
+        
+        # 2.5D LOGIC: Get Slice n-1, n, n+1
+        idx_prev = max(0, slice_idx - 1)
+        idx_next = min(len(slices) - 1, slice_idx + 1)
+        
         try:
-            image = np.load(img_path).astype(np.float32)
-            mask = np.load(mask_path).astype(np.uint8)
+            img_prev = np.load(slices[idx_prev][0]).astype(np.float32)
+            img_curr = np.load(slices[slice_idx][0]).astype(np.float32)
+            img_next = np.load(slices[idx_next][0]).astype(np.float32)
+            
+            mask = np.load(slices[slice_idx][1]).astype(np.uint8) 
 
-            # Apply Albumentations Transformations
+            # Stack into 3 channels
+            image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+
             if self.transform is not None:
-                augmented = self.transform(image=image, mask=mask)
-                image = augmented['image']
+                augmented = self.transform(image=image_25d, mask=mask)
+                image_25d = augmented['image']
                 mask = augmented['mask']
 
-            # Reshape for PyTorch (Channels, Height, Width)
-            image = torch.from_numpy(image).unsqueeze(0)
-            mask = torch.from_numpy(mask).long() 
+            image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1)
+            mask_tensor = torch.from_numpy(mask).long() 
 
-            return image, mask
+            return image_tensor, mask_tensor
+            
         except Exception as e:
-            # Fallback to a random index if file is corrupted
-            random_idx = random.randint(0, len(self.slice_pairs) - 1)
+            random_idx = random.randint(0, len(self.all_samples) - 1)
             return self.__getitem__(random_idx)
 
 # ==========================================
-# 3. SE2-CNNET ARCHITECTURE
+# 3. SE2-CNNET ARCHITECTURE (3-CHANNEL)
 # ==========================================
-
 class DoubleEquivariantConv(nn.Module):
     def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
-        if not mid_type:
-            mid_type = out_type
+        if not mid_type: mid_type = out_type
         self.double_conv = enn.SequentialModule(
             enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False),
-            enn.InnerBatchNorm(mid_type),
-            enn.ReLU(mid_type, inplace=True),
+            enn.InnerBatchNorm(mid_type), enn.ReLU(mid_type, inplace=True),
             enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False),
-            enn.InnerBatchNorm(out_type),
-            enn.ReLU(out_type, inplace=True)
+            enn.InnerBatchNorm(out_type), enn.ReLU(out_type, inplace=True)
         )
     def forward(self, x): return self.double_conv(x)
 
@@ -149,11 +155,10 @@ class OutConv(nn.Module):
     def forward(self, x): return self.conv(x)
 
 class SE2_CNNET(nn.Module):
-    def __init__(self, n_channels, n_classes, N=8, base_channels=24):
+    def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=24):
         super().__init__()
         self.r2_act = gspaces.rot2dOnR2(N=N)
         c = base_channels
-
         self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
         self.feat_type_1 = enn.FieldType(self.r2_act, c * [self.r2_act.regular_repr])
         self.feat_type_2 = enn.FieldType(self.r2_act, (c*2) * [self.r2_act.regular_repr])
@@ -187,11 +192,10 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 4. LOSS FUNCTIONS
+# 4. ADVANCED LOSS FUNCTIONS 
 # ==========================================
-
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2.0):
+    def __init__(self, alpha=0.25, gamma=3.0):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -202,6 +206,22 @@ class FocalLoss(nn.Module):
         focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
         return focal_loss.mean()
 
+class EdgeBoundaryLoss(nn.Module):
+    def __init__(self):
+        super(EdgeBoundaryLoss, self).__init__()
+
+    def forward(self, logits, targets):
+        probs = F.softmax(logits, dim=1)[:, 1, :, :] 
+        targets_float = targets.float().unsqueeze(1)
+        
+        dilated = F.max_pool2d(targets_float, kernel_size=5, stride=1, padding=2)
+        eroded = -F.max_pool2d(-targets_float, kernel_size=5, stride=1, padding=2)
+        boundary_mask = (dilated - eroded).squeeze(1) 
+        
+        bce = F.binary_cross_entropy(probs, targets.float(), reduction='none')
+        edge_loss = bce * (1 + 5.0 * boundary_mask) 
+        return edge_loss.mean()
+
 class DiceLoss(nn.Module):
     def __init__(self, smooth=1e-5):
         super(DiceLoss, self).__init__()
@@ -211,53 +231,49 @@ class DiceLoss(nn.Module):
         num_classes = logits.shape[1]
         true_masks_one_hot = F.one_hot(true_masks, num_classes).permute(0, 3, 1, 2).float()
         probs = F.softmax(logits, dim=1)
-        
         probs_target = probs[:, 1, :, :]
         true_target = true_masks_one_hot[:, 1, :, :]
-        
         intersection = (probs_target * true_target).sum(dim=(1, 2))
         union = probs_target.sum(dim=(1, 2)) + true_target.sum(dim=(1, 2))
         dice_score = (2. * intersection + self.smooth) / (union + self.smooth)
-        
         return 1.0 - dice_score.mean()
 
-class CombinedLoss(nn.Module):
-    def __init__(self, weight_focal=1.0, weight_dice=1.0):
-        super(CombinedLoss, self).__init__()
-        self.weight_focal = weight_focal
-        self.weight_dice = weight_dice
-        self.focal = FocalLoss()
+class AdvancedCombinedLoss(nn.Module):
+    def __init__(self):
+        super(AdvancedCombinedLoss, self).__init__()
+        self.focal = FocalLoss(gamma=3.0) 
         self.dice = DiceLoss()
+        self.edge = EdgeBoundaryLoss() 
 
     def forward(self, logits, targets):
-        return (self.weight_focal * self.focal(logits, targets)) + (self.weight_dice * self.dice(logits, targets))
+        return self.focal(logits, targets) + self.dice(logits, targets) + (0.5 * self.edge(logits, targets))
 
 # ==========================================
-# 5. METRIC CALCULATION (FOR REPORTING)
+# 5. METRICS 
 # ==========================================
-
 def calculate_metrics_tensors(preds, targets):
-    """Calculates True Positives, False Positives, False Negatives, True Negatives"""
     preds = preds.view(-1)
     targets = targets.view(-1)
-    
     tp = torch.sum((preds == 1) & (targets == 1)).item()
     fp = torch.sum((preds == 1) & (targets == 0)).item()
     fn = torch.sum((preds == 0) & (targets == 1)).item()
     tn = torch.sum((preds == 0) & (targets == 0)).item()
-    
     return tp, fp, fn, tn
 
 # ==========================================
 # 6. TRAINING EXECUTION
 # ==========================================
-
 def train():
     # PATH DEFINITIONS
     GDRIVE_ROOT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive")
     GDRIVE_DATA_DIR = os.path.join(GDRIVE_ROOT, "Dataset_CT_Preprocessed_NPY") 
     CSV_REPORT = os.path.join(GDRIVE_ROOT, "Dataset_CT_Report.csv")
     LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
+    
+    # 📁 ORGANIZED SAVE DIRECTORY
+    PROJECT_ROOT = os.path.expanduser("~/Clara/brain-ctc-seg/training")
+    MODEL_SAVE_DIR = os.path.join(PROJECT_ROOT, "saved_models_25D")
+    os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
     
     local_root = prepare_local_data(GDRIVE_DATA_DIR, LOCAL_DATA_PATH)
 
@@ -271,56 +287,41 @@ def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️  Device configured: {device}")
 
-    if not os.path.exists(CSV_REPORT):
-        raise FileNotFoundError(f"Cannot find CSV report at {CSV_REPORT}")
     df = pd.read_csv(CSV_REPORT)
-
     train_df = df.sample(frac=(1 - VALIDATION_SPLIT), random_state=42)
     val_df = df.drop(train_df.index)
 
-    # 🧬 AUGMENTATION SETUP (WARNINGS FIXED)
-    print("🧬 Setting up Data Augmentation Pipelines...")
+    print("🧬 Setting up Extreme Data Augmentation Pipelines...")
     train_transform = A.Compose([
         A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
+        A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.3), 
+        A.GridDistortion(p=0.3), 
         A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
-        A.GaussNoise(p=0.3), # Removed invalid var_limit
+        A.GaussNoise(p=0.3), 
         A.GaussianBlur(blur_limit=(3, 7), p=0.2),
         A.HorizontalFlip(p=0.5)
     ])
-    
     val_transform = None 
 
-    print("Preparing Datasets...")
-    train_set = CTBrainDataset(train_df, local_root, transform=train_transform)
-    val_set = CTBrainDataset(val_df, local_root, transform=val_transform)
+    print("Preparing 2.5D Datasets...")
+    train_set = CTBrain25DDataset(train_df, local_root, transform=train_transform)
+    val_set = CTBrain25DDataset(val_df, local_root, transform=val_transform)
 
     num_workers = min(os.cpu_count(), 16) if os.cpu_count() else 4
     
-    train_loader = DataLoader(
-        train_set, batch_size=BATCH_SIZE, shuffle=True, 
-        pin_memory=True, num_workers=num_workers, 
-        prefetch_factor=2, persistent_workers=True
-    )
-    val_loader = DataLoader(
-        val_set, batch_size=BATCH_SIZE, shuffle=False, 
-        pin_memory=True, num_workers=num_workers,
-        prefetch_factor=2, persistent_workers=True
-    )
+    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=num_workers, persistent_workers=True)
+    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=num_workers, persistent_workers=True)
 
-    print(f"📊 Data ready: {len(train_set)} training slices, {len(val_set)} validation slices.")
+    print(f"📊 2.5D Data ready: {len(train_set)} train slices, {len(val_set)} val slices.")
 
-    # Model Setup
-    model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
+    model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
 
-    # Loss & Optimizer (FIXED)
-    criterion = CombinedLoss(weight_focal=1.0, weight_dice=1.0).to(device)
+    criterion = AdvancedCombinedLoss().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5) 
-    
     scaler = torch.amp.GradScaler('cuda')
 
-    best_val_dice = 0.0 # Track best DICE score instead of loss
+    best_val_iou = 0.0 
     
-    # TRAINING LOOP
     for epoch in range(EPOCHS):
         model.train()
         running_loss = 0.0
@@ -345,7 +346,6 @@ def train():
 
             running_loss += loss.item() * ACCUMULATION_STEPS
             pbar_train.set_postfix({'loss': f"{loss.item() * ACCUMULATION_STEPS:.4f}"})
-            
             del outputs, loss
 
         if len(train_loader) % ACCUMULATION_STEPS != 0:
@@ -355,11 +355,8 @@ def train():
 
         avg_train_loss = running_loss / len(train_loader)
 
-        # VALIDATION LOOP & METRICS REPORTING
         model.eval()
         val_loss = 0.0
-        
-        # Metric Trackers
         total_tp, total_fp, total_fn, total_tn = 0, 0, 0, 0
         
         with torch.no_grad():
@@ -375,72 +372,63 @@ def train():
                 val_loss += loss.item()
                 pbar_val.set_postfix({'val_loss': f"{loss.item():.4f}"})
                 
-                # Calculate metrics for current batch
                 probs = F.softmax(logits, dim=1)
                 preds = torch.argmax(probs, dim=1)
                 
                 tp, fp, fn, tn = calculate_metrics_tensors(preds, labels)
-                total_tp += tp
-                total_fp += fp
-                total_fn += fn
-                total_tn += tn
-                
+                total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
                 del logits, loss
 
         avg_val_loss = val_loss / len(val_loader)
         
-        # Calculate Global Metrics for the Report
         epsilon = 1e-7
         epoch_dice = (2 * total_tp) / (2 * total_tp + total_fp + total_fn + epsilon)
         epoch_iou = total_tp / (total_tp + total_fp + total_fn + epsilon)
         epoch_precision = total_tp / (total_tp + total_fp + epsilon)
         epoch_recall = total_tp / (total_tp + total_fn + epsilon)
         
-        # PRINT THE REPORT
         print(f"\n📉 Epoch {epoch+1} Summary -> Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
-        print(f"================== CLASSIFICATION & SEGMENTATION REPORT ==================")
+        print(f"================== 2.5D SHAPE-AWARE REPORT ==================")
         print(f"  • Global Dice Score : {epoch_dice:.4f}")
-        print(f"  • Global IoU        : {epoch_iou:.4f}")
-        print(f"  • Precision         : {epoch_precision:.4f} (Ability to avoid false alarms)")
-        print(f"  • Recall            : {epoch_recall:.4f} (Ability to find all tumors)")
-        print(f"==========================================================================")
+        print(f"  • Global IoU        : {epoch_iou:.4f}  <-- MAIN FOCUS")
+        print(f"  • Precision         : {epoch_precision:.4f}")
+        print(f"  • Recall            : {epoch_recall:.4f}")
+        print(f"=============================================================")
 
-        # AUTO-SAVE BEST MODEL BASED ON DICE SCORE
-        if epoch_dice > best_val_dice:
-            best_val_dice = epoch_dice
-            torch.save(model.state_dict(), 'se2_unet_best_robust.pth')
-            print(f"🌟 New Best Model Saved! (Dice Score improved to: {best_val_dice:.4f})")
+        # AUTO-SAVE BERDASARKAN IOU KE FOLDER BARU
+        if epoch_iou > best_val_iou:
+            best_val_iou = epoch_iou
+            save_path = os.path.join(MODEL_SAVE_DIR, 'se2_unet_best_25D_Boundary.pth')
+            torch.save(model.state_dict(), save_path)
+            print(f"🌟 New Best Model Saved to {save_path}!")
 
-        # Save checkpoint periodically
-        if (epoch+1) % 10 == 0:
-            torch.save(model.state_dict(), f'se2_unet_epoch_{epoch+1}.pth')
-            
+        # Simpan Checkpoint Tiap 10 Epoch
+        if (epoch + 1) % 10 == 0:
+            checkpoint_path = os.path.join(MODEL_SAVE_DIR, f'se2_unet_epoch_{epoch+1}.pth')
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"💾 Checkpoint saved: {checkpoint_path}")
+
         torch.cuda.empty_cache()
 
 # ==========================================
 # 7. LOGGING UTILITY
 # ==========================================
-
 class Logger:
     def __init__(self, filename, stream):
         self.terminal = stream
         self.log = open(filename, "a", encoding="utf-8")
-
     def write(self, message):
         self.terminal.write(message)
         self.log.write(message)
         self.log.flush()
-
     def flush(self):
         self.terminal.flush()
         self.log.flush()
 
 if __name__ == "__main__":
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"training_log_robust_{timestamp}.txt"
-    
+    log_filename = f"training_log_25D_{timestamp}.txt"
     sys.stdout = Logger(log_filename, sys.stdout)
     sys.stderr = Logger(log_filename, sys.stderr)
-    
     print(f"📝 Logging terminal output to {log_filename}")
     train()
