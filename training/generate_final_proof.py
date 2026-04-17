@@ -137,18 +137,21 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
     return top_patients_data
 
 # ==========================================
-# 3. BATCH GIF GENERATOR ENGINE (2.5D SUPPORTED)
+# 3. BATCH GIF GENERATOR ENGINE (2.5D SUPPORTED - FIXED VERSION)
 # ==========================================
 def generate_batch_gifs():
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
     
-    # ⚠️ MENGGUNAKAN WEIGHTS TERBARU DARI FOLDER 2.5D
     ROBUST_MODEL_WEIGHTS = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_best_25D_Boundary.pth")
     
     TOTAL_SAMPLES = 4
     GIF_SPEED = 0.8 
-    ROTATE_K = 2 
-    CROP_MARGIN = 35 
+    
+    # ✅ PERBAIKAN 1: Putar 90 Derajat agar posisi TEGAK (Mata di atas)
+    ROTATE_K = 1 
+    
+    # Zoom/Crop agar tatakan hilang
+    CROP_MARGIN = 40 
     AI_COLORMAP = 'Wistia'
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -161,7 +164,6 @@ def generate_batch_gifs():
         model.load_state_dict(torch.load(ROBUST_MODEL_WEIGHTS, map_location=device, weights_only=True), strict=False)
         print("✅ Weights loaded successfully!")
     except Exception as e:
-        # Fallback to epoch 100 if best model wasn't saved correctly due to early stopping anomaly
         fallback_path = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_epoch_100.pth")
         print(f"⚠️ Best model load failed. Falling back to Epoch 100: {fallback_path}")
         model.load_state_dict(torch.load(fallback_path, map_location=device, weights_only=True), strict=False)
@@ -180,7 +182,6 @@ def generate_batch_gifs():
         print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id}...")
         frames = []
         
-        # 🪄 LOGIKA BARU UNTUK MENGAMBIL 3 SLICE (2.5D) SEKALIGUS
         for i, s_info in enumerate(tqdm(patient_slices, desc="Rendering")):
             slice_idx = s_info['slice']
             
@@ -188,29 +189,27 @@ def generate_batch_gifs():
             idx_next = min(len(patient_slices) - 1, i + 1)
             
             img_prev = np.load(patient_slices[idx_prev]['img_path']).astype(np.float32)
-            img_curr = np.load(s_info['img_path']).astype(np.float32) # Slice tengah yang akan di-plot
+            img_curr = np.load(s_info['img_path']).astype(np.float32) 
             img_next = np.load(patient_slices[idx_next]['img_path']).astype(np.float32)
             
             gt_np = np.load(s_info['mask_path']).astype(np.uint8)
 
-            # Tumpuk jadi 3 channel
             image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
             
             img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
             gt_tensor = torch.from_numpy(gt_np).unsqueeze(0).unsqueeze(0).float().to(device)
             
-            TARGET_SIZE = (256, 256)
-            img_tensor = F.interpolate(img_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
-            gt_tensor = F.interpolate(gt_tensor, size=TARGET_SIZE, mode='nearest')
+            # ✅ PERBAIKAN 2: Blok F.interpolate (Resize) DIHAPUS.
+            # Biarkan AI menebak di resolusi aslinya agar akurat 100%.
             
             with torch.no_grad():
                 logits = model(img_tensor)
                 probs = F.softmax(logits, dim=1)
                 prob_map_ai = probs[0, 1, :, :].cpu().numpy()
 
-            # HANYA AMBIL GAMBAR TENGAH (img_curr) UNTUK VISUALISASI
-            img_render = img_tensor[0, 1, :, :].cpu().numpy() # Index 1 is the middle slice
-            gt_render = gt_tensor.squeeze().cpu().numpy()
+            # ✅ Karena tidak di-resize, kita langsung pakai gambar aslinya untuk di-plot
+            img_render = img_curr 
+            gt_render = gt_np
             
             # --- 🪄 CROP & ROTATE ---
             img_render = img_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
@@ -237,7 +236,6 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
-            # Karena Precision 95.7%, threshold 0.5 dijamin super tajam dan bersih!
             masked_ai = np.ma.masked_where(prob_map_ai < 0.5, prob_map_ai) 
             axes[2].imshow(masked_ai, cmap=AI_COLORMAP, alpha=0.8, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction (84% Dice Score)', fontsize=14)
