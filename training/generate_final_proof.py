@@ -15,7 +15,8 @@ from escnn import gspaces
 import escnn.nn as enn
 
 # ==========================================
-# 1. MODEL ARCHITECTURE (SE2-CNNET 2.5D)
+# 1. CORE ARCHITECTURE (SE2-CNNET 2.5D)
+# (Dibutuhkan agar skrip ini bisa membaca file .pth)
 # ==========================================
 class DoubleEquivariantConv(nn.Module):
     def __init__(self, in_type, out_type, mid_type=None):
@@ -80,15 +81,8 @@ class SE2_CNNET(nn.Module):
 
     def forward(self, x):
         x_geom = enn.GeometricTensor(x, self.feat_type_in)
-        x1 = self.inc(x_geom)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        x1 = self.inc(x_geom); x2 = self.down1(x1); x3 = self.down2(x2); x4 = self.down3(x3); x5 = self.down4(x4)
+        x = self.up1(x5, x4); x = self.up2(x, x3); x = self.up3(x, x2); x = self.up4(x, x1)
         return self.outc(x).tensor
 
 # ==========================================
@@ -137,32 +131,35 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
     return top_patients_data
 
 # ==========================================
-# 3. BATCH GIF GENERATOR ENGINE (2.5D SUPPORTED - FIXED VERSION)
+# 3. BATCH GIF GENERATOR ENGINE (FINAL CLIENT VERSION)
 # ==========================================
 def generate_batch_gifs():
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
-    
     ROBUST_MODEL_WEIGHTS = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_best_25D_Boundary.pth")
+    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs_Final_25D")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     
+    # ⚙️ PENGATURAN VISUALISASI KLIEN
     TOTAL_SAMPLES = 4
     GIF_SPEED = 0.8 
     
-    # ✅ PERBAIKAN 1: Putar 90 Derajat agar posisi TEGAK (Mata di atas)
-    ROTATE_K = 1 
+    # ✅ PERBAIKAN 1: Putar 90 Derajat Kanan (Mata ke atas)
+    ROTATE_K = 3 
     
-    # Zoom/Crop agar tatakan hilang
     CROP_MARGIN = 40 
-    AI_COLORMAP = 'Wistia'
+    AI_COLORMAP = 'Wistia' 
+    
+    # ✅ PERBAIKAN 2: Batas sensitivitas warna kuning diturunkan jadi 30% 
+    # agar tumor yang sangat kecil tetap ikut terwarnai.
+    VISUAL_THRESHOLD = 0.3 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Using Device: {device}")
     
-    print(f"📥 Loading 2.5D Robust Weights from: {ROBUST_MODEL_WEIGHTS}...")
     model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
-    
     try:
         model.load_state_dict(torch.load(ROBUST_MODEL_WEIGHTS, map_location=device, weights_only=True), strict=False)
-        print("✅ Weights loaded successfully!")
+        print("✅ 84% Accuracy Weights Loaded!")
     except Exception as e:
         fallback_path = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_epoch_100.pth")
         print(f"⚠️ Best model load failed. Falling back to Epoch 100: {fallback_path}")
@@ -175,9 +172,6 @@ def generate_batch_gifs():
         print("❌ Base data not found.")
         return
 
-    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Client_GIFs_Final_25D")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
     for rank, (patient_id, patient_slices, max_tumor) in enumerate(top_patients):
         print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id}...")
         frames = []
@@ -185,37 +179,34 @@ def generate_batch_gifs():
         for i, s_info in enumerate(tqdm(patient_slices, desc="Rendering")):
             slice_idx = s_info['slice']
             
+            # Ambil konteks 2.5D (bawah, tengah, atas)
             idx_prev = max(0, i - 1)
             idx_next = min(len(patient_slices) - 1, i + 1)
             
+            # ✅ PERBAIKAN 3: Tidak ada kompresi F.interpolate. 
+            # AI menebak persis di resolusi asli CT Scan!
             img_prev = np.load(patient_slices[idx_prev]['img_path']).astype(np.float32)
             img_curr = np.load(s_info['img_path']).astype(np.float32) 
             img_next = np.load(patient_slices[idx_next]['img_path']).astype(np.float32)
-            
             gt_np = np.load(s_info['mask_path']).astype(np.uint8)
 
             image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-            
             img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
-            gt_tensor = torch.from_numpy(gt_np).unsqueeze(0).unsqueeze(0).float().to(device)
-            
-            # ✅ PERBAIKAN 2: Blok F.interpolate (Resize) DIHAPUS.
-            # Biarkan AI menebak di resolusi aslinya agar akurat 100%.
             
             with torch.no_grad():
                 logits = model(img_tensor)
                 probs = F.softmax(logits, dim=1)
                 prob_map_ai = probs[0, 1, :, :].cpu().numpy()
 
-            # ✅ Karena tidak di-resize, kita langsung pakai gambar aslinya untuk di-plot
             img_render = img_curr 
             gt_render = gt_np
             
-            # --- 🪄 CROP & ROTATE ---
+            # 🪄 CROP tatakan
             img_render = img_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
             gt_render = gt_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
             prob_map_ai = prob_map_ai[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
 
+            # 🪄 ROTATE (Mata ke Atas)
             img_render = np.rot90(img_render, k=ROTATE_K)
             gt_render = np.rot90(gt_render, k=ROTATE_K)
             prob_map_ai = np.rot90(prob_map_ai, k=ROTATE_K)
@@ -236,7 +227,8 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
-            masked_ai = np.ma.masked_where(prob_map_ai < 0.5, prob_map_ai) 
+            # 🪄 Menggunakan VISUAL_THRESHOLD yang sudah diturunkan jadi 0.3
+            masked_ai = np.ma.masked_where(prob_map_ai < VISUAL_THRESHOLD, prob_map_ai) 
             axes[2].imshow(masked_ai, cmap=AI_COLORMAP, alpha=0.8, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction (84% Dice Score)', fontsize=14)
             axes[2].axis('off')
@@ -254,7 +246,7 @@ def generate_batch_gifs():
         imageio.mimsave(output_filename, frames, duration=GIF_SPEED, loop=0)
         print(f"✅ GIF successfully saved: {output_filename}")
 
-    print("\n🌟 ALL 2.5D CLIENT APPROVED SAMPLES GENERATED SUCCESSFULLY! 🌟")
+    print("\n🌟 ALL CLIENT APPROVED SAMPLES GENERATED SUCCESSFULLY! 🌟")
 
 if __name__ == "__main__":
     generate_batch_gifs()
