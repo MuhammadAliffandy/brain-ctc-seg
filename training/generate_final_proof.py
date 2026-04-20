@@ -16,7 +16,6 @@ import escnn.nn as enn
 
 # ==========================================
 # 1. CORE ARCHITECTURE (SE2-CNNET 2.5D)
-# (Dibutuhkan agar skrip ini bisa membaca file .pth)
 # ==========================================
 class DoubleEquivariantConv(nn.Module):
     def __init__(self, in_type, out_type, mid_type=None):
@@ -86,47 +85,54 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. PATIENT DISCOVERY LOGIC
+# 2. PATIENT DISCOVERY LOGIC (SMOOTH NON-JUMPING FIX)
 # ==========================================
+def get_slice_num(fname):
+    nums = re.findall(r'\d+', fname)
+    return int(nums[-1]) if nums else 0
+
 def find_top_n_patients_for_gif(dataset_path, top_n=3):
-    print(f"🔍 Analyzing BASE DATA at {dataset_path}...")
-    patient_dict = {}
+    print(f"🔍 Analyzing BASE DATA at {dataset_path} to find top patients...")
     patient_max_tumors = {} 
     
+    # Langkah 1: Cari tau siapa pasien dengan tumor paling banyak
     for root, dirs, files in os.walk(dataset_path):
         img_files = [f for f in files if f.endswith('_img.npy')]
         for img_name in img_files:
             patient_id = os.path.basename(root)
-            numbers = re.findall(r'\d+', img_name)
-            slice_num = int(numbers[-1]) if numbers else 0
-            
-            if patient_id not in patient_dict:
-                patient_dict[patient_id] = []
+            if patient_id not in patient_max_tumors:
                 patient_max_tumors[patient_id] = 0
                 
-            img_path = os.path.join(root, img_name)
-            mask_path = img_path.replace('_img.npy', '_mask.npy')
-            
+            mask_path = os.path.join(root, img_name).replace('_img.npy', '_mask.npy')
             if os.path.exists(mask_path):
                 mask_np = np.load(mask_path)
                 _, num_tumors = label(mask_np)
                 if num_tumors > patient_max_tumors[patient_id]:
                     patient_max_tumors[patient_id] = num_tumors
-                    
-                patient_dict[patient_id].append({
-                    'slice': slice_num,
-                    'img_path': img_path,
-                    'mask_path': mask_path
-                })
 
     sorted_patients = sorted(patient_max_tumors.items(), key=lambda item: item[1], reverse=True)
     top_patients_data = []
+    
+    # Langkah 2: AMBIL SELURUH SLICE dari pasien tersebut (Agar tidak jumping)
     for i in range(min(top_n, len(sorted_patients))):
         pat_id = sorted_patients[i][0]
         max_tumor = sorted_patients[i][1]
-        sorted_slices = sorted(patient_dict[pat_id], key=lambda x: x['slice'])
-        top_patients_data.append((pat_id, sorted_slices, max_tumor))
-        print(f"🎯 Candidate #{i+1}: Patient [{pat_id}]")
+        patient_dir = os.path.join(dataset_path, pat_id)
+        
+        all_img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')], key=get_slice_num)
+        
+        patient_slices = []
+        for img_name in all_img_files:
+            img_path = os.path.join(patient_dir, img_name)
+            mask_path = img_path.replace('_img.npy', '_mask.npy')
+            patient_slices.append({
+                'slice': get_slice_num(img_name),
+                'img_path': img_path,
+                'mask_path': mask_path if os.path.exists(mask_path) else None # Tetap ambil walau tak ada mask!
+            })
+            
+        top_patients_data.append((pat_id, patient_slices, max_tumor))
+        print(f"🎯 Candidate #{i+1}: Patient [{pat_id}] - Total Slices: {len(patient_slices)}")
         
     return top_patients_data
 
@@ -141,16 +147,15 @@ def generate_batch_gifs():
     
     # ⚙️ PENGATURAN VISUALISASI KLIEN
     TOTAL_SAMPLES = 4
-    GIF_SPEED = 0.8 
     
-    # ✅ PERBAIKAN 1: Putar 90 Derajat Kanan (Mata ke atas)
-    ROTATE_K = 3 
+    # ✅ PERBAIKAN: Kecepatan dibuat 1.0 detik per frame agar sangat nyaman untuk di-examine dokter
+    GIF_SPEED = 1.0 
+    
+    # ✅ PERBAIKAN: Putar 90 Derajat Kiri agar mata yang tadinya di bawah menjadi di ATAS
+    ROTATE_K = 1 
     
     CROP_MARGIN = 40 
     AI_COLORMAP = 'Wistia' 
-    
-    # ✅ PERBAIKAN 2: Batas sensitivitas warna kuning diturunkan jadi 30% 
-    # agar tumor yang sangat kecil tetap ikut terwarnai.
     VISUAL_THRESHOLD = 0.3 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -173,30 +178,43 @@ def generate_batch_gifs():
         return
 
     for rank, (patient_id, patient_slices, max_tumor) in enumerate(top_patients):
-        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id}...")
+        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id} (Smooth Playback)...")
         frames = []
         
         for i, s_info in enumerate(tqdm(patient_slices, desc="Rendering")):
             slice_idx = s_info['slice']
             
-            # Ambil konteks 2.5D (bawah, tengah, atas)
+            # Ambil konteks 2.5D
             idx_prev = max(0, i - 1)
             idx_next = min(len(patient_slices) - 1, i + 1)
             
-            # ✅ PERBAIKAN 3: Tidak ada kompresi F.interpolate. 
-            # AI menebak persis di resolusi asli CT Scan!
             img_prev = np.load(patient_slices[idx_prev]['img_path']).astype(np.float32)
             img_curr = np.load(s_info['img_path']).astype(np.float32) 
             img_next = np.load(patient_slices[idx_next]['img_path']).astype(np.float32)
-            gt_np = np.load(s_info['mask_path']).astype(np.uint8)
+            
+            # Handle slice yang sehat (tidak ada file _mask.npy)
+            if s_info['mask_path'] and os.path.exists(s_info['mask_path']):
+                gt_np = np.load(s_info['mask_path']).astype(np.uint8)
+            else:
+                gt_np = np.zeros_like(img_curr, dtype=np.uint8) # Mask kosong
+
+            # Dapatkan dimensi Native (Asli)
+            NATIVE_H, NATIVE_W = img_curr.shape
 
             image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
             img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
             
+            # ✅ PERBAIKAN ASSERTION ERROR: Resize SILUMAN hanya untuk model AI
+            img_tensor_256 = F.interpolate(img_tensor, size=(256, 256), mode='bilinear', align_corners=False)
+            
             with torch.no_grad():
-                logits = model(img_tensor)
+                logits = model(img_tensor_256)
                 probs = F.softmax(logits, dim=1)
-                prob_map_ai = probs[0, 1, :, :].cpu().numpy()
+                prob_map_ai_256 = probs[:, 1:2, :, :] # Output ukuran 256x256
+                
+                # ✅ KEMBALIKAN ukuran tebakan AI ke resolusi Native (Asli) agar nempel presisi
+                prob_map_ai_native = F.interpolate(prob_map_ai_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False)
+                prob_map_ai = prob_map_ai_native.squeeze().cpu().numpy()
 
             img_render = img_curr 
             gt_render = gt_np
@@ -206,7 +224,7 @@ def generate_batch_gifs():
             gt_render = gt_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
             prob_map_ai = prob_map_ai[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
 
-            # 🪄 ROTATE (Mata ke Atas)
+            # 🪄 ROTATE (Balik Mata ke Atas)
             img_render = np.rot90(img_render, k=ROTATE_K)
             gt_render = np.rot90(gt_render, k=ROTATE_K)
             prob_map_ai = np.rot90(prob_map_ai, k=ROTATE_K)
@@ -227,7 +245,7 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
-            # 🪄 Menggunakan VISUAL_THRESHOLD yang sudah diturunkan jadi 0.3
+            # 🪄 Threshold rendah agar titik tumor sekecil apapun muncul menyala
             masked_ai = np.ma.masked_where(prob_map_ai < VISUAL_THRESHOLD, prob_map_ai) 
             axes[2].imshow(masked_ai, cmap=AI_COLORMAP, alpha=0.8, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction (84% Dice Score)', fontsize=14)
