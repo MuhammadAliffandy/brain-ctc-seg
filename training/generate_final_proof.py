@@ -137,6 +137,9 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
 # ==========================================
 # 3. BATCH GIF GENERATOR ENGINE (SHARP BOUNDARY VERSION)
 # ==========================================
+# ==========================================
+# 3. BATCH GIF GENERATOR ENGINE (NATIVE RESOLUTION FIX)
+# ==========================================
 def generate_batch_gifs():
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
     ROBUST_MODEL_WEIGHTS = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_best_25D_Boundary.pth")
@@ -146,12 +149,11 @@ def generate_batch_gifs():
     # ⚙️ PENGATURAN VISUALISASI KLIEN
     TOTAL_SAMPLES = 4
     GIF_SPEED = 1.0 
-    ROTATE_K = 1 
+    ROTATE_K = 1 # Kepala sudah terbukti tegak dengan ini
     CROP_MARGIN = 40 
     AI_COLORMAP = 'Wistia' 
     
-    # ✅ FIX 1: Return threshold to 0.5 to eliminate low-confidence noise/speckles.
-    # Model will only render yellow mask where it is highly confident.
+    # Threshold 0.5 agar tebakan solid dan bersih
     VISUAL_THRESHOLD = 0.5 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -174,7 +176,7 @@ def generate_batch_gifs():
         return
 
     for rank, (patient_id, patient_slices, max_tumor) in enumerate(top_patients):
-        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id} (Sharp Playback)...")
+        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id} (Native Resolution)...")
         frames = []
         
         for i, s_info in enumerate(tqdm(patient_slices, desc="Rendering")):
@@ -192,22 +194,16 @@ def generate_batch_gifs():
             else:
                 gt_np = np.zeros_like(img_curr, dtype=np.uint8) 
 
-            NATIVE_H, NATIVE_W = img_curr.shape
-
             image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+            
+            # ✅ PERBAIKAN MUTLAK: Masukkan tensor langsung tanpa di-resize/interpolate!
             img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
             
-            img_tensor_256 = F.interpolate(img_tensor, size=(256, 256), mode='bilinear', align_corners=False)
-            
             with torch.no_grad():
-                logits = model(img_tensor_256)
+                # AI memprediksi di resolusi asli (Native)
+                logits = model(img_tensor)
                 probs = F.softmax(logits, dim=1)
-                prob_map_ai_256 = probs[:, 1:2, :, :] 
-                
-                # ✅ FIX 2: Use 'nearest' mode for upscaling. 
-                # This prevents boundary blurring and keeps the tumor mask solid and crisp!
-                prob_map_ai_native = F.interpolate(prob_map_ai_256, size=(NATIVE_H, NATIVE_W), mode='nearest')
-                prob_map_ai = prob_map_ai_native.squeeze().cpu().numpy()
+                prob_map_ai = probs[0, 1, :, :].cpu().numpy()
 
             img_render = img_curr 
             gt_render = gt_np
@@ -254,7 +250,7 @@ def generate_batch_gifs():
         imageio.mimsave(output_filename, frames, duration=GIF_SPEED, loop=0)
         print(f"✅ GIF successfully saved: {output_filename}")
 
-    print("\n🌟 ALL SHARP CLIENT APPROVED SAMPLES GENERATED SUCCESSFULLY! 🌟")
+    print("\n🌟 ALL NATIVE RESOLUTION SAMPLES GENERATED SUCCESSFULLY! 🌟")
 
 if __name__ == "__main__":
     generate_batch_gifs()
