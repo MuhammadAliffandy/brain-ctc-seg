@@ -95,7 +95,6 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
     print(f"🔍 Analyzing BASE DATA at {dataset_path} to find top patients...")
     patient_max_tumors = {} 
     
-    # Langkah 1: Cari tau siapa pasien dengan tumor paling banyak
     for root, dirs, files in os.walk(dataset_path):
         img_files = [f for f in files if f.endswith('_img.npy')]
         for img_name in img_files:
@@ -113,7 +112,6 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
     sorted_patients = sorted(patient_max_tumors.items(), key=lambda item: item[1], reverse=True)
     top_patients_data = []
     
-    # Langkah 2: AMBIL SELURUH SLICE dari pasien tersebut (Agar tidak jumping)
     for i in range(min(top_n, len(sorted_patients))):
         pat_id = sorted_patients[i][0]
         max_tumor = sorted_patients[i][1]
@@ -128,7 +126,7 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
             patient_slices.append({
                 'slice': get_slice_num(img_name),
                 'img_path': img_path,
-                'mask_path': mask_path if os.path.exists(mask_path) else None # Tetap ambil walau tak ada mask!
+                'mask_path': mask_path if os.path.exists(mask_path) else None 
             })
             
         top_patients_data.append((pat_id, patient_slices, max_tumor))
@@ -137,7 +135,7 @@ def find_top_n_patients_for_gif(dataset_path, top_n=3):
     return top_patients_data
 
 # ==========================================
-# 3. BATCH GIF GENERATOR ENGINE (FINAL CLIENT VERSION)
+# 3. BATCH GIF GENERATOR ENGINE (SHARP BOUNDARY VERSION)
 # ==========================================
 def generate_batch_gifs():
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
@@ -147,16 +145,14 @@ def generate_batch_gifs():
     
     # ⚙️ PENGATURAN VISUALISASI KLIEN
     TOTAL_SAMPLES = 4
-    
-    # ✅ PERBAIKAN: Kecepatan dibuat 1.0 detik per frame agar sangat nyaman untuk di-examine dokter
     GIF_SPEED = 1.0 
-    
-    # ✅ PERBAIKAN: Putar 90 Derajat Kiri agar mata yang tadinya di bawah menjadi di ATAS
     ROTATE_K = 1 
-    
     CROP_MARGIN = 40 
     AI_COLORMAP = 'Wistia' 
-    VISUAL_THRESHOLD = 0.3 
+    
+    # ✅ FIX 1: Return threshold to 0.5 to eliminate low-confidence noise/speckles.
+    # Model will only render yellow mask where it is highly confident.
+    VISUAL_THRESHOLD = 0.5 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Using Device: {device}")
@@ -178,13 +174,12 @@ def generate_batch_gifs():
         return
 
     for rank, (patient_id, patient_slices, max_tumor) in enumerate(top_patients):
-        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id} (Smooth Playback)...")
+        print(f"\n🎥 [Sample {rank+1}/{len(top_patients)}] Rendering Patient: {patient_id} (Sharp Playback)...")
         frames = []
         
         for i, s_info in enumerate(tqdm(patient_slices, desc="Rendering")):
             slice_idx = s_info['slice']
             
-            # Ambil konteks 2.5D
             idx_prev = max(0, i - 1)
             idx_next = min(len(patient_slices) - 1, i + 1)
             
@@ -192,39 +187,35 @@ def generate_batch_gifs():
             img_curr = np.load(s_info['img_path']).astype(np.float32) 
             img_next = np.load(patient_slices[idx_next]['img_path']).astype(np.float32)
             
-            # Handle slice yang sehat (tidak ada file _mask.npy)
             if s_info['mask_path'] and os.path.exists(s_info['mask_path']):
                 gt_np = np.load(s_info['mask_path']).astype(np.uint8)
             else:
-                gt_np = np.zeros_like(img_curr, dtype=np.uint8) # Mask kosong
+                gt_np = np.zeros_like(img_curr, dtype=np.uint8) 
 
-            # Dapatkan dimensi Native (Asli)
             NATIVE_H, NATIVE_W = img_curr.shape
 
             image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
             img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
             
-            # ✅ PERBAIKAN ASSERTION ERROR: Resize SILUMAN hanya untuk model AI
             img_tensor_256 = F.interpolate(img_tensor, size=(256, 256), mode='bilinear', align_corners=False)
             
             with torch.no_grad():
                 logits = model(img_tensor_256)
                 probs = F.softmax(logits, dim=1)
-                prob_map_ai_256 = probs[:, 1:2, :, :] # Output ukuran 256x256
+                prob_map_ai_256 = probs[:, 1:2, :, :] 
                 
-                # ✅ KEMBALIKAN ukuran tebakan AI ke resolusi Native (Asli) agar nempel presisi
-                prob_map_ai_native = F.interpolate(prob_map_ai_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False)
+                # ✅ FIX 2: Use 'nearest' mode for upscaling. 
+                # This prevents boundary blurring and keeps the tumor mask solid and crisp!
+                prob_map_ai_native = F.interpolate(prob_map_ai_256, size=(NATIVE_H, NATIVE_W), mode='nearest')
                 prob_map_ai = prob_map_ai_native.squeeze().cpu().numpy()
 
             img_render = img_curr 
             gt_render = gt_np
             
-            # 🪄 CROP tatakan
             img_render = img_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
             gt_render = gt_render[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
             prob_map_ai = prob_map_ai[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN]
 
-            # 🪄 ROTATE (Balik Mata ke Atas)
             img_render = np.rot90(img_render, k=ROTATE_K)
             gt_render = np.rot90(gt_render, k=ROTATE_K)
             prob_map_ai = np.rot90(prob_map_ai, k=ROTATE_K)
@@ -245,7 +236,6 @@ def generate_batch_gifs():
             axes[1].axis('off')
             
             axes[2].imshow(img_render, cmap='gray')
-            # 🪄 Threshold rendah agar titik tumor sekecil apapun muncul menyala
             masked_ai = np.ma.masked_where(prob_map_ai < VISUAL_THRESHOLD, prob_map_ai) 
             axes[2].imshow(masked_ai, cmap=AI_COLORMAP, alpha=0.8, vmin=0, vmax=1) 
             axes[2].set_title('AI Prediction (84% Dice Score)', fontsize=14)
@@ -264,7 +254,7 @@ def generate_batch_gifs():
         imageio.mimsave(output_filename, frames, duration=GIF_SPEED, loop=0)
         print(f"✅ GIF successfully saved: {output_filename}")
 
-    print("\n🌟 ALL CLIENT APPROVED SAMPLES GENERATED SUCCESSFULLY! 🌟")
+    print("\n🌟 ALL SHARP CLIENT APPROVED SAMPLES GENERATED SUCCESSFULLY! 🌟")
 
 if __name__ == "__main__":
     generate_batch_gifs()
