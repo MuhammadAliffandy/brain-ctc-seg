@@ -1,0 +1,52 @@
+\section{Methodology}
+This section explains the building blocks of the upgraded CNN-based architecture. It highlights the core components that define this convolutional network, which is based on a modification of the Special Euclidean group SE(2) integrated with a 2.5D spatial context model. Additionally, we introduce an advanced Edge-Boundary loss function to improve boundary delineation.
+
+\subsection{2.5D Spatial Context Model}
+While 3D CNNs can fully exploit volumetric data, they suffer from high computational complexity and memory constraints. As a highly efficient alternative, we implement a 2.5D spatial context approach. For a given target slice at index $n$, we stack the adjacent slices $n-1$ and $n+1$ along the channel dimension. Thus, the input to our network is a 3-channel tensor representing localized 3D context. This design allows the network to distinguish between true tumor boundaries and transient noise artifacts that do not persist across adjacent slices.
+
+\subsection{Mathematical Formulation of SE2-CNNET}
+The proposed Mod-SE(2) architecture ensures that the corresponding transformations in feature maps are preserved throughout the network when rotational and translational transformations are applied to the input. Mathematically, this is formulated as follows:
+\begin{equation}
+    T_g(f(x)) = f(T_g(x))
+\end{equation}
+where $f(x)$ represents the feature map that encodes tumor characteristics, and $T_g$ is a Mod-SE(2) transformation (e.g., rotation or translation). Unlike standard CNNs, which require data augmentation, Mod-SE(2) group convolutions inherently encode these transformations, ensuring robustness across varying orientations.
+
+To maintain high-level stability, deeper layers enforce invariance:
+\begin{equation}
+    f(T_g(x)) = f(x)
+\end{equation}
+where group pooling aggregates features across transformations, thereby forming invariant representations. 
+
+Mathematically, the group action of SE(2) on a point $x \in \mathbb{R}^2$ is defined as:
+\begin{equation}
+    T_{(\theta,t)}(x) = R_\theta x + t
+\end{equation}
+where $R_\theta$ is a rotation matrix, and $t$ is a translation vector, reflecting the SE(2) group structure. We discretize the continuous rotation group into $N=8$ discrete rotations.
+
+Our network utilizes equivariant convolutions (\texttt{enn.R2Conv}) that process feature fields responding predictably to input rotations. The architecture mirrors a U-Net but is built entirely of rotation-equivariant blocks. Specifically, we replaced standard max-pooling layers with average pooling, as preliminary experiments showed that max pooling suppressed fine-scale activations critical for detecting small or morphologically complex tumors.
+
+\subsection{Advanced Combined Loss Function}
+CT scans often present highly ambiguous tumor margins. To force the network to focus on these critical regions, we define a composite loss function comprising Focal Loss ($\gamma=3.0$), Dice Loss, and a novel Edge-Boundary Loss.
+
+The Edge-Boundary Loss utilizes morphological operations to extract the spatial boundary of the tumor mask:
+\begin{equation}
+    M_{boundary} = \text{Dilate}(Y) - \text{Erode}(Y)
+\end{equation}
+where $Y$ is the ground truth mask. The Cross-Entropy (CE) loss is then amplified specifically at the boundary pixels:
+\begin{equation}
+    \mathcal{L}_{edge} = \text{CE}(\hat{Y}, Y) \odot (1 + \lambda M_{boundary})
+\end{equation}
+where $\lambda = 5.0$. The final objective function is a weighted sum:
+\begin{equation}
+    \mathcal{L}_{total} = \mathcal{L}_{focal} + \mathcal{L}_{dice} + 0.5 \cdot \mathcal{L}_{edge}
+\end{equation}
+
+\subsection{Evaluation Metrics}
+We evaluate the performance using accuracy, precision, recall, and F1 score for classification. For segmentation, we use the Dice coefficient, Intersection over Union (IoU), precision, and recall. The Dice coefficient ($D$) measures the overlap between predicted segmentation $A$ and ground truth $B$:
+\begin{equation}
+    D = \frac{2 \cdot |A \cap B|}{|A| + |B|}
+\end{equation}
+IoU evaluates the ratio of the intersection to the union:
+\begin{equation}
+    \text{IoU} = \frac{|A \cap B|}{|A \cup B|}
+\end{equation}

@@ -1,0 +1,1487 @@
+Angelina et al. 
+Journal of Biomedical Science           (2026) 33:11  
+https://doi.org/10.1186/s12929-025-01213-y
+RESEARCH Open Access
+© The Author(s) 2026. Open Access  This article is licensed under a Creative Commons Attribution 4.0 International License, which 
+permits use, sharing, adaptation, distribution and reproduction in any medium or format, as long as you give appropriate credit to the 
+original author(s) and the source, provide a link to the Creative Commons licence, and indicate if changes were made. The images or 
+other third party material in this article are included in the article’s Creative Commons licence, unless indicated otherwise in a credit line 
+to the material. If material is not included in the article’s Creative Commons licence and your intended use is not permitted by statutory 
+regulation or exceeds the permitted use, you will need to obtain permission directly from the copyright holder. To view a copy of this 
+licence, visit http:// creat iveco mmons. org/ licen ses/ by/4. 0/. The Creative Commons Public Domain Dedication waiver (http:// creat iveco 
+mmons. org/ publi cdoma in/ zero/1. 0/) applies to the data made available in this article, unless otherwise stated in a credit line to the data.
+Mod-SE(2): a geometric deep learning 
+framework for brain tumor classification 
+and segmentation in MRI images
+Clara Lavita Angelina1,2,3†, Fu‑Ren Xiao3,10†, Sunil Vyas3,7†, Pan‑Chyr Yang4,5,7,9,10*, Hsuan‑Ting Chang1,2,6* and 
+Yuan Luo3,7,8,9,10* 
+Abstract 
+Background Accurate classification and segmentation of brain tumors in MRI scans are essential for diagnosis 
+and treatment planning. However, the heterogeneous morphology of brain tumors, including irregular shapes, sizes, 
+and spatial variability, makes this task highly challenging. Traditional convolutional neural networks (CNNs) lack rota‑
+tional and translational invariance, which limits their ability to generalize across different orientations.
+Methods This study introduces a geometric deep learning framework called Modified Special Euclidean (Mod‑
+SE(2)), which integrates geometric priors to enhance spatial consistency and reduce reliance on data augmentation. 
+By incorporating symmetry‑preserving group convolutions and spatial priors, Mod‑SE(2) improves the robustness 
+in tumor classification (namely Mod‑Cls‑SE(2)) and segmentation (mentioned as Mod‑Seg‑SE(2)). Unlike conventional 
+CNNs, geometric deep learning encodes roto‑translation symmetry directly into the architecture. This addresses 
+the spatial variability and orientation sensitivity that are common in MRI‑based diagnostics. Mod‑SE(2) was evaluated 
+on three MRI datasets and two other medical image datasets for classification and segmentation tasks. It incorporates 
+lifting layers, group convolutions, and feature recalibration. It was benchmarked against U‑Net, NN U‑Net, VGG16, 
+VGG19, and ResNet architectures.
+Results Mod‑Cls‑SE(2) achieved an average classification accuracy of 0.914, outperforming ResNet101 with 0.682, 
+VGG16 with 0.705, and their variants. In the binary classification of five tumor types (AVM, Meningioma, Pituitary, 
+Metastases, and Schwannoma) from the private dataset, the model achieved an accuracy of 0.935 and a precision 
+of 0.960 for pituitary tumors and a precision of 0.96. For segmentation tasks, Mod‑Seg‑SE(2) achieved a dice coef‑
+ficient of 0.9503 and an IoU of 0.9616 on the BraTS2020 dataset. This result exceeds those of U‑Net and NN U‑Net 
+with dice scores of 0.797 and 0.815, respectively. The model also reduced inference time and demonstrated strong 
+computational performance.
+†Clara Lavita Angelina, Fu‑Ren Xiao and Sunil Vyas have contributed equally 
+to this work.
+*Correspondence:
+Pan‑Chyr Yang
+pcyang@ntu.edu.tw
+Hsuan‑Ting Chang
+htchang@yuntech.edu.tw
+Yuan Luo
+yuanluo@ntu.edu.tw
+Full list of author information is available at the end of the articlePage 2 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+Conclusions Mod‑SE(2) uses geometric priors to improve the spatial consistency, efficiency, and interpretability 
+in brain tumor analysis. Its symmetry‑aware design enables better generalization across tumor shapes and outper‑
+forms traditional methods across all key metrics. The Mod‑SE(2) CNN ensures accurate boundary delineation, sup‑
+porting neurosurgical planning, intraoperative navigation, and downstream applications such as Monte Carlo‑based 
+radiotherapy simulations and PET‑MRI co‑registration. Future work will extend the model to 3D volumes and validate 
+its clinical readiness.
+Keywords Geometric deep learning, Mod‑SE(2), Brain tumor classification, MRI, Medical imaging, Roto‑translation 
+invariance
+Introduction
+Brain tumors pose a significant challenge in clinical prac-
+tice due to their diverse appearances, growth patterns, 
+and locations within the brain [1]. Among the various 
+intracranial growths encountered, arteriovenous mal -
+formations (AVMs), pituitary tumors, meningiomas, 
+schwannomas, and metastatic lesions account for a large 
+percentage of diagnosed cases. Although Magnetic Reso -
+nance Imaging (MRI) is the established standard for eval-
+uating brain tumors, providing high-resolution details 
+of soft tissues and anatomy [2], distinguishing between 
+different tumor types can be difficult to distinguish. The 
+precise classification and segmentation of these tumors 
+remains challenging due to overlapping features seen on 
+imaging and the variability within individual tumors [3, 
+4]. The necessity of precise diagnostic tools that can accu-
+rately differentiate between these tumor types under -
+scores the importance of innovations in medical imaging 
+technology [5, 6]. While histopathology and molecular 
+analysis remain essential for definitive diagnosis, prog -
+nostication, and treatment planning in neuro-oncology, 
+these methods are time-consuming, require invasive pro-
+cedures, and are not always practical in urgent clinical 
+situations. These limitations have led to a growing inter -
+est in automated, high-precision diagnostic tools that can 
+deliver reliable results with minimal human intervention. 
+In this work, we aim to enhance non-invasive imaging 
+analysis prior to histopathology.
+Each type of brain tumor presents unique challenges for 
+both imaging and biological interpretation. AVMs, being 
+congenital vascular abnormalities, have complex, tan -
+gled vessel structures that make them difficult to outline 
+precisely. Pituitary tumors, though often small, exhibit 
+a wide range of functional profiles that impact hormone 
+levels and thus complicate diagnosis. Meningiomas and 
+schwannomas can appear similar on MRI scans despite 
+originating from different cell types. The diverse imaging 
+characteristics of metastases, which depend on their pri -
+mary source, add another layer of complexity. Accurately 
+classifying and delineating these various tumor types is 
+crucial for effective treatment planning, guiding surgical 
+procedures, and predicting patient outcomes.
+Convolutional neural networks (CNNs) have shown 
+strong performance in both classification and segmen -
+tation tasks, including lung cancer classification [7 ] and 
+brain tumor analysis [8 – 10]. Notably, models like Res-
+BRNet and EfficientNet-B0 have achieved impressive 
+results when trained on large-scale datasets [11]. Similarly, 
+architectures such as U-Net [12] and NN U-Net [13] have 
+become the standard for tumor segmentation tasks. Dee -
+pLabV3+ and Efficient-Enhanced U-Net also achieved 
+impressive results when trained on BraTS dataset [14, 15]. 
+However, CNNs inherently struggle with spatial variations, 
+especially rotations and translations. This requires exten-
+sive data augmentation, which can lead to inconsistencies 
+in how features are extracted from MRIs acquired in dif -
+ferent orientations. Consequently, this increases compu -
+tational demands and reduces the interpretability of the 
+models. Although transfer learning has improved perfor -
+mance in some instances [16], pre-trained models still lack 
+an inherent understanding of geometric invariance.
+To overcome these limitations, geometric deep learn -
+ing (GDL) has emerged as a promising alternative. Mod -
+els such as Group Equivariant CNNs (G-CNNs) [17] and 
+Harmonic Networks [18] are designed to respect rota -
+tional symmetry, making them more robust to changes 
+in orientation. However, many of these models primar -
+ily focus on rotational equivariance and often overlook 
+translational invariance, which is vital for accurately 
+locating tumors. Previous research has typically con -
+centrated on either classification or segmentation, rarely 
+addressing both tasks within a unified model or encom -
+passing the full spectrum of brain tumor diversity.
+GDL provides a biologically inspired approach to incor-
+porating spatial knowledge and structural symmetry into 
+neural networks [19–21]. It has gained increasing traction 
+across medical imaging domains beyond brain tumor clas-
+sification. For instance, Bronstein et  al. demonstrated the 
+GDL in analyzing cortical surfaces and mapping functional 
+regions using non-Euclidean mesh representations [22]. 
+In diffusion MRI, Ewert et  al. introduced a GDL method 
+for continuous signal reconstruction [23]. A deeper rep -
+resentation of GDL is also employed. Zhang et al. applied 
+local-to-global graph neural networks to classify Autism Page 3 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+Spectrum Disorder (ASD) and Alzheimer’s disease (AD) by 
+analyzing disease-related local brain regions and biomark-
+ers [24]. Additionally, Kerkela et al. modeled spherical neu-
+ral networks to improve the estimation of microstructural 
+data from brain MRI data [25]. This research improves 
+prediction accuracy compared to models that apply less or 
+no rotational variance. This emphasizes the effectiveness of 
+a model in medical images for models that use rotational 
+features, such as GDL methods. Zhu et al. proposed a uni-
+fied GDL model to predict task-based fMRI activity from 
+anatomical features in sMRI, highlighting cross-modal 
+learning [26]. In CT imaging, Koetzier et  al. presented a 
+graph-based deep reconstruction method to recover high-
+fidelity CT volumes from undersampled data [27]. Winkels 
+and Cohen proved CNN model with roto-translation group 
+convolutions performs similarly to a regular CNN with ten 
+times less data [28]. This research trained a roto-translation 
+group 3D CNN on a pulmonary nodule detection dataset 
+and compared it with a regular CNN model. The regular 
+CNN model received data augmentation, yet still needed 
+ten times more data to perform at an acceptable level. In 
+digital pathology, Li et al. use GDL to conduct spatial analy-
+sis using histopathology images for single-cell analysis [29]. 
+Biologically, analyzing histopathology images at the sin -
+gle-cell level offers a significant advantage over traditional 
+patch-based methods by providing detailed cellular infor-
+mation. This research focuses on exploring more into the 
+microenvironment of a tumor. In their experiments, their 
+proposed model has consistently eclipsed existing patch-
+based and cell graph-based methods across two independ-
+ent datasets.
+This study aims to address two fundamental tasks in 
+neuro-oncological imaging, which are classifying various 
+tumor types and performing semantic segmentation. For 
+classification, we use a private MRI dataset containing five 
+distinct tumor categories: AVM, meningioma, pituitary 
+adenoma, metastatic tumors, and schwannoma. Arterio -
+venous malformations are vascular malformations with 
+an incidence of approximately 1 per 100,000 per year and 
+carry a risk of serious hemorrhage, where their detection 
+via MRI is critical for preventing stroke and guiding sur -
+gical planning [30, 31]. Meningiomas account for roughly 
+30-37 % of all primary brain tumors, are frequently benign, 
+and often produce symptoms through mass effect, with 
+MRI guiding both diagnosis and surgical strategy [32]. 
+Pituitary adenomas represent 10–25% of intracranial neo-
+plasms, with microadenomas being particularly common 
+(prevalence up to ~17%), and can cause visual or hormo -
+nal symptoms that MRI is uniquely suited to identify [33]. 
+Brain metastases, occurring in an estimated 10–40 % of 
+cancer patients, are the most frequent intracranial tumors, 
+significantly impacting prognosis and treatment deci -
+sions [34]. Vestibular schwannomas (also called acoustic 
+neuromas) are benign tumors arising from Schwann cells 
+of the vestibular portion of the eighth cranial nerve. They 
+account for approximately 8–10% of all intracranial tumors 
+and up to 80% of tumors in the cerebellopontine angle. 
+Patients typically present with hearing loss, tinnitus, and 
+balance disturbances [35]. Collectively, these tumor types 
+underscore the need for an imaging tool capable of both 
+classification and localization across heterogeneous tumor 
+morphologies in real-world neuro-oncology practice. 
+For segmentation, we perform pixel-level labeling to pre -
+cisely outline tumor regions. This is essential for estimat -
+ing tumor volume and tracking its boundaries. Our goal is 
+to provide radiologists with clinically valuable insights to 
+assist them in diagnosis and treatment planning.
+To achieve these goals, we introduce Mod-SE(2), a Mod-
+ified Special Euclidean CNN that combines roto-trans -
+lational equivariance with a mechanism for recalibrating 
+feature importance. This approach ensures spatial consist-
+ency, enabling the model to robustly classify and segment 
+brain tumors while reducing the need for extensive data 
+augmentation. By integrating GDL, our approach lever -
+ages spatial relationships and structural priors. The GDL 
+approach can significantly improve both classification 
+accuracy and segmentation precision [36]. Our primary 
+contributions include: (1) developing Mod-SE(2), an exten-
+sion of SE(2) CNNs that explicitly accounts for both rota-
+tional and translational transformations (2) demonstrating 
+improved performance compared to conventional mod -
+els using both publicly available and our private datasets 
+and (3) analyzing computational efficiency and highlight-
+ing its reduced processing cost and improved scalability. 
+From a clinical standpoint, Mod-SE(2) allows for a more 
+interpretable and reproducible tumor analysis. Different 
+tumor types, such as AVMs, schwannomas, and menin -
+giomas, not only have distinct origins and exhibit charac-
+teristic spatial behaviors. By preserving these geometric 
+structures, Mod-SE(2) makes predictions that more accu-
+rately reflect the actual anatomy. These predictions can aid 
+in tasks such as surgical planning and monitoring tumor 
+progression over time. Furthermore, the model’s ability 
+to precisely map boundaries and provide high-resolution 
+structural priors enhances interpretation and tumor locali-
+zation. This enables neurosurgeons to plan resections 
+while preserving functional brain regions. Its ability to 
+reduce processing time while maintaining accuracy makes 
+Mod-SE(2) a practical tool for real-time neurodiagnostic 
+workflows. Our model is versatile and clinically relevant 
+across the full spectrum of neuro-oncology care.
+Methodology
+This section explains the building blocks of the CNN-
+based Modified Special Euclidean (Mod-SE(2)) architec -
+ture. It highlights the core components that define this Page 4 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+convolutional network, which is based on a modifica -
+tion of the Special Euclidean group SE(2). As part of this 
+modification, we replaced the max-pooling layers in the 
+baseline SE(2)-CNN with average pooling, as prelimi -
+nary experiments showed that max pooling suppressed 
+fine-scale activations critical for detecting small or mor -
+phologically complex tumors. Average pooling preserved 
+these subtle yet informative signals, resulting in more 
+stable spatial representations and improved robustness 
+across both classification and segmentation settings. 
+Specifically, it introduces two specialized variants, which 
+are Mod-Cls-SE(2) for classification tasks and Mod-Seg-
+SE(2) for segmentation tasks. Additionally, this section 
+outlines the evaluation metrics used to assess the robust -
+ness of the proposed models, or how well they perform 
+or remain stable under specific conditions, such as geo -
+metric transformations.
+Model architecture and training
+Mathematical Formulation of Mod‑SE(2)
+The proposed Mod-SE(2) ensures that the correspond -
+ing transformations in feature maps are preserved 
+throughout the network when rotational and transla -
+tional transformations are applied to the input. Math -
+ematically, this is formulated as follows:
+where f (x) represents the feature map that encodes 
+tumor characteristics, and Tg a Mod-SE(2) transfor -
+mation (e.g., rotation, or translation). Unlike standard 
+CNNs, which require data augmentation, Mod-SE(2) 
+group convolutions inherently encode these transforma -
+tions, ensuring robustness across varying orientations.
+T o maintain high-level stability, deeper layers enforce 
+invariance,
+where group pooling aggregates features across transfor -
+mations, thereby forming figure representations. Figure 1 
+shows the transformation visually. It illustrates a series of 
+geometric transformations applied to a reference shape. 
+These transformations include rotations, translations, 
+and combinations of both. All this transformation applied 
+(1)Tg (f (x)) = f (Tg (x))
+(2)f (Tg (x)) = f (x)
+Fig. 1 Visualization of Mod‑SE(2) transformations applied to a biological object, illustrating rotations, translations, and their combinationsPage 5 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+to the original shape, which is located at the center (Iden-
+tity). Mathematically, the group action of SE(2) on a point 
+x ∈ R2 is defined as:
+where Rθ is a rotation matrix, and t a translation vec -
+tor, reflecting the SE(2) group structure. For an element 
+g = (x, Rθ ) ∈ Mod-SE(2), transformations act as:
+where I is an original input image. With equivariance in 
+intermediate layers:
+And invariance in classification:
+The Mod-SE(2) group models spatial transformations 
+in 2D, combining rotation and translation [37]. Each 
+element g can be re ′ presented as a pair (x, Rθ , where x 
+denotes a translation vector (spatial shift for aligning ana-
+tomical structures), and Rθ is a rotation matrix for angle 
+θ , enabling orientation-invariant feature learning.
+This composition allows the Mod-SE(2) CNN to 
+propagate spatial transformations coherently across 
+network layers, ensuring consistent boundary locali -
+zation and internal textures under varying orienta -
+tions. This is an important step to achieve reliable 
+segmentation.
+Network architecture
+The Mod-SE(2) model was used for classification and 
+segmentation. It incorporates roto-translation layers 
+and group convolutions, which improve spatial feature 
+extraction. These enhancements make the model par -
+ticularly effective in medical imaging, where anatomi -
+cal structures exhibit orientation variability [17].
+To clarify in subsequent sections, we refer to the 
+classification-specific configuration of the model as 
+Mod-Cls, and the segmentation-specific configura -
+tion as Mod-Seg. Mod-Cls is optimized to identify and 
+categorize image-level features, while the Mod-Seg 
+configuration is tailored for pixel-level delineation of 
+anatomical regions.
+Classification network
+The core architecture is adapted from the original SE(2) 
+group convolutional network proposed by [17], with 
+(3)T(θ,t)(x) = Rθ x + t
+(4)Tg (I) = Rθ ·I + t
+(5)Tg (f (I)) = f (Tg (I))
+(6)f (Tg (I)) = f (I)
+(7)g.g′= (x, Rθ ) ·(x′,Rθ′) = (Rθ x′+x , Rθ+θ ′)
+custom modifications tailored to our dataset. Specifically, 
+we replaced the original max pooling layers with average 
+pooling. Average pooling resulted in smoother downsam-
+pling of features and improved the stability of the network 
+when processing the high-resolution MRI scans in our 
+dataset. Additionally, we fine-tuned the number of filters 
+used in each layer and adjusted the dimensions of the 
+intermediate feature representations to better align with 
+the characteristics of our datasets, including their distribu-
+tion, resolution, and inherent variability, of our datasets.
+Figure 2 shows the classification pipeline of Mod-Cls-
+SE(2), which begins with a Conv2D layer (3 × 3 kernel, 32 
+filters), followed by the Lifting Layer (64 filters). The lift -
+ing layer plays a critical role by transforming the standard 
+2D image data, which exists on the Euclidean plane R2 , 
+into a richer, higher-dimensional representation on the 
+SE(2) group. This abstract space inherently captures both 
+translational and discrete rotational transformations. 
+This transformation is achieved by convolving the input 
+image with a set of filters, each rotated at different angles 
+(for instance, 8 or 16 distinct orientations). This process 
+generates a set of feature maps that are oriented accord -
+ing to the features they detect. By encoding features 
+based on both their location and their orientation, the 
+lifting layer preserves crucial spatial structure and direc -
+tional information, setting the stage for subsequent layers 
+to perform equivariant processing. This joint encoding of 
+position and orientation allows the network to differenti -
+ate between patterns that might look structurally similar 
+but appear at different angles – a particularly important 
+capability in the context of medical image analysis.
+Following the lifting layer, the architecture employs a 
+sequence of group convolution layers. These layers per -
+form convolutions directly within the SE(2) group domain. 
+Unlike standard convolutional layers, which are only equiv-
+ariant to translations (meaning a shift in the input leads 
+to a corresponding shift in the output), group convolu -
+tions maintain equivariance to both rotations and transla-
+tions. This means that if the input image (or the features 
+it contains) is shifted or rotated, the resulting output fea -
+ture maps will transform consistently and predictably. This 
+property makes our network significantly more robust to 
+the natural anatomical variability. Consequently, this inher-
+ent geometric awareness reduces the need for extensive 
+data augmentation during training and ultimately improves 
+the model’s generalization performance on unseen data.
+T o reduce the spatial dimensions and extract dominant 
+features, we incorporate an average pooling layer after 
+the lifting layer. Unlike max pooling, which captures only 
+the most prominent activation in each region, average 
+pooling summarizes features by computing their mean 
+and preserving broader contextual information. After 
+each group convolution, we apply batch normalization Page 6 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+to stabilize training and a Squeeze-and-Excitation (SE) 
+block to enable the network to learn channel-wise atten -
+tion, effectively weighing the importance of different 
+feature channels. The resulting feature maps are then 
+flattened and fed into a series of fully connected lay -
+ers, culminating in a Softmax classifier that outputs the 
+probability of each tumor class. Mod-Cls-SE(2) integrates 
+roto-translation transformations, enabling robust han -
+dling of spatial variations in medical images (see Sec -
+tion  1:  Mod-Cls-SE(2) Architecture in Supplementary 
+File 1).
+Fig. 2 Mod‑Cls‑SE(2) architecture for brain tumor classification. The network includes an initial convolution layer, a lifting layer for roto‑translation, 
+group convolutions for rotation equivariance, and average pooling. It concludes with a fully connected layer to classify various tumor types
+Fig. 3 Mod‑Seg‑SE(2) architecture for brain tumor segmentation. The network includes an initial convolution and lifting layer, group convolutions 
+for transformation robustness, and group deconvolutions (GdeConv) in the decoder for precise segmentation mask reconstructionPage 7 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+Segmentation network
+For the segmentation task, the Mod-Seg-SE(2) uses a U-Net-
+inspired structure, where the encoder is the same as the pre-
+viously described classification network. Figure 3 shows the 
+architecture of the Mod-Seg-SE(2) CNN. The model includes 
+the same lifting layer and stack of group convolution lay -
+ers, enabling it to extract orientation-aware features that are 
+equivariant to both rotation and translation (see Section 2: 
+Mod-Seg-SE(2) Architecture in Supplementary File 1). Reus-
+ing this encoder allows the segmentation branch to benefit 
+from a robust and geometrically informed feature represen-
+tation that is already optimized for tumor classification.
+The decoder replaces standard deconvolution layers with 
+group deconvolutions (GDeconv), which perform trans -
+posed convolutions over the SE(2) group. Unlike traditional 
+upsampling layers, which operate only in the spatial domain, 
+GDeconv layers reconstruct features in both spatial and ori-
+entation dimensions. This allows the decoder to upsample 
+SE(2)-structured feature maps while maintaining their equiv-
+ariant properties. Consequently, the segmentation outputs 
+preserve the model’s geometric consistency and remain sta-
+ble under transformations such as rotation and translation. 
+Pairing a shared classification encoder with an equivariant 
+decoder in this architectural design ensures that Mod-SE(2) 
+can produce accurate and consistent segmentation masks 
+across a wide range of tumor presentations and orienta -
+tions. This structure enables the network to handle spatial 
+variability in medical images without relying on extensive 
+data augmentation, making it highly effective for brain MRI 
+segmentation.
+Algorithm 1 Mod‑SE(2) architecture
+Dataset and preprocessing
+We evaluated Mod-SE(2) using three MRI datasets and 
+two medical image datasets, which covered both classi -
+fication and segmentation tasks (see Section  3:  Dataset 
+and preprocessing in Supplementary File 1). The data -
+sets used in our experiments are summarized in Table  1. 
+The MRI Alzheimer’s dataset is primarily used for clas -
+sification tasks, distinguishing between different stages of 
+Alzheimer’s disease. The Public MRI Brain Tumors data-
+set contains labeled tumor images for classification and 
+segmentation tasks. It is labeled as public because the 
+dataset is available publicly on the Kaggle platform. The 
+private MRI Brain Tumors dataset was obtained from 
+National Taiwan University (NTU) Hospital, Taiwan, and 
+is not publicly available online (see Supplementary File 
+2-5). These two datasets consist of high-resolution tumor 
+scans and provide an additional test set to evaluate our 
+model’s generalizability. The skin lesion and blood cell 
+datasets are used for segmentation tasks. They consist 
+of paired images and corresponding ground truth masks 
+that enable the model to accurately detect and localize 
+target objects, such as lesions or cells, within their sur -
+rounding context. For the Skin Lesion dataset, the lesion 
+types include malignant melanoma, benign melanocytic 
+nevus, and seborrheic keratosis. For the Blood Cell data -
+set, the annotated white blood cell types include lympho -
+cytes, monocytes, eosinophils, and neutrophils. These 
+datasets were included solely to evaluate the generaliz -
+ability of Mod-Seg-SE(2) to other medical image segmen-
+tation domains beyond brain MRI.
+Figure 4 shows representative examples from our pri -
+vate MRI brain tumor dataset under real-world clini -
+cal settings. Experienced radiologists have annotated 
+each scan to serve as ground truth for classification and 
+segmentation tasks. The examples demonstrate the sig -
+nificant variability in tumor size, shape, intensity, and 
+anatomical location, which reflects the inherent hetero -
+geneity encountered in this field.
+To ensure consistency across datasets and improve 
+model performance, we applied a standardized preproc -
+essing pipeline before training. This pipeline included 
+standardization to uniform resolution, histogram equali -
+zation, data augmentation, and lastly, pixel value nor -
+malization. First, we resized all MRI scans to a uniform 
+resolution of 256×256 pixels to maintain consistency 
+across datasets and facilitate batch processing in deep 
+learning models. Then, we performed intensity normali -
+zation using histogram equalization to enhance contrast 
+and improve tumor visibility. This mitigates variations in 
+brightness and contrast caused by different MRI acqui -
+sition protocols. To increase the dataset’s diversity and 
+improve the model’s robustness to rotational features, 
+minor augmentations were applied to the training data, Page 8 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+including random rotations (up to ±15°) and scaling 
+(±10%). These transformations help the model general -
+ize better to unseen orientations and variations in tumor 
+shape. Finally, all the image pixel intensities were nor -
+malized to the [0,1] range to stabilize training and pre -
+vent numerical instability. Normalization ensures that 
+input values remain within a consistent range, thereby 
+optimizing convergence speed during training. These 
+preprocessing steps ensure that the input data remains 
+well-conditioned for deep learning models, which mini -
+mizes the impact of variability across MRI scans and 
+improves Mod-SE(2)’s overall generalizability in brain 
+tumor and Alzheimer’s disease classification.
+Training strategy and hyperparameter selection
+For classification, three MRI datasets are used, which are 
+the MRI Alzheimer’s dataset for four-class classification 
+(Mild Demented, Moderate Demented, Non-Demented, 
+Very Mild Demented); the public MRI Brain Tumor data-
+set; and the private dataset for multi-class tumor clas -
+sification, assessing the models’ ability to differentiate 
+pathological conditions.
+For segmentation, the datasets include blood cell seg -
+mentation, skin lesion segmentation, and the private 
+MRI brain tumor segmentation dataset across five tumor 
+classes: AVM, Meningioma, Pituitary, Metastases, and 
+Schwannoma. The segmentation models addressed 
+challenges such as cell overlap, boundary variations, and 
+pixel-wise tumor delineation. Unlike standard CNNs that 
+require extensive augmentation, Mod-SE(2) is inherently 
+invariant to transformations, thus reducing the need for 
+augmentation. The model is trained using the following 
+configuration, as summarized in Table 2.
+We ran all experiments on an NVIDIA GeForce RTX 
+3090, using TensorFlow 2.4 and CUDA 11. This setup 
+enabled efficient training of the data and computationally 
+intensive group convolutions. We applied the following 
+regularization techniques were applied: batch normaliza -
+tion stabilizes training by normalizing activations across 
+layers, dropout (0.4 probability) reduces overfitting by 
+randomly deactivating neurons during training, and 
+weight decay (0.0005) acts as a regularization term to 
+prevent excessive weight magnitudes. These techniques 
+collectively improve model robustness, ensuring stable 
+training and better generalization to unseen MRI scans.
+Evaluation metrics
+We evaluate the performance of the Mod-SE(2) CNN in 
+classification (Mod-Cls-SE(2)) and segmentation (Mod-
+Seg-SE(2)) tasks using various metrics. We measure clas -
+sification tasks using accuracy, precision, recall, and F1 
+score. The segmentation task is evaluated based on its 
+dice coefficient, Intersection over Union (IoU), precision, 
+and recall value. These metrics provide a comprehensive 
+evaluation of the effectiveness of classification, which is 
+crucial in medical imaging, where false positives and false 
+negatives can have significant clinical consequences.
+Classification metrics
+Accuracy ( Acc ) is a measure of the model’s overall cor -
+rectness. It is calculated by dividing the number of 
+correctly classified instances by the total number of 
+instances:
+Fig. 4 Representative samples from the Private MRI Brain Tumor dataset collected from NTU Hospital, Taiwan. The images illustrate the diversity 
+in tumor size, location, and morphology (see Supplementary File 2–5)
+Table 1 Overview of MRI datasets used for evaluation
+Dataset Type Train Test
+BraTS2020 [38] Segmentation 628 110
+Skin Lesion [39] Segmentation 900 100
+Blood Cell [40] Segmentation 1169 159
+MRI Brain Tumors (Public) [41] Classification 2235 496
+MRI Brain Tumors (Private) Classification & 
+segmentation
+3878 969Page 9 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+This metric provides an overview of the model’s per -
+forms but may not sufficient in cases of class imbalance.
+Precision ( Pc ) quantifies the proportion of correctly 
+predicted positive cases among all positive predictions. 
+It ensures that the model minimizes false alarms, which 
+is crucial in medical diagnostics. Similarly, recall ( Rc ), 
+also known as sensitivity, measures the model’s ability 
+to detect actual positive cases, ensuring that malignant 
+cases are not overlooked. These metrics are defined as 
+follows:
+Finally, the F1 score ( F 1 ) provides a balanced meas -
+ure of precision and recall by computing their harmonic 
+mean. This metric is particularly useful in imbalanced 
+datasets, where a high precision or recall alone may not 
+be sufficient. It is defined as:
+This equation illustrates the trade-off between preci -
+sion and recall, ensuring optimal classification perfor -
+mance, particularly in situations where false positives and 
+false negatives carry significant consequences. T ogether, 
+these metrics provide a comprehensive evaluation of 
+the Mod-Cls-SE(2)’s classification performance. High 
+values, particularly for the F 1 score, demonstrate the 
+model’s ability to accurately detect true positives while 
+minimizing false positives and false negatives, making 
+the model highly effective for real-world medical imaging 
+applications.
+(8)Acc = True Positives + True Negatives
+Total samples
+(9)Pc = True Positives
+True Positives + False Positive
+(10)Rc = True Positives
+True Positives + False Negatives
+(11)F 1 = 2 Pc ·Rc
+Pc + Rc
+Segmentation metrics
+The Dice coefficient (D) measures the overlap between 
+predicted segmentation and the ground truth. It pro -
+vides a score that reflects how closely the model’s output 
+matches the actual tumor regions. It is defined as follows:
+where A is the predicted segmentation and B is the 
+ground truth.
+The Intersection over Union (IoU) evaluates the ratio 
+of the intersection to the union of the predicted and true 
+regions, representing segmentation accuracy:
+The Precision ( Ps ) quantifies the proportion of cor -
+rectly predicted positive pixels among all pixels predicted 
+as positive. It is defined as:
+The Recall ( Rs ), or sensitivity, measures the propor -
+tion of actual positive pixels that are correctly identified 
+by the model, ensuring minimal false negatives in tumor 
+detection:
+These metrics assess the Mod-Seg-SE(2)’s ability to seg-
+ment brain tumors with high accuracy and consistency. 
+The dice coefficient and IoU are key for evaluating spatial 
+overlap, ensuring the model’s clinical viability in medical 
+diagnostics.
+Results
+This research evaluated segmentation and classification 
+tasks using various medical imaging datasets, includ -
+ing blood cell images, skin lesion images, brain MRI 
+(12)D = 2˙|A∩ B|
+|A|+| B|
+(13)IoU = |A∩ B|
+|A∪ B|
+(14)Ps = True Positives
+True Positives + False Positive
+(15)Rs = True Positives
+True Positives + False Negatives
+Table 2 Training Hyperparameters and Justifications
+Parameter Value Justification
+Optimizer Adam Adaptive learning for stable convergence
+Learning rate 0.001 Tuned via validation set performance
+Batch size 8 (Classification), 32 (Segmentation) Memory‑efficient training
+Loss function Categorical Cross‑Entropy (Classifications)
+Jaccard Loss (Segmentation)
+Better for class imbalance
+Training duration 100 epochs (Classification),
+70 epochs (Segmentation)
+Optimal convergence pointPage 10 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+scans (both public and private), as well as MRI data from 
+patients with Alzheimer’s disease. All images were stand-
+ardized to a 2D format and underwent normalization to 
+ensure consistency in pixel intensity and reduce varia -
+tions from acquisition conditions [42].
+The Mod-SE(2) modification was compared with 
+VGG16 [43], VGG19 [44], ResNet50 [45], ResNet101 
+[46], HoverNet [47], and Harmonic Net [18], as well as 
+U-Net based segmentation model from the work of [12, 
+48] and No New U-Net (NN U-Net) [49], ensuring a 
+comprehensive evaluation against both traditional deep 
+learning and specialized segmentation networks. Using 
+roto-translation equivariance, Mod-SE(2) demonstrated 
+improved spatial consistency and reduced false positives, 
+validating its robustness in multiple medical imaging 
+tasks.
+Classification performance
+Table 3 shows the classification performance across the 
+model. We compared the predicted labels generated by 
+Mod-Cls-SE(2) with the expert-annotated ground truth 
+labels provided in each dataset in public MRI brain clas -
+sification. It achieves the highest accuracy of 0.906, pre -
+cision of 0.910, recall of 0.904, and an exceptional F1 
+score of 0.908. These results highlight the model’s robust-
+ness in handling spatial transformations and its ability to 
+maintain both sensitivity and specificity without relying 
+excessively on data augmentation. In contrast, Harmon -
+icNet achieves a higher recall of 0.875 compared to most 
+conventional models, although it slightly struggles with 
+a precision of 0.830, resulting in a balanced F1 score of 
+0.852. Traditional CNN-based models such as VGG16, 
+VGG19, and ResNet variants exhibit significantly lower 
+performance. Their accuracy values range from 0.755 
+to 0.8, which reinforces their limitations in dealing with 
+spatial variability. VGG16 shows moderate recall of 0.795 
+and slightly better precision of 0.805, indicating a ten -
+dency toward false negatives. These results confirm that 
+the roto-translation equivariance of Mod-SE(2) effec -
+tively enhances feature stability, making it a more reli -
+able and computationally efficient solution for brain MRI 
+classification. Remarkably, despite its more sophisticated 
+and computationally complex architecture, Mod-Cls-
+SE(2) has fewer parameters and is more efficient than 
+denser models, such as VGG19 and ResNet101, in terms 
+of computational resource utilization and performance. 
+This highlights its efficiency and effectiveness in clinical 
+MRI classification.
+Table 4 shows the most effective model for private MRI 
+brain classification. It achieves the highest performance 
+across all evaluation metrics, with an accuracy of 0.931, 
+precision of 0.947, recall of 0.918, and F1 score of 0.933. 
+This comprehensive superiority highlights the Mod-SE(2) 
+based model’s robustness in correctly identifying posi -
+tive cases while maintaining low false positive and false 
+negative rates. Compared to all other models, including 
+HarmonicNet, HoverNet, VGG variants, and ResNet 
+architectures, Mod-Cls-SE(2) outperforms them all in 
+every aspect. HarmonicNet, while also a group-equiv -
+ariant model, trails behind in all metrics. Traditional 
+CNN-based models such as VGG16, VGG19, ResNet50, 
+and ResNet101 show notably lower performance, strug -
+gling particularly with recall and F1 score, which are key 
+indicators of balanced and reliable classification. These 
+findings underscore the value of group-equivariant 
+architectures, particularly Mod-SE(2)’s built-in roto-
+translation equivariance, in enhancing generalization 
+and spatial understanding. This makes Mod-Cls-SE(2) 
+especially well-suited for complex medical imaging tasks, 
+such as brain MRI classification.
+Table 5 shows Mod-Cls-SE(2)’s performance across five 
+binary tumor classification tasks and highlights its ability 
+to adapt to different tumor types with varying levels of 
+sensitivity and specificity.
+Among the tumor types, the Pituitary task achieves the 
+highest precision of 0.960 and recall of 0.920, resulting 
+in the best F1 score of 0.939. This indicates that Mod-
+Cls-SE(2) is especially effective at identifying pituitary 
+tumors with both high sensitivity and specificity. Menin -
+gioma also shows a balanced performance with a preci -
+sion of 0.952, recall of 0.914, and F1 score of 0.932, while 
+Schwannoma demonstrates a similarly robust perfor -
+mance precision of 0.945, recall of 0.910, and F1 score of 
+0.928. In contrast, AVM vs Non AVM and Metastases, 
+though slightly lower, still maintain high overall perfor -
+mance with precision of 0.940 – 0.945, recall of 0.905, 
+and F1 scores of 0.924 and 0.923, respectively. These 
+results collectively suggest that Mod-Cls-SE(2) consist -
+ently balances precision and recall across different tumor 
+classifications and excels in scenarios where high sensi -
+tivity is critical.
+Table  6 shows that Mod-Cls-SE(2) outperforms tra -
+ditional models, including VGG16, VGG19, ResNet50, 
+and ResNet101, across all metrics. It achieved the high -
+est accuracy of 0.914, far surpassing ResNet101’s 0.682. 
+This demonstrates Mod-Cls-SE(2)’s superior capability in 
+brain tumor classification. This improvement highlights 
+the effectiveness of its roto-translation invariance in han-
+dling spatial and rotational variations without extensive 
+data augmentation. Furthermore, Mod-Cls-SE(2) consist-
+ently delivered higher precision of 0.923, recall of 0.909, 
+and F1 score of 0.916 than the conventional CNN-based 
+models. Mod-Cls-SE(2) also demonstrated a reduction 
+in inference time during the evaluation phase, mak -
+ing it suitable for real-time clinical applications. The 
+model’s computational efficiency was also a significant Page 11 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+advantage, requiring only 2.5 hours for training com -
+pared to 6–7  hours for the ResNet-based models. With 
+considerably shorter inference and training time, Mod-
+Cls-SE(2) not only reduces computational load but also 
+outperforms existing CNN-based models in classification 
+tasks. Overall, these results underscore how the inherent 
+geometric priors of the Mod-SE(2) based model, espe -
+cially Mod-Cls-SE(2), contribute to both improved per -
+formance and reduced computational cost.
+In addition to evaluating accuracy and training effi -
+ciency, we assessed the model’s suitability for real-time 
+clinical applications by evaluating the inference time 
+per image. Table  7 shows that the proposed Mod-Cls-
+SE(2) achieves a remarkably low average inference time 
+of 0.1099 seconds per image. This is significantly faster 
+than all baseline models, including VGG16 with a time 
+of 0.2242 seconds, VGG19 of 0.8326 seconds, ResNet50 
+of 10.2734 seconds, and ResNet101 of 10.3045 seconds. 
+This substantial difference highlights the computational 
+efficiency of Mod-Cls-SE(2), which reduces the need for 
+the excessive feature computations typically required 
+by deeper, conventional CNNs. The combination of 
+this speed advantage, combined with high classifica -
+tion accuracy, reinforces the potential of Mod-Cls-SE(2) 
+for deployment in time-sensitive environments, such 
+as clinical decision support systems and point-of-care 
+diagnostics.
+Overall, the model performs well, but errors between 
+neighboring severity levels suggest room for improve -
+ment. Enhancements such as data augmentation, thresh -
+old adjustments, or network modifications could help 
+reduce misclassifications. Figures  5a-c show a heatmap 
+area comparison and ROC curve for three brain tumor 
+classifications in the Mod-Cls-SE(2) rotational model, 
+HoverNet, and HarmonicNet, respectively, using a sam -
+ple MRI scan. The heatmap shows how each rotational 
+model highlights important features from the dataset. 
+In Figure  5a, the Mod-Cls-SE(2) model demonstrates 
+the most accurate and focused segmentation, with its 
+heatmap showing a highly concentrated prediction of 
+the tumor. The associated TPR and FPR graph indicates 
+superior performance, benefiting from its unified geo -
+metric framework that ensures both rotation and trans -
+lation equivariance, requiring less data augmentation. 
+In contrast, Figure  5b shows that HoverNet produces a 
+less precise segmentation with a more spread-out heat -
+map, and the graph shows more false positives, reflect -
+ing its limitation in handling variations in orientation. 
+Although it uses post-processing techniques, it lacks 
+full roto-translation invariance. Figure  5c shows that 
+Table 3 Performance metrics for public MRI brain classification, comparing Mod‑Cls‑SE(2), HoverNet, HarmonicNet, VGG16, VGG19, 
+ResNet50, and ResNet101
+Model’s type Model’s name Accuracy Precision Recall F1 Score
+Group− equivariant network Mod−Cls−SE(2) 0.906 0.910 0.904 0.908
+HarmonicNet 0.863 0.830 0.875 0.852
+Non group‑ equivariant network HoverNet 0.780 0.790 0.770 0.780
+VGG16 0.800 0.805 0.795 0.800
+VGG19 0.763 0.771 0.753 0.762
+ResNet50 0.755 0.760 0.740 0.750
+ResNet101 0.771 0.783 0.763 0.772
+Table 4 Performance metrics for private MRI brain classification, comparing Mod‑Cls‑SE(2), HoverNet, HarmonicNet, VGG16, VGG19, 
+ResNet50, and ResNet101
+Model’s type Model’s name Accuracy Precision Recall F1 Score
+Group‑ equivariant network Mod‑Cls‑SE(2) 0.931 0.947 0.918 0.933
+HarmonicNet 0.885 0.814 0.896 0.853
+Non group‑ equivariant network HoverNet 0.784 0.863 0.717 0.783
+VGG16 0.837 0.904 0.760 0.826
+VGG19 0.730 0.859 0.576 0.690
+ResNet50 0.440 0.766 0.149 0.249
+ResNet101 0.788 0.883 0.682 0.770Page 12 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+HarmonicNet produces the least accurate segmentation. 
+Its heatmap is diffuse, and its performance is the lowest. 
+This is because HarmonicNet only addresses rotation 
+equivariance through circular harmonics without fully 
+accounting for translation. These results prove that the 
+Mod-Cls-SE(2) outperforms both HoverNet and Har -
+monicNet, particularly in tasks requiring the handling of 
+high spatial variability, offering more robust and precise 
+segmentation.
+Segmentation performance
+The selection of baseline models is based on their proven 
+effectiveness in deep learning tasks. VGG and ResNet 
+are included because of their strong ability to extract 
+hierarchical features, making them standard choices 
+for learning features in convolutional neural networks. 
+However, these architectures lack inherent geometric 
+awareness, limiting their ability to capture spatial trans -
+formations such as rotation and translation [50]. U-Net 
+and NN U-Net were chosen because they are state-of-
+the-art architectures for image segmentation, especially 
+in medical imaging and remote sensing applications. 
+Their robust segmentation performance allows for a fair 
+comparison when evaluating the effectiveness of the 
+proposed approach [13]. However, these models do not 
+explicitly incorporate mechanisms for handling geomet -
+ric transformations, which are crucial for tasks requiring 
+spatial equivariance. To assess the impact of incorporat -
+ing geometric priors further, we compared Mod-Seg-
+SE(2) with the baseline architectures.
+We quantitatively evaluated segmentation performance 
+by comparing model-generated masks with expert-
+annotated ground truth masks. For the MRI brain tumor 
+datasets, certified radiologists delineated ground truth 
+annotations based on clinical diagnostic protocols, ensur-
+ing high spatial fidelity and anatomical accuracy. For the 
+skin lesion dataset, the ground truth segmentation was 
+established using clinically validated methods, which 
+are follow-up examinations, expert consensus, and con -
+firmation via in vivo confocal microscopy, as detailed in 
+the dataset’s metadata. For the blood cell dataset, ground 
+truth masks for white blood cells were created through 
+manual pixel-wise annotations by trained experts using 
+stained microscopic images, ensuring precise delineation 
+of cellular boundaries. We use the Skin Lesion and Blood 
+Cell segmentation experiments are secondary, cross-
+domain validation studies. They are intended to demon -
+strate the model’s ability to generalize to diverse medical 
+Table 5 Performance of Mod‑SE(2) in five binary classification tasks, demonstrating its robustness in brain tumor detection
+No Classification task Accuracy Precision Recall F1 Score
+1 AVM vs non AVM 0.923 0.945 0.905 0.924
+2 Meningioma vs non meningioma 0.931 0.952 0.914 0.932
+3 Pituitary vs non pituitary 0.935 0.960 0.920 0.939
+4 Metastases vs non metastases 0.925 0.940 0.905 0.923
+5 Schwannoma vs non schwannoma 0.928 0.945 0.910 0.928
+Table 6 Average performance comparison of Mod‑Cls‑SE(2), VGG16, VGG19, ResNet50, and ResNet101. Mod‑Cls‑SE(2) achieves the 
+best overall performance and fastest computation time, demonstrating its efficiency in medical image classification
+Model’s type Model’s name Accuracy Precision Recall F1 score Time
+Group‑ equivariant network Mod‑Cls‑SE(2) 0.914 0.923 0.909 0.916 2.5 h
+Non group‑ equivariant network VGG16 0.705 0.688 0.676 0.677 6 h
+VGG19 0.635 0.607 0.582 0.567 5.5 h
+ResNet50 0.548 0.562 0.422 0.402 6.2 h
+ResNet101 0.682 0.659 0.597 0.623 7 h
+Table 7 Average inference time per image for each model
+Model’s name Inference 
+(seconds/
+image)
+Mod‑Cls‑SE(2) 0.1099
+VGG16 0.2242
+VGG19 0.8326
+ResNet50 10.2734
+ResNet101 10.3045Page 13 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+imaging modalities. We compared the segmentation per -
+formance of Mod-Seg-SE(2), U-Net, and NN U-Net using 
+the Dice coefficient, precision, recall, intersection over 
+union (IoU), and F1 score. These metrics evaluate tumor 
+boundary delineation, false positive suppression, and 
+alignment with ground truth.
+Table  8 summarizes the comparative results across 
+these key metrics. The Mod-Seg-SE(2) demonstrated 
+superior segmentation performance in MRI Brain 
+Tumors (Private) , achieving the highest dice score of 
+0.635 and IoU value of 0.715. These scores surpassed 
+those of U-Net with 0.375 and 0.465 in dice score and 
+IoU, respectively, and NN U-Net with 0.505 and 0.595 
+in dice score and IoU, respectively. The Mod-Seg-SE(2) 
+also achieved a higher precision of 0.685 and recall of 
+0.655, indicating a balanced ability to correctly identify 
+tumor regions while minimizing both false positives 
+and false negatives. In contrast, NN U-Net exhibited 
+a lower recall of 0.545, which could cause the model to 
+miss tumor regions. This is a critical issue in clinical 
+diagnosis. The incorporation of roto-translation equiv -
+ariance in Mod-Seg-SE(2) contributes to its robust 
+boundary delineation and spatial consistency. The per -
+formance of Mod-Seg-SE(2) is also proven by its high 
+performance by achieving 0.9503 and 0.9616 in dice 
+score and IoU, respectively. In contrast, both U-Net 
+(dice score of 0.797 and IoU of 0.742) and NN U-Net 
+(dice score of 0.815 and IoU of 0.802) yield notably 
+lower scores, which are critical for accurate tumor seg -
+mentation. These evaluations were conducted on the 
+BraTS2020 dataset, a well-established and widely used 
+benchmark for brain tumor segmentation tasks. The 
+consistent superiority across multiple evaluation met -
+rics underscores the framework’s reliability and effec -
+tiveness and makes the model well-suited for brain 
+tumor segmentation in medical imaging applications. 
+On the Skin Lesion dataset, Mod-Seg-SE(2) achieved 
+the highest performance with a dice score of 0.900 and 
+Fig. 5 Heatmap and ROC curves comparison for brain tumor classification using three rotational models. A larger AUC indicates better classification 
+performance, minimizing false positives while maximizing true positives. a Mod‑Cls‑SE(2) demonstrates the most accurate and focused 
+segmentation, with a concentrated heatmap around the tumor region. The corresponding ROC curve (blue) indicates high classification 
+performance with a large area under the curve (AUC), benefiting from its roto‑translation equivariant architecture and reduced reliance on data 
+augmentation. b HoverNet exhibits a more diffuse heatmap, indicating less precise feature localization. The associated ROC curve (orange) shows 
+increased false positives, reflecting limitations in handling rotational variance despite the use of post‑processing techniques. c HarmonicNet yields 
+the least accurate segmentation, with a broad and less informative heatmap. Its ROC curve (green) is attributed to its partial rotation equivariance 
+via circular harmonics without translation invariancePage 14 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+IoU of 0.8601, surpassing U-Net and NN U-Net. Its 
+high precision of 0.9345 and recall of 0.8810 demon -
+strate its ability to detect boundaries in dermatological 
+segmentation. The model outperformed others with a 
+Dice score of 0.8788 and an IoU of 0.7851. Its precision 
+of 0.8982 and recall of 0.8223 indicate its robustness in 
+handling overlapping cells. These results confirm that 
+Mod-Seg-SE(2) generalizes effectively across different 
+medical imaging tasks.
+Figure  6a-c compares brain tumor segmentation 
+results using three deep learning models: Mod-Seg-SE(2), 
+U-Net, and NN U-Net, respectively. Figure  6a shows 
+that Mod-Seg-SE(2) produces clearer and more accurate 
+segmentation. In contrast, Figure  6b shows that U-Net 
+provides more localized segmentation that may lack 
+comprehensiveness. In contrast, NN U-Net produces a 
+broader segmentation that appears less precise in Fig -
+ure 6c, but effectively captures the tumor region. Overall, 
+Mod-Seg-SE(2) appears to offer the most optimal seg -
+mentation performance of the three models.
+Figure 7 provides a qualitative comparison of segmen -
+tation results across several methods to further dem -
+onstrate the effectiveness of Mod-Seg-SE(2) compared 
+to existing segmentation models. Figure  7a shows the 
+input MRI scan, and Figure  7b shows the corresponding 
+ground truth. Figure 7c shows an overlay of the predicted 
+segmentation outputs from Mod-Seg-SE(2), U-Net, and 
+NN U-Net. This overlay offers a visual summary of the 
+method’s relative performance and highlighting areas of 
+agreement and discrepancy. Figures  7d to 7f show the 
+individual outputs from Mod-Seg-SE(2), U-Net, and NN 
+U-Net, respectively. This comparison emphasizes Mod-
+Seg-SE(2)’s ability to capture spatial features, while NN 
+U-Net offers competitive boundary precision.
+Figure 8 shows a radar chart that compares the perfor -
+mance of segmentation across multiple modalities, such as 
+blood cell, skin lesion, and MRI brain datasets. The results 
+demonstrate that the Mod-SE(2) based model outperforms 
+U-Net and NN U-Net in terms of dice score, IoU, precision, 
+and recall, highlighting its superior segmentation accuracy. 
+Importantly, the model’s strong performance across differ-
+ent datasets showcases its generalizability and robustness. 
+It proves its capability to handle diverse medical imaging 
+modalities beyond just MRI, making it a versatile tool for 
+various segmentation tasks.
+Ablation study
+To determine which Mod-SE(2) components contrib -
+ute most to performance gains, we conducted an abla -
+tion study. We systematically removed elements such 
+as roto-translation equivariance, feature recalibration 
+layers (SE-Blocks), and group convolutions, and per -
+formed validations using the MNIST dataset [51]. On 
+observing classification model performance and the 
+COCO dataset [ 52], and on observing segmentation 
+model performance. The results of this study, sum -
+marized in Table  9, confirm that the Mod-SE(2) model 
+consistently outshines all ablated versions, achiev -
+ing the highest classification accuracy of 0.9899 and a 
+segmentation dice score of 0.9514. The integration of 
+roto-translation equivariance and feature recalibration 
+ensures that the model can robustly generalize across 
+different spatial orientations and feature variations, 
+leading to improved feature representation and deci -
+sion-making. This happened because for a standard 
+convolutional layer:
+Table 8 Performance comparison of segmentation models on medical imaging datasets. Mod‑Seg‑SE(2) surpasses U‑Net and NN 
+U‑Net in dice score, IoU, Precision, and Recall
+Dataset Model Group equivariant 
+network
+Dice score IoU Precision Recall
+Blood cell Mod‑Seg‑SE(2) ✓ 0.8788 0.7851 0.8982 0.8223
+Blood cell U‑Net 0.6983 0.6884 0.7082 0.6831
+Blood cell NN U‑Net 0.7518 0.7248 0.8709 0.7307
+Skin lesion Mod‑Seg‑SE(2) ✓ 0.9000 0.8601 0.9345 0.8810
+Skin lesion U‑Net 0.8060 0.7311 0.8476 0.8145
+Skin lesion NN U‑Net 0.8420 0.8345 0.8798 0.8309
+MRI brain Mod‑Seg‑SE(2) ✓ 0.635 0.715 0.685 0.655
+MRI brain U‑Net 0.375 0.465 0.465 0.465
+MRI brain NN U‑Net 0.505 0.595 0.505 0.545
+BraTS2020 Mod‑Seg‑SE(2) ✓ 0.9503 0.9616 0.947 0.930
+BraTS2020 U‑Net 0.797 0.742 0.715 0.762
+BraTS2020 NN U‑Net 0.815 0.802 0.805 0.802Page 15 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+Meanwhile, for a group convolutional layer:
+Group convolutions divide channels into smaller 
+groups, each of which processes a fraction of the input 
+channels. This reduces the number of trainable param -
+eters per layer. The model without roto-translation 
+equivariance experiences an increase in the number 
+of parameters. This occurs because the group convo -
+lutions, which preserve roto-translation equivariance, 
+are replaced with standard convolutions that process 
+all input channels simultaneously. Each layer now has 
+significantly more parameters because instead of divid -
+ing channels into groups, the full input feature map is 
+processed at every layer. Similarly to models without 
+rotational translation, the model without group con -
+volutions replaces all group convolutions and replaces 
+them with standard convolutions. Standard convo -
+lutions have much larger parameters because they 
+require more filters per layer, which increases the mod -
+el’s memory and computational cost.
+Discussion
+Accurate brain tumor segmentation is crucial for diag -
+nosis and treatment planning in medical imaging. 
+Although traditional CNN-based segmentation models, 
+such as U-Net and NN U-Net, have demonstrated strong 
+(16)Parameters =
+(
+Kernel Height × Kernel Width × Input Channels
+)
+× Output Channels + Bias Parameters
+(17)Parameters =
+(
+Kernel Height × Kernel Width × Input Channels
+Groups
+)
+× Output Channels
+Groups + Bias Parameter
+performance in delineating tumor regions, they struggle 
+with spatial inconsistencies caused by variations in orien-
+tation, translation, and acquisition conditions. The imple-
+mentation of Mod-SE(2) in medical imaging represents a 
+significant advancement in AI-driven radiology. Unlike 
+traditional CNNs, which require manual data augmenta -
+tion to address spatial transformations, Mod-SE(2) inher-
+ently encodes roto-translation invariance. This allows it 
+to adapt to variations in image orientation. This ensures 
+consistent feature extraction across different MRI acqui -
+sition angles, reducing the variability that often affects 
+traditional deep learning models. Integrating geomet -
+ric priors directly into the network architecture, Mod-
+SE(2) enhances segmentation accuracy, minimizing the 
+risk of false positives and false negatives in brain tumor 
+detection. Furthermore, Mod-SE(2) demonstrated the 
+ability to detect features as small as 5×5 pixels, equiva -
+lent to approximately 2.5  mm in the synthetic dataset. 
+This highlights its high spatial sensitivity and suitability 
+for recognizing fine-scale tumor recognition (see Sec -
+tion  4: Fine-scale feature detection in Supplementary 
+File 1). Additionally, its optimized design leads to faster 
+inference times, making it well-suited for real-time clini -
+cal workflows. This combination of accuracy, efficiency, 
+Fig. 6 Heatmap visualization of predicted tumor regions in an MRI scan. Colored heatmap overlays reflect each model’s confidence in tumor 
+localization, with Mod‑Seg‑SE(2) demonstrating the most balanced and reliable performance across both completeness and spatial specificity. 
+a Mod‑Seg‑SE(2) achieves the most accurate and spatially precise segmentation, with sharply defined tumor boundaries and high confidence 
+in localized predictions. b U‑Net produces a more localized segmentation that is relatively limited in scope, potentially missing peripheral tumor 
+regions. c NN U‑Net yields a broader segmentation, capturing more of the tumor area but with reduced boundary precisionPage 16 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+and adaptability positions Mod-SE(2) as a highly prom -
+ising tool for improving AI-assisted diagnostics in 
+neuro-oncology.
+With a training time of just 2.5  hours and low computa-
+tional overhead, Mod-SE(2) is well-suited for deployment 
+in clinical settings. Compared to baseline CNN models, the 
+model demonstrated a noticeable reduction in inference 
+time, highlighting its potential for real-time clinical applica-
+tions, such as Picture Archiving and Communication Sys-
+tems (PACS), where speed and accuracy are essential. One 
+of its key applications is in PACS, where Mod-SE(2) can be 
+integrated for real-time MRI analysis. By automating pre-
+liminary tumor classification, Mod-SE(2) enables radiolo-
+gists to streamline their workflow, reducing the time needed 
+for manual review while maintaining diagnostic accuracy. 
+We emphasize that Mod-SE(2) is designed to operate within 
+the imaging stage of the clinical pipeline and is not a sub-
+stitute for histopathology or molecular analysis. Rather, it 
+can serve as a supportive tool in the interval before histo -
+pathology results are available, helping to prioritize cases, 
+assist surgical planning, and potentially accelerate multidis-
+ciplinary decision-making. This integration could signifi -
+cantly enhance efficiency in hospitals and imaging centers, 
+enabling faster and more reliable diagnoses. Beyond PACS, 
+Mod-SE(2)’s shorter training time compared to traditional 
+models makes it highly compatible with cloud-based radi-
+ology platforms. This efficiency makes it feasible for remote 
+AI-powered diagnostics, supporting telemedicine and 
+decentralized healthcare solutions. These capabilities are 
+valuable in regions with limited access to specialized radi-
+ology services, allowing AI-assisted diagnostics to be per-
+formed remotely without requiring extensive computational 
+Fig. 7 Comparison of brain tumor segmentation results using Mod‑Seg‑SE(2), U‑Net, and NN U‑Net. The input MRI scan and corresponding ground 
+truth mask are provided for reference. This visual comparison highlights the superior spatial feature capture of Mod‑Seg‑SE(2), while NN U‑Net 
+offers competitive performance in delineating tumor boundaries. a Input MRI scan. b Ground truth segmentation mask for reference. c Overlay 
+of predicted segmentation results from Mod‑Seg‑SE(2), U‑Net, and NN U‑Net, highlighting areas of overlap and divergence across models. d Output 
+from Mod‑Seg‑SE(2), showing high spatial accuracy and strong alignment with the ground truth. e Output from U‑Net, demonstrating more 
+localized segmentation with some under‑segmentation. f Output from NN U‑Net, providing broader coverage with relatively accurate boundary 
+definitionPage 17 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+resources. Hence, Mod-SE(2) enhances decision support for 
+radiologists by incorporating feature recalibration mecha-
+nisms that generate heatmaps highlighting critical tumor 
+regions. This interpretability feature helps radiologists vali-
+date AI predictions, increasing trust and adoption in clinical 
+workflows. By improving both efficiency and transparency, 
+Mod-SE(2) has the potential to become a valuable tool in 
+AI-assisted neuro-oncology and medical imaging. Despite 
+these promising results, this study has certain methodologi-
+cal limitations. Notably, we did not perform k-fold cross-
+validation due to computational constraints and to maintain 
+a consistent training configuration for direct comparison 
+with baseline models. While this approach facilitated fair 
+benchmarking, we acknowledge that employing k-fold cross-
+validation could further enhance the statistical rigor and 
+generalizability of our findings. Addressing this limitation 
+will be a focus of future work, aiming to reinforce the robust-
+ness of Mod-SE(2) across diverse datasets and clinical envi-
+ronments. Real-world deployment still requires prospective 
+validation in clinical trials to assess its robustness in diverse 
+patient populations and imaging environments. Future work 
+will focus on scaling Mod-SE(2) for larger and broader data-
+sets and multi-institutional studies. The real-time clinical 
+Fig. 8 Radar chart comparison of Mod‑Seg‑SE(2), U‑Net, and NN U‑Net across Blood Cell, Skin Lesion, and MRI Brain datasets, demonstrating 
+the superior performance of Mod‑SE(2) in key segmentation metrics
+Table 9 Ablation study results for Mod‑SE(2)
+Model variant Parameters Classification 
+accuracy
+Segmentation 
+dice score
+FullMod‑SE(2) (Proposed) 12,284,518 0.9899 0.9514
+Without Roto‑Translation 16,741,300 0.9839 0.9450
+Without Feature Recali‑
+bration
+12,284,518 0.9773 0.9421
+Without Group Convolu‑
+tion
+16,741,300 0.9875 0.9498Page 18 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+integration, like Monte Carlo simulation for pre-surgical and 
+PET-MRI integration, ensures its reliability and effectiveness 
+in comprehensive practical medical applications. The future 
+work will also extend Mod-SE(2) to Mod-SE(3) using recent 
+advances in spherical harmonic representations and sparse 
+group convolutions [53– 57]. This integration will enable 
+volumetric analysis while preserving equivariance across all 
+spatial dimensions. We will focus on balancing computa -
+tional cost with clinical utility, which remains a key challenge 
+of the implementation.
+Conclusion
+We introduce Mod-SE(2), a geometry-aware deep learn -
+ing framework that improves spatial consistency, inter -
+pretability, and efficiency in brain tumor MRI analysis. 
+Mod-SE(2) embeds roto-translational symmetry through 
+lifting layers, group convolutions, and SE blocks. This 
+enables robust, orientation-invariant feature extrac -
+tion across diverse tumor types and imaging conditions. 
+Extensive experiments demonstrate that Mod-SE(2) 
+significantly improves classification and segmentation 
+performance. It outperforms baseline CNNs in terms of 
+accuracy, precision, and recall, particularly in anatomi -
+cally complex and rotationally variant cases. The SE(2)-
+modified model achieved a dice score of 0.90, surpassing 
+the U-Net of 0.863 and outperforming other variants 
+by over 4.5%. For classification, it reached an F1-score 
+of 0.933 on a private MRI dataset, surpassing VGG and 
+ResNet-based models. Mod-SE(2) offers transforma -
+tive clinical potential for precision medicine by provid -
+ing spatially consistent, interpretable outputs, which are 
+critical for surgical planning, tumor monitoring, and 
+evaluating treatment responses. Its symmetry-aware 
+design of Mod-SE(2) reduces the reliance on extensive 
+data augmentation by inherently capturing rotational 
+and translational invariances, contributing to accurate 
+tumor boundary delineation. This capability improves 
+decision-making in real-world neuroimaging applications 
+and ensures consistent performance across different MRI 
+acquisition protocols. The model’s spatially precise tumor 
+localization output can be directly utilized as input for 
+Monte Carlo simulations in high-precision preoperative 
+radiotherapy planning, as well as intraoperative surgical 
+guidance. This reduces the risk of incomplete resection 
+or inadvertent damage to critical brain structures. Fur -
+thermore, its geometric consistency across modalities 
+facilitates seamless integration with Positron Emission 
+Tomography (PET) imaging, enabling effective fusion of 
+structural and metabolic information. These strengths 
+highlight the versatility of Mod-SE(2) in supporting mul -
+timodal imaging pipelines and advanced computational 
+modeling, reinforcing its potential for personalized and 
+comprehensive neuro-oncological care.
+Abbreviations
+CNN  Convolutional Neural Network
+Mod‑SE(2)  Modified Special Euclidean
+Mod‑Cls‑SE(2)  Modified Classification Special Euclidean
+Mod‑Seg‑SE(2)  Modified Segmentation Special Euclidean
+AVM  Arteriovenous Malformations
+MRI  Magnetic Resonance Imaging
+GDL  Geometric Deep Learning
+G‑CNNs  Group Equivariant CNNs
+ASD  Autism Spectrum Disorder
+AD  Alzheimer Disease
+SE  Squeeze‑And‑Excitation
+GdeConv  Group Deconvolutions
+IoU  Intersection over Union
+Supplementary Information
+The online version contains supplementary material available at https:// doi. 
+org/ 10. 1186/ s12929‑ 025‑ 01213‑y.
+Supplementary Material 1
+Supplementary Material 2
+Supplementary Material 3
+Supplementary Material 4
+Supplementary Material 5
+Acknowledgements
+The authors thank National Taiwan University for providing patient‑MRI brain 
+tumor (private) data.
+Author contributions
+C.L.A., F.R.X., and S.V. contributed equally to this work. P .C.Y., H.T.C., and Y.L. 
+served as principal investigators and provided academic guidance and super‑
+vision throughout the study. H.T.C. and Y.L. conceived and designed the study, 
+guided the methodological framework, and oversaw the research progress. 
+P .C.Y. provided clinical expertise, contributed to study design and interpreta‑
+tion from a clinical perspective, and finalized the manuscript. F.R.X. provided 
+the data, obtained clinical approvals, and provided clinical interpretation. 
+S.V. contributed to data interpretation and critically revised the manuscript 
+for intellectual content. C.L.A. developed the model, coded and trained the 
+network, and conducted experiments. All authors read and approved the final 
+manuscript.
+Funding
+Our research supported by the National Science and Technology Coun‑
+cil, Taiwan, R.O.C (Grant No. NSTC 112–2221‑E‑002–055‑MY3, NSTC 
+112–2221‑E‑002–212‑MY3, and NSTC 110–2221‑E‑007–068‑MY3) and National 
+Taiwan University (Grant No. NTU‑CC‑113L891102 and NTU‑113L8507), NTU 
+Advanced Biomedical Research Center, Taiwan Center of Excellence, Taiwan, 
+R.O.C. (Grant NTU ABRC TCE 114M7070‑7), and the “Intelligent Recognition 
+Industry Service Center” from The Featured Areas Research Center Program 
+within the framework of the Higher Education Sprout Project by the Ministry 
+of Education (MOE) in Taiwan.
+Data availability
+The datasets generated and/or analyzed during the current study are available 
+in the Kaggle repository [36–39], but a private dataset is available from the 
+corresponding author on reasonable request.
+Declarations
+Ethics approval and consent to participate
+The MRI brain tumor private dataset was processed in accordance with the 
+Institutional Review Board (IRB) approval from National Taiwan University 
+Hospital (NTUH), under protocol number 202412117RINA.Page 19 of 20
+Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 
+Consent for publication
+All authors have approved the manuscript for submission and publication.
+Competing interests
+The authors declare no competing interests.
+Author details
+1 Graduate School of Engineering Science and Technology, National Yunlin 
+University of Science and Technology, Yunlin 64002, Taiwan. 2 Department 
+of Electrical Engineering, National Yunlin University of Science and Tech‑
+nology, Yunlin 64002, Taiwan. 3 Institute of Medical Device and Imaging, 
+National Taiwan University, Taipei 10051, Taiwan. 4 Department of Internal 
+Medicine, National Taiwan University Hospital, Taipei 100225, Taiwan. 5 College 
+of Medicine, National Taiwan University Hospital, National Taiwan University, 
+Taipei 10051, Taiwan. 6 Graduate School of Intelligent Data Science, National 
+Yunlin University of Science and Technology, Yunlin 64002, Taiwan. 7 YongLin 
+Institute of Health, National Taiwan University, Taipei 10087, Taiwan. 8 Depart‑
+ment of Biomedical Engineering, National Taiwan University, Taipei 10617, 
+Taiwan. 9 Taiwan International Bio Research Center, National Taiwan University, 
+Taipei 106319, Taiwan. 10 Program for Precision Health and Intelligent Medicine, 
+National Taiwan University, Taipei 106319, Taiwan. 
+Received: 4 September 2025   Accepted: 20 December 2025
+References
+ 1. Kaifi R. A review of recent advances in brain tumor diagnosis based on 
+AI‑based classification. Diagnostics (Basel). 2023;13(18):3007.
+ 2. Dorfner FJ, Patel JB, Kalpathy‑Cramer J, Gerstner ER, Bridge CP . A review 
+of deep learning for brain tumor analysis in MRI. NPJ Precis Oncol. 
+2025;9(1):2. https:// doi. org/ 10. 1038/ s41698‑ 024‑ 00789‑2.
+ 3. Sharma P , Shukla AP . A review on brain tumor segmentation and clas‑
+sification for MRI images. In: 2021 International Conference on Advanced 
+Computing and Innovative Technologies in Engineering (ICACITE). pp. 
+963–967. 2021. https:// doi. org/ 10. 1109/ ICACI TE512 22. 2021. 94046 62
+ 4. Samee NA, Ahmad T, Mahmoud NF, Atteia G, Abdallah HA, Rizwan A. 
+Clinical decision support framework for segmentation and classification 
+of brain tumor MRIs using a U‑Net and DCNN cascaded learning algo‑
+rithm. Healthcare. 2022. https:// doi. org/ 10. 3390/ healt hcare 10122 340.
+ 5. Bertels J, Eelbode T, Berman M, Vandermeulen D, Maes F, Bisschops R, 
+et al. Optimizing the dice score and jaccard index for medical image 
+segmentation: Theory and practice. In: Shen D, Liu T, Peters TM, Staib LH, 
+Essert C, Zhou S, et al., editors. Medical image computing and computer 
+assisted intervention—MICCAI 2019. Cham: Springer; 2019. p. 92–100.
+ 6. Xu Y, Quan R, Xu W, Huang Y, Chen X, Liu F. Advances in medical image 
+segmentation: a comprehensive review of traditional, deep learning, and 
+hybrid approaches. Bioengineering. 2024. https:// doi. org/ 10. 3390/ bioen 
+ginee ring1 11010 34.
+ 7. Germain A, Sabol A, Chavali A, et al. Machine learning enabled clas‑
+sification of lung cancer cell lines co‑cultured with fibroblasts with a 
+lightweight convolutional neural network for initial diagnosis. J Biomed 
+Sci. 2024;31:84. https:// doi. org/ 10. 1186/ s12929‑ 024‑ 01071‑0.
+ 8. Zahoor MM, Khan SH, Alahmadi TJ, Alsahfi T, Mazroa ASA, Sakr HA, et al. 
+Brain tumor MRI classification using a novel deep residual and regional 
+CNN. Biomedicines. 2024. https:// doi. org/ 10. 3390/ biome dicin es120 
+71395.
+ 9. Dasari S, Eswara Reddy B, Rama Mohana Reddy A. Advanced U‑Net 
+model for precise brain tumor segmentation in MRI images. REST J Data 
+Anal Artif. 2024. https:// doi. org/ 10. 46632/ jdaai/3/ 2/ 11.
+ 10. Kuo DP , Kuo PC, Chen YC, et al. Machine learning‑based segmentation 
+of ischemic penumbra by using diffusion tensor metrics in a rat model. J 
+Biomed Sci. 2020;27:80. https:// doi. org/ 10. 1186/ s12929‑ 020‑ 00672‑9.
+ 11. Tripathy BS, Rath A, Muduli D. Enhanced brain tumor detection using a 
+modified EfficientNet model with MRI imaging. In: 2024 15th Interna‑
+tional Conference on Computing Communication and Networking 
+Technologies (ICCCNT). pp. 1–5. 2024. https:// doi. org/ 10. 1109/ ICCCN 
+T61001. 2024. 10723 948
+ 12. Ronneberger O, Fischer P , Brox T. U‑Net: Convolutional Networks for 
+Biomedical Image Segmentation. 2015. https:// arxiv. org/ abs/ 1505. 04597
+ 13. Isensee F, Jaeger PF, Kohl SAA, Petersen J, Maier‑Hein KH. NN U‑net: a 
+self‑configuring method for deep learning‑based biomedical image 
+segmentation. Nat Methods. 2021;18(2):203–11. https:// doi. org/ 10. 1038/ 
+s41592‑ 020‑ 01008‑z.
+ 14. Zeineldin RA, Karar ME, Elshaer Z, Coburger J, Wirtz CR, Burgert O, et al. 
+Explainability of deep neural networks for MRI analysis of brain tumors. 
+Int J Comput Assist Radiol Surg. 2022;17:1673–83. https:// doi. org/ 10. 
+1007/ s11548‑ 022‑ 02619‑x.
+ 15. Tiwary PK, Johri P , Katiyar A, Chhipa MK. Deep learning‑based MRI brain 
+tumor segmentation with EfficientNet‑enhanced UNet. IEEE Access. 
+2023;11:113378–91. https:// doi. org/ 10. 1109/ ACCESS. 2023. 33251 57.
+ 16. Chelghoum R, Ameur I, Hameurlaine A, Jacquir S. Transfer learning using 
+convolutional neural network architectures for brain tumor classification 
+from MRI images. New York: Springer; 2020.
+ 17. Bekkers EJ, Lafarge MW, Veta M, Eppenhof KAJ, Pluim JPW, Duits R. Roto‑
+translation covariant convolutional networks for medical image analysis. 
+In: Frangi AF, Schnabel JA, Davatzikos C, Alberola‑L´opez C, Fichtinger 
+G, editors. Medical Image Computing and Computer Assisted Interven‑
+tion—MICCAI 201. Cham: Springer; 2018.
+ 18. Worrall DE, Garbin SJ, Turmukhambetov D, Brostow GJ. Harmonic Net‑
+works: Deep Translation and Rotation Equivariance. 2017. https:// arxiv. 
+org/ abs/1612.04642
+ 19. Sinzinger F. Geometric deep learning for medical image processing prob‑
+lems. PhD thesis. KTH Royal Institute of Technology. Stockholm. 2024.
+ 20. Sideri‑Lampretsa V, Stolt‑Ans´o N, Menten M, Qiu H, McGinnis J, Rueckert 
+D. Image registration is a geometric deep learning task. 2024. https:// 
+arxiv. org/ abs/ 2412. 13294
+ 21. Santhirasekaram S, Liu J, Liu W, Hu Y, Frangi AF. A geometric approach 
+to robust medical image segmentation. Nat Commun. 2024;15:1869. 
+https:// doi. org/ 10. 1038/ s41467‑ 024‑ 42280‑3.
+ 22. Bronstein MM, Bruna J, Cohen T, Veliˇckovi´c P . Geometric Deep Learning: 
+Grids, Groups, Graphs, Geodesics, and Gauges. 2021. https:// arxiv. org/ 
+abs/ 2104.13478
+ 23. Ewert C, Ku¨gler D, Stirnberg R, Koch A, Yendiki A, Reuter M. Geometric 
+deep learning for diffusion MRI signal reconstruction with continuous 
+samplings (DISCUS). Imaging Neurosci (Camb). 2024;2:1–18.
+ 24. Zhang H, Song R, Wang L, Zhang L, Wang D, Wang C, et al. Classification 
+of brain disorders in rs‑fMRI via local‑to‑global graph neural networks. 
+IEEE Trans Med Imaging. 2023;42(2):444–55. https:// doi. org/ 10. 1109/ TMI. 
+2022. 32192 60.
+ 25. Kerkela L, Seunarine K, Szczepankiewicz F, Clark CA. Spherical convolu‑
+tional neural networks can improve brain microstructure estimation from 
+diffusion MRI data. Front Neuroimaging. 2024;3:1349415.
+ 26. Zhu Z, Huang T, Zhen Z, Wang B, Wu X, Li S. From sMRI to task‑fMRI: a uni‑
+fied geometric deep learning framework for cross‑modal brain anatomo‑
+functional mapping. Med Image Anal. 2023;83:102681. https:// doi. org/ 10. 
+1016/j. media. 2022. 102681.
+ 27. Koetzier LR, Mastrodicasa D, Szczykutowicz TP , Werf NR, Wang AS, 
+Sandfort V, et al. Deep learning image reconstruction for CT: technical 
+principles and clinical prospects. Radiology. 2023;306(3):221257. https:// 
+doi. org/ 10. 1148/ radiol. 221257.
+ 28. Winkels M, Cohen TS. Pulmonary nodule detection in CT scans with 
+equivariant CNNs. Med Image Anal. 2019;55:15–26. https:// doi. org/ 10. 
+1016/j. media. 2019. 03. 010.
+ 29. Li Z, Jiang Y, Liu L, Xia Y, Li R. Single‑cell spatial analysis of histopathology 
+images for survival prediction via graph attention network. In: Applica‑
+tions of Medical Artificial Intelligence (AMAI 2023). Lecture Notes in 
+Computer Science. Cham: Springer; 2023.
+ 30. Al‑Shahi R, Warlow C, et al. A systematic review of the frequency and 
+prognosis of arteriovenous malformations of the brain in adults. Brain. 
+2001;124(10):1900–26. https:// doi. org/ 10. 1093/ brain/ 124. 10. 1900.
+ 31. Ostrom QT, Patil N, Cioffi G, Waite KA, Kruchko C, Barnholtz‑Sloan JS, et al. 
+CBTRUS statistical report: primary brain and other central nervous system 
+tumors diagnosed in the United States, 2015–2019. Neuro Oncology. 
+2022;24:v1–95. https:// doi. org/ 10. 1093/ neuonc/ noac2 02.
+ 32. Goldbrunner R, Minniti G, Preusser M, Jenkinson MD, Sallabanda K, 
+Houdart E, et al. EANO guidelines for the diagnosis and treatment of 
+meningiomas. Lancet Oncol. 2016;17(9):e383–91. https:// doi. org/ 10. 
+1016/ S1470‑ 2045(16) 30321‑7.
+ 33. Molitch ME. Diagnosis and treatment of pituitary adenomas: a review. 
+JAMA. 2017;317(5):516–24. https:// doi. org/ 10. 1001/ jama. 2016. 19699.Page 20 of 20Angelina et al. Journal of Biomedical Science           (2026) 33:11 
+ 34. Nayak L, Lee EQ, Wen PY. Epidemiology of brain metastases. Curr Oncol 
+Rep. 2012;14(1):48–54. https:// doi. org/ 10. 1007/ s11912‑ 011‑ 0203‑y.
+ 35. Stangerup SE, Caye‑Thomasen P , Tos M, Thomsen J. The natural history 
+of vestibular schwannoma. Otol Neurotol. 2006;27(4):547–52. https:// doi. 
+org/ 10. 1097/ 01. mao. 00002 17356. 73463. e7.
+ 36. Latif G. DeepTumor: framework for brain MR image classification, seg‑
+mentation, and tumor detection. Diagnostics (Basel). 2022;12(11):2888.
+ 37. Lafarge MW, Bekkers EJ, Pluim JPW, Duits R, Veta M. Roto‑translation 
+equivariant convolutional networks: application to histopathology image 
+analysis. Med Image Anal. 2021;68:101849. https:// doi. org/ 10. 1016/j. 
+media. 2020. 101849.
+ 38. Aswaf. Brain Tumor Segmentation (BraTS2020) dataset. 2020. https:// 
+www. kaggle. com/ datas ets/ awsaf 49/ brats 2020‑ train ing‑ data
+ 39. Pivoshenko V. Skin cancer lesions segmentation dataset. 2023. https:// 
+www. kaggle. com/ datas ets/ volod ymyrp ivosh enko/ skin‑ cancer‑ lesio ns‑ 
+segme ntati on
+ 40. Blahiri J. BCCD dataset with mask. A blood cell detection dataset. 2023. 
+https:// www. kaggle. com/ datas ets/ jeetb lahiri/ bccd‑ datas et‑ with‑ mask
+ 41. Msoud N. Brain Tumor MRI Dataset. 2020. https:// doi. org/ 10. 34740/ kag‑
+gle/ dsv/ 26458 86
+ 42. Mohammed BA, Senan EM, Rassem TH, Makbol NM, Alanazi AA, Al‑ Al‑
+Mekhlafi ZG, et al. Multi‑method analysis of medical records and MRI 
+images for early diagnosis of dementia and alzheimer’s disease based on 
+deep learning and hybrid methods. Electronics. 2021. https:// doi. org/ 10. 
+3390/ elect ronic s1022 2860.
+ 43. Ali L, Alnajjar F, Jassmi H, Gochoo M, Khan W, Serhani M. Performance 
+evaluation of deep CNN‑based crack detection and localization tech‑
+niques for concrete structures. Sensors. 2021;21:1688. https:// doi. org/ 10. 
+3390/ s2105 1688.
+ 44. Sudha V, Ganeshbabu D. A convolutional neural network classifier VGG‑
+19 architecture for lesion detection and grading in diabetic retinopathy 
+based on deep learning. Comput Mater Contin. 2020;66:827–42. https:// 
+doi. org/ 10. 32604/ cmc. 2020. 012008.
+ 45. Duan Z, Wang F, Wang B, Luo G, Jiang Z. An adapted ResNet‑50 archi‑
+tecture for predicting flow fields of an underwater vehicle. IEEE Access. 
+2024;12:66398–407. https:// doi. org/ 10. 1109/ ACCESS. 2024. 33990 77.
+ 46. He K, Zhang X, Ren S, Sun J. Deep Residual Learning for Image Recogni‑
+tion. 2015. https:// arxiv. org/ abs/ 1512. 03385
+ 47. Graham S, Vu QD, Raza SEA, Azam A, Tsang YW, Kwak JT, et al. Hover‑net: 
+simultaneous segmentation and classification of nuclei in multi‑tissue 
+histology images. Med Image Anal. 2019;58:101563. https:// doi. org/ 10. 
+1016/j. media. 2019. 101563.
+ 48. AL Qurri A, Almekkawy M. Improved unet with attention for medical 
+image segmentation. Sensors. 2023. https:// doi. org/ 10. 3390/ s2320 8589.
+ 49. McConnell N, Ndipenoch N, Cao Y, Miron A, Li Y. Exploring advanced 
+architectural variations of nnunet. Neurocomputing. 2023;560:126837. 
+https:// doi. org/ 10. 1016/j. neucom. 2023. 126837.
+ 50. Xu Y, Vaziri‑Pashkam M. Understanding transformation‑tolerant visual 
+object representations in the human brain and convolutional neural 
+networks. Neuroimage. 2022;263(119635):119635.
+ 51. LeCun, Y, Cortes C, Burges C. The MNIST database of handwritten digits. 
+1998. http://yann.lecun.com/exdb/mnist/
+ 52. Lin T.‑Y., Maire M, Belongie S, Hays J, Perona P , Ramanan D, Doll´ar P , 
+Zitnick C.L. Microsoft coco: Common objects in context. In: European 
+Conference on Computer Vision (ECCV), pp. 740–755. 2014. 10.1007/ 
+https://cocodataset
+ 53. Onofrey JA, Staib LH, Huang X, Zhang F, Papademetris X, Metaxas D, et al. 
+Sparse data‑driven learning for effective and efficient biomedical image 
+segmentation. Annu Rev Biomed Eng. 2020;22:127–53. https:// doi. org/ 10. 
+1146/ annur ev‑ bioeng‑ 060418‑ 052147.
+ 54. Cheng C, Heryanto YD, Yamada R. The spherical harmonic‑based resolu‑
+tion increase and decrease method for cell mesh model with vertex and 
+face number consistency. In: 2020 5th International Conference on Intel‑
+ligent Informatics and Biomedical Sciences (ICIIBMS). pp. 225–228. 2020. 
+https:// doi. org/ 10. 1109/ ICIIB MS507 12. 2020. 93364 03
+ 55. Zou C, Zhao G, Hancock ER. Reconstructing 3D facial shape using spheri‑
+cal harmonics. In: Foggia P , Sansone C, Vento M, editors. Image analysis 
+and processing (ICIAP). Lecture notes in computer science, vol. 5716. 
+Heidelberg: Springer; 2009. p. 846–55.
+ 56. Chen YJ, Vyas S, Huang HM, Luo Y. Self‑supervised neural network for 
+phase retrieval in QDPC microscopy. Optics Express. 2023;31(12):19897. 
+https:// doi. org/ 10. 1364/ OE. 491496.
+ 57. Li AC, Vyas S, Lin YH, Huang YY, Huang HM, Luo Y. Patch‑Based U‑Net 
+model for isotropic quantitative differential phase contrast imaging. IEEE 
+Trans Med Imaging. 2021;40(11):3229–37. https:// doi. org/ 10. 1109/ TMI. 
+2021. 30912 07.
+Publisher’s Note
+Springer Nature remains neutral with regard to jurisdictional claims in pub‑
+lished maps and institutional affiliations.

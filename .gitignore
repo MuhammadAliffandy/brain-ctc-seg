@@ -5,3 +5,10 @@ venv/
 ppt.py 
 *.pth
 *.pptx
+
+# Ignore large files and archives
+*.tar.gz
+*.tar
+*.zip
+*.rar
+*.gif
