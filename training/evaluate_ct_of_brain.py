@@ -192,7 +192,7 @@ def evaluate_all():
     report_data_list = []
 
     # --- USE NEW FINETUNED WEIGHTS ---
-    MODEL_WEIGHTS_PATH = "se2_unet_finetuned.pth" 
+    MODEL_WEIGHTS_PATH = "saved_models_25D/se2_unet_best_25D_Boundary.pth" 
     BATCH_SIZE = 4 
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

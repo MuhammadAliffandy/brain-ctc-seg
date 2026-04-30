@@ -229,8 +229,8 @@ def run_inference():
         return
 
     # --- CONFIGURATION ---
-    # NAMA MODEL DIKEMBALIKAN KE VERSI AWAL
-    MODEL_WEIGHTS_PATH = "se2_unet_epoch_100.pth" 
+    # NAMA MODEL DIKEMBALIKAN KE VERSI 2.5D
+    MODEL_WEIGHTS_PATH = "saved_models_25D/se2_unet_best_25D_Boundary.pth" 
     OUTPUT_DIR = os.path.expanduser("~/Clara/inference_results")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
