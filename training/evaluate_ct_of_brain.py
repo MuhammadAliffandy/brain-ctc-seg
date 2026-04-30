@@ -150,25 +150,15 @@ class FullCTDataset(Dataset):
         
         mask = np.load(slices[slice_idx][1]).astype(np.uint8) 
         
-        # Normalize images to 0-1 range to match what the model expects
+        # Stack into 3 channels exactly like train.py
         image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-        if image_25d.max() > 1.0:
-            image_25d = image_25d / 255.0
-            
-        # Ensure mask only contains 0 and 1 (if it uses 255 for tumor)
+        
+        # Ensure mask is exactly 0 and 1
         if mask.max() > 1:
             mask = (mask > 0).astype(np.uint8)
-            
-        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0) 
-        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
-        
-        # Resize to 256x256 to match the standard training dimensions
-        TARGET_SIZE = (256, 256) 
-        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
-        mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
-        
-        image_tensor = image_tensor.squeeze(0) 
-        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long() 
+
+        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1)
+        mask_tensor = torch.from_numpy(mask).long() 
         
         filename = os.path.basename(slices[slice_idx][0])
         return image_tensor, mask_tensor, filename
@@ -229,7 +219,9 @@ def evaluate_all():
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
             
-            logits = model(images)
+            with torch.amp.autocast('cuda'):
+                logits = model(images)
+                
             probs = F.softmax(logits, dim=1)
             preds = torch.argmax(probs, dim=1) 
             
