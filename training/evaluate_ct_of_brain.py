@@ -150,11 +150,20 @@ class FullCTDataset(Dataset):
         
         mask = np.load(slices[slice_idx][1]).astype(np.uint8) 
         
+        # Normalize images to 0-1 range to match what the model expects
         image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+        if image_25d.max() > 1.0:
+            image_25d = image_25d / 255.0
+            
+        # Ensure mask only contains 0 and 1 (if it uses 255 for tumor)
+        if mask.max() > 1:
+            mask = (mask > 0).astype(np.uint8)
+            
         image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0) 
         mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
         
-        TARGET_SIZE = (512, 512) 
+        # Resize to 256x256 to match the standard training dimensions
+        TARGET_SIZE = (256, 256) 
         image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
         mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
         
