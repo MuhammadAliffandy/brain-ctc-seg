@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import re
 
 def run_profiler():
     print("\n" + "="*70)
@@ -21,17 +22,17 @@ def run_profiler():
 
     all_patient_folders = sorted([d for d in os.listdir(LOCAL_DATA_PATH) if os.path.isdir(os.path.join(LOCAL_DATA_PATH, d))])
     
-    # Categorize patients
-    ct_patients = [p for p in all_patient_folders if p.startswith('CT_')]
-    ctc_patients = [p for p in all_patient_folders if p.startswith('CTC_')]
-    other_patients = [p for p in all_patient_folders if not (p.startswith('CT_') or p.startswith('CTC_'))]
-
+    # Initialize specific counters for slice types
+    count_ct_img = 0
+    count_ctc_img = 0
+    valid_ct_pairs = 0
+    valid_ctc_pairs = 0
+    
     raw_img_total = 0
     raw_mask_total = 0
-    valid_pairs_total = 0
     missing_masks_total = 0
     
-    patient_valid_counts = {} # To store valid slices per patient 
+    patient_valid_counts = {} 
 
     for patient in all_patient_folders:
         patient_dir = os.path.join(LOCAL_DATA_PATH, patient)
@@ -40,6 +41,16 @@ def run_profiler():
         img_files = [f for f in all_files if f.endswith('_img.npy')]
         mask_files = [f for f in all_files if f.endswith('_mask.npy')]
         
+        # Determine category based on folder name
+        is_ct = patient.startswith('CT_')
+        is_ctc = patient.startswith('CTC_') or patient.startswith('CTW_')
+        
+        # Count raw images per category
+        if is_ct:
+            count_ct_img += len(img_files)
+        elif is_ctc:
+            count_ctc_img += len(img_files)
+            
         raw_img_total += len(img_files)
         raw_mask_total += len(mask_files)
         
@@ -47,61 +58,49 @@ def run_profiler():
         for img_name in img_files:
             mask_name = img_name.replace('_img.npy', '_mask.npy')
             if os.path.exists(os.path.join(patient_dir, mask_name)):
-                valid_pairs_total += 1
                 valid_for_this_patient += 1
+                # Count valid pairs per category
+                if is_ct:
+                    valid_ct_pairs += 1
+                elif is_ctc:
+                    valid_ctc_pairs += 1
             else:
                 missing_masks_total += 1
         
         if valid_for_this_patient > 0:
             patient_valid_counts[patient] = valid_for_this_patient
 
-    print("📁 1. ORIGINAL RAW DATASET (Acquisition Stage from Workspace)")
+    # ==========================================
+    # 2. OUTPUT DETAILED STATISTICS
+    # ==========================================
+    print("📁 1. ORIGINAL RAW DATASET (Acquisition Stage)")
     print("-" * 70)
-    print(f"  • Total Patients Found        : {len(all_patient_folders)} Patients")
-    print(f"       - 'CT_'  type patients   : {len(ct_patients)} Patients")
-    print(f"       - 'CTC_' type patients   : {len(ctc_patients)} Patients")
-    if len(other_patients) > 0:
-        print(f"       - Other type patients    : {len(other_patients)} Patients")
-    print(f"  • Total Raw Slices (_img)     : {raw_img_total} .npy files")
-    print(f"  • Total Raw GT Masks (_mask)  : {raw_mask_total} .npy files")
+    print(f"  • Total Raw Slices Found      : {raw_img_total} .npy files")
+    print(f"       - CT type slices         : {count_ct_img} files")
+    print(f"       - CTC type slices        : {count_ctc_img} files")
     
     print("\n✂️ 2. DATA FILTERING (Exclusion Criteria)")
     print("-" * 70)
-    print(f"  • Slices excluded (No GT Mask): {missing_masks_total} slices dropped")
-    print(f"  • Slices included (Valid Pair): {valid_pairs_total} slices retained")
+    print(f"  • Slices excluded (No Mask)   : {missing_masks_total} slices")
+    print(f"  • Slices included (Valid Pair): {valid_ct_pairs + valid_ctc_pairs} slices")
+    print(f"       - Valid CT Pairs         : {valid_ct_pairs} slices")
+    print(f"       - Valid CTC Pairs        : {valid_ctc_pairs} slices")
 
     # ==========================================
-    # 3. VERIFY WITH CSV SPLIT
+    # 3. FINAL DATASET SPLIT CALCULATION
     # ==========================================
-    print("\n📌 3. FINAL DATASET FOR TRAINING & EVALUATION (Based on CSV Split)")
+    print("\n📌 3. FINAL DATASET FOR TRAINING & EVALUATION (Split 85/15)")
     print("-" * 70)
-    try:
-        df = pd.read_csv(CSV_REPORT)
-        patient_col = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
-        csv_patients = df[patient_col].unique().tolist()
-        
-        train_df = df.sample(frac=(1 - VALIDATION_SPLIT), random_state=42)
-        val_df = df.drop(train_df.index)
-        
-        train_patients = train_df[patient_col].unique().tolist()
-        val_patients = val_df[patient_col].unique().tolist()
-        
-        train_slices = sum([patient_valid_counts.get(p, 0) for p in train_patients])
-        val_slices = sum([patient_valid_counts.get(p, 0) for p in val_patients])
-        
-        print(f"  • Training Set (85%)          : {train_slices} slices ({len(train_patients)} patients)")
-        print(f"  • Validation/Test Set (15%)   : {val_slices} slices ({len(val_patients)} patients)")
-        
-        # Cross-check: Are there patients in the workspace that are MISSING from the CSV?
-        missing_in_csv = [p for p in patient_valid_counts.keys() if p not in csv_patients]
-        if missing_in_csv:
-            print(f"\n  ⚠️ WARNING: Found {len(missing_in_csv)} patients in your local workspace that are NOT inside the CSV!")
-            print(f"     Missing patients: {missing_in_csv}")
-            print("     (Note: These patients were NOT used during training because they aren't in the CSV report)")
-            
-    except FileNotFoundError:
-        print(f"❌ Cannot find CSV file at: {CSV_REPORT}")
+    
+    # Calculate splits mathematically based on valid pairs found
+    ct_train = int(valid_ct_pairs * 0.85)
+    ct_test = valid_ct_pairs - ct_train
+    
+    ctc_train = int(valid_ctc_pairs * 0.85)
+    ctc_test = valid_ctc_pairs - ctc_train
 
+    print(f"  • CT Private Dataset          : {ct_train} Train | {ct_test} Test")
+    print(f"  • CTC Private Dataset         : {ctc_train} Train | {ctc_test} Test")
     print("="*70 + "\n")
 
 if __name__ == "__main__":
