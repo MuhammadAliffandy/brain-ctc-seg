@@ -179,7 +179,8 @@ def get_best_slice_for_paper(dataset_path, model, device):
 # ==========================================
 def generate_comparative_figures():
     TEST_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
-    OUTPUT_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/Journal_Comparative")
+    # Save directly to a folder inside your current working directory
+    OUTPUT_DIR = "Journal_Comparative"
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     WEIGHTS_SE2 = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_best_25D_Boundary.pth")
