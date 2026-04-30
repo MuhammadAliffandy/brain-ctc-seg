@@ -10,6 +10,7 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd 
 import matplotlib.pyplot as plt 
+import re
 plt.switch_backend('agg') 
 from tqdm import tqdm
 import torch.nn.functional as F
@@ -106,33 +107,51 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 # ==========================================
-# 2. DATASET LOADER 
+# 2. DATASET LOADER (2.5D Spatial Context)
 # ==========================================
 class FullCTDataset(Dataset):
     def __init__(self, root_dir):
-        self.slice_pairs = []
+        self.all_samples = []
+        self.patient_slices = {}
+        
         for root, dirs, files in os.walk(root_dir):
-            img_files = sorted([f for f in files if f.endswith('_img.npy')])
+            img_files = [f for f in files if f.endswith('_img.npy')]
+            if not img_files:
+                continue
+                
+            img_files = sorted(img_files, key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+            
+            valid_pairs = []
             for img_name in img_files:
                 img_path = os.path.join(root, img_name)
                 mask_path = img_path.replace('_img.npy', '_mask.npy')
                 if os.path.exists(mask_path):
-                    self.slice_pairs.append((img_path, mask_path))
+                    valid_pairs.append((img_path, mask_path))
+            
+            if valid_pairs:
+                patient = os.path.basename(root)
+                self.patient_slices[patient] = valid_pairs
+                for i in range(len(valid_pairs)):
+                    self.all_samples.append((patient, i))
 
     def __len__(self):
-        return len(self.slice_pairs)
+        return len(self.all_samples)
 
     def __getitem__(self, idx):
-        img_path, mask_path = self.slice_pairs[idx]
-        filename = os.path.basename(img_path) 
+        patient, slice_idx = self.all_samples[idx]
+        slices = self.patient_slices[patient]
         
-        image = np.load(img_path).astype(np.float32)
-        mask = np.load(mask_path).astype(np.uint8)
+        idx_prev = max(0, slice_idx - 1)
+        idx_next = min(len(slices) - 1, slice_idx + 1)
         
-        if len(image.shape) == 2:
-            image = np.expand_dims(image, axis=0)
-            
-        image_tensor = torch.from_numpy(image).unsqueeze(0) 
+        img_prev = np.load(slices[idx_prev][0]).astype(np.float32)
+        img_curr = np.load(slices[slice_idx][0]).astype(np.float32)
+        img_next = np.load(slices[idx_next][0]).astype(np.float32)
+        
+        mask = np.load(slices[slice_idx][1]).astype(np.uint8) 
+        
+        image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0) 
         mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
         
         TARGET_SIZE = (512, 512) 
@@ -142,6 +161,7 @@ class FullCTDataset(Dataset):
         image_tensor = image_tensor.squeeze(0) 
         mask_tensor = mask_tensor.squeeze(0).squeeze(0).long() 
         
+        filename = os.path.basename(slices[slice_idx][0])
         return image_tensor, mask_tensor, filename
 
 # ==========================================
@@ -177,7 +197,7 @@ def evaluate_all():
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
+    model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
     try:
         model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True), strict=False)
         print(f"✅ Loaded NEW FINETUNED weights from {MODEL_WEIGHTS_PATH}")
@@ -215,7 +235,7 @@ def evaluate_all():
                 filename = filenames[i].replace('_img.npy', '')
                 true_mask_np = masks[i].cpu().numpy()
                 pred_mask_np = preds[i].cpu().numpy()
-                img_np = images[i].squeeze(0).cpu().numpy()
+                img_np = images[i][1].cpu().numpy() # 2.5D middle slice
                 
                 size_metrics = calculate_tumor_size(pred_mask_np)
                 

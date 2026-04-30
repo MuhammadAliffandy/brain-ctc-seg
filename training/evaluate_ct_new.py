@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import kagglehub
+import re
 
 # E2CNN Specific Libraries
 from escnn import gspaces
@@ -167,42 +168,54 @@ class SE2_CNNET(nn.Module):
 
 class InferenceCTDataset(Dataset):
     """
-    Loads only images for prediction generation.
+    Loads images for prediction generation with 2.5D spatial context.
     """
     def __init__(self, root_dir):
-        self.image_files = []
+        self.root_dir = root_dir
+        self.all_samples = []
+        self.category_slices = {}
         
         print(f"🔍 Scanning directory for inference data: {root_dir}...")
         
-        for root, dirs, files in os.walk(root_dir):
-            img_files = sorted([f for f in files if f.endswith('_img.npy')])
-            for img_name in img_files:
-                self.image_files.append(os.path.join(root, img_name))
+        img_files = [f for f in os.listdir(root_dir) if f.endswith('_img.npy')]
+        
+        for img_name in img_files:
+            category = img_name.split('_')[0] 
+            if category not in self.category_slices:
+                self.category_slices[category] = []
+            self.category_slices[category].append(img_name)
+            
+        for category in self.category_slices:
+            self.category_slices[category] = sorted(self.category_slices[category], 
+                key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+            
+            for i in range(len(self.category_slices[category])):
+                self.all_samples.append((category, i))
                 
-        print(f"✅ Found a total of {len(self.image_files)} valid images.")
+        print(f"✅ Found a total of {len(self.all_samples)} valid images.")
 
     def __len__(self):
-        return len(self.image_files)
+        return len(self.all_samples)
 
     def __getitem__(self, idx):
-        img_path = self.image_files[idx]
-        filename = os.path.basename(img_path)
+        category, slice_idx = self.all_samples[idx]
+        slices = self.category_slices[category]
         
-        # Load numpy array
-        image = np.load(img_path).astype(np.float32)
+        idx_prev = max(0, slice_idx - 1)
+        idx_next = min(len(slices) - 1, slice_idx + 1)
         
-        # Ensure channel dimension (1, H, W)
-        if len(image.shape) == 2:
-            image = np.expand_dims(image, axis=0)
-            
-        # Convert to tensor and add batch dimension temporarily for interpolation
-        image_tensor = torch.from_numpy(image).unsqueeze(0) 
+        img_prev = np.load(os.path.join(self.root_dir, slices[idx_prev])).astype(np.float32)
+        img_curr = np.load(os.path.join(self.root_dir, slices[slice_idx])).astype(np.float32)
+        img_next = np.load(os.path.join(self.root_dir, slices[idx_next])).astype(np.float32)
         
-        # 🪄 RESIZE MAGIC (Adjust 256 to your training size if needed)
+        image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0) 
+        
         TARGET_SIZE = (256, 256) 
         image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
         image_tensor = image_tensor.squeeze(0)
         
+        filename = slices[slice_idx]
         return image_tensor, filename
 
 # ==========================================
@@ -228,7 +241,7 @@ def run_inference():
     print(f"\n🚀 Hardware accelerated on: {device}")
 
     # --- LOAD MODEL ---
-    model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24).to(device)
+    model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
     try:
         model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True))
         print(f"✅ Loaded weights from {MODEL_WEIGHTS_PATH}")
