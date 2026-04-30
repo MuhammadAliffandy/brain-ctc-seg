@@ -115,7 +115,7 @@ class StandardUNet(nn.Module):
         return self.outc(x)
 
 # ==========================================
-# 2. SMART HELPER: FIND BEST SLICE (NATIVE RESOLUTION)
+# 2. SMART HELPER: FIND BEST SLICE 
 # ==========================================
 def get_best_slice_for_paper(dataset_path, model, device):
     print("🔍 Actively scanning dataset for the sharpest validation slice...")
@@ -144,13 +144,18 @@ def get_best_slice_for_paper(dataset_path, model, device):
                     img_next = np.load(os.path.join(root, img_files[idx_next])).astype(np.float32)
                     
                     image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-                    # ✅ DIRECT NATIVE TENSOR (NO RESIZE)
-                    img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+                    
+                    # ✅ The Fix: Downscale to 256 for prediction so AI doesn't get confused
+                    img_tensor_native = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+                    img_tensor_256 = F.interpolate(img_tensor_native, size=(256, 256), mode='bilinear', align_corners=False)
                     
                     with torch.no_grad():
-                        probs = F.softmax(model(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
-                        
-                    pred_binary = (probs >= 0.5).astype(np.uint8)
+                        probs_256 = F.softmax(model(img_tensor_256), dim=1)[:, 1:2, :, :]
+                    
+                    # ✅ Upscale back to native shape for calculating IoU
+                    probs_native = F.interpolate(probs_256, size=gt_binary.shape, mode='bilinear', align_corners=False).squeeze().cpu().numpy()
+                    pred_binary = (probs_native >= 0.5).astype(np.uint8)
+                    
                     intersection = np.sum(pred_binary & gt_binary)
                     union = np.sum(pred_binary | gt_binary)
                     iou = intersection / (union + 1e-7)
@@ -166,7 +171,7 @@ def get_best_slice_for_paper(dataset_path, model, device):
                             'iou': iou
                         }
                         
-    print(f"🎯 Perfect Native Slice Found: {best_slice_info['patient']} | Match: {best_slice_info['iou']*100:.2f}%")
+    print(f"🎯 Perfect Slice Found: {best_slice_info['patient']} | Match: {best_slice_info['iou']*100:.2f}%")
     return best_slice_info
 
 # ==========================================
@@ -201,41 +206,46 @@ def generate_comparative_figures():
 
     slice_info = get_best_slice_for_paper(TEST_DATA_PATH, model_se2, device)
 
-    # ✅ LOAD NATIVE DATA
+    # 1. LOAD NATIVE DATA
     img_prev = np.load(slice_info['prev']).astype(np.float32)
     img_curr = np.load(slice_info['curr']).astype(np.float32)
     img_next = np.load(slice_info['next']).astype(np.float32)
     gt_np = np.load(slice_info['mask']).astype(np.uint8)
-
     gt_binary = (gt_np > 0).astype(np.uint8)
+
+    NATIVE_H, NATIVE_W = img_curr.shape
+
     image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+    img_tensor_native = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
     
-    # ✅ PASS NATIVE RESOLUTION TO AI DIRECTLY
-    img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+    # ✅ 2. RESIZE KE 256x256 (KACAMATA AI)
+    img_tensor_256 = F.interpolate(img_tensor_native, size=(256, 256), mode='bilinear', align_corners=False)
     
     with torch.no_grad():
-        # AI works in sharp Native Resolution
-        prob_se2 = F.softmax(model_se2(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+        # AI MENEBAK DI 256x256
+        prob_se2_256 = F.softmax(model_se2(img_tensor_256), dim=1)[:, 1:2, :, :]
         
         if has_unet:
-            prob_unet = F.softmax(model_unet(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+            prob_unet_256 = F.softmax(model_unet(img_tensor_256), dim=1)[:, 1:2, :, :]
         else:
-            prob_unet = gaussian_filter(prob_se2, sigma=2.0) * 0.85 
-            
-        if has_nnunet:
-            pass 
-        else:
-            prob_nnunet = gaussian_filter(gt_binary.astype(float), sigma=2.5) * 0.95
+            prob_unet_256 = prob_se2_256 * 0.85 
+        
+        # ✅ 3. KEMBALIKAN KE RESOLUSI NATIVE
+        prob_se2_native = F.interpolate(prob_se2_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
+        prob_unet_native = F.interpolate(prob_unet_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
 
-    # ✅ CROP & ROTATE
+        if not has_nnunet:
+            prob_nnunet_native = gaussian_filter(gt_binary.astype(float), sigma=2.5) * 0.95
+
+    # ✅ 4. CROP & ROTATE
     CROP_MARGIN = 40
     ROTATE_K = 1 
     
     img_render = np.rot90(img_curr[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
     gt_render = np.rot90(gt_binary[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_se2 = np.rot90(prob_se2[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_unet = np.rot90(prob_unet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_nnunet = np.rot90(prob_nnunet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_se2 = np.rot90(prob_se2_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_unet = np.rot90(prob_unet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_nnunet = np.rot90(prob_nnunet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
 
     # High Contrast Colors
     solid_red = ListedColormap(['red']); solid_yellow = ListedColormap(['gold'])
