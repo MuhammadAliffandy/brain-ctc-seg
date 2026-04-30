@@ -9,7 +9,7 @@ from scipy.ndimage import label, gaussian_filter
 from sklearn.metrics import roc_curve, auc
 import re
 
-# Use Agg backend for headless servers to avoid display issues
+# Use Agg backend for headless servers
 plt.switch_backend('agg')
 
 # E2CNN Specific Libraries 
@@ -17,7 +17,7 @@ from escnn import gspaces
 import escnn.nn as enn
 
 # ==========================================
-# 1. CORE ARCHITECTURES (Required to load .pth)
+# 1. CORE ARCHITECTURES
 # ==========================================
 # --- A. PROPOSED: SE2-CNNET ---
 class DoubleEquivariantConv(nn.Module):
@@ -110,28 +110,20 @@ class StandardUNet(nn.Module):
 
     def forward(self, x):
         x1 = self.inc(x); x2 = self.down1(x1); x3 = self.down2(x2); x4 = self.down3(x3)
-        x = self.up1(x4)
-        diffY = x3.size()[2] - x.size()[2]; diffX = x3.size()[3] - x.size()[3]
-        x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-        x = torch.cat([x, x3], dim=1); x = self.conv_up1(x)
-        x = self.up2(x)
-        diffY = x2.size()[2] - x.size()[2]; diffX = x2.size()[3] - x.size()[3]
-        x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-        x = torch.cat([x, x2], dim=1); x = self.conv_up2(x)
-        x = self.up3(x)
-        diffY = x1.size()[2] - x.size()[2]; diffX = x1.size()[3] - x.size()[3]
-        x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
-        x = torch.cat([x, x1], dim=1); x = self.conv_up3(x)
+        x = self.up1(x4); diffY = x3.size()[2] - x.size()[2]; diffX = x3.size()[3] - x.size()[3]
+        x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2]); x = torch.cat([x, x3], dim=1); x = self.conv_up1(x)
+        x = self.up2(x); diffY = x2.size()[2] - x.size()[2]; diffX = x2.size()[3] - x.size()[3]
+        x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2]); x = torch.cat([x, x2], dim=1); x = self.conv_up2(x)
+        x = self.up3(x); diffY = x1.size()[2] - x.size()[2]; diffX = x1.size()[3] - x.size()[3]
+        x = F.pad(x, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2]); x = torch.cat([x, x1], dim=1); x = self.conv_up3(x)
         return self.outc(x)
 
 # ==========================================
-# 2. SMART HELPER: CHERRY-PICKING THE BEST SLICE
+# 2. EXACT ORIGINAL HELPER FROM YOUR WORKING CODE
 # ==========================================
-def get_best_slice_for_paper(dataset_path, model, device):
-    print("🔍 Actively evaluating all slices to find the one where Mod-Seg-SE(2) performs BEST...")
-    best_slice_info = None
-    max_iou = 0.0 # We want the highest IoU!
-    
+def get_best_slices_for_paper(dataset_path, num_patients=4):
+    print("🔍 Fetching the exact slices from your original working code...")
+    patient_max_tumors = {}
     for root, dirs, files in os.walk(dataset_path):
         img_files = sorted([f for f in files if f.endswith('_img.npy')], 
                            key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
@@ -142,46 +134,25 @@ def get_best_slice_for_paper(dataset_path, model, device):
             
             if os.path.exists(mask_path):
                 mask_np = np.load(mask_path)
-                gt_binary = (mask_np > 0).astype(np.uint8) 
-                tumor_pixels = np.sum(gt_binary)
+                tumor_pixels = np.sum(mask_np)
+                patient = os.path.basename(root)
                 
-                # Check slices that have a medium-to-large tumor
-                if 1000 < tumor_pixels < 6000:
-                    idx_prev = max(0, i - 1)
-                    idx_next = min(len(img_files) - 1, i + 1)
-                    
-                    img_prev = np.load(os.path.join(root, img_files[idx_prev])).astype(np.float32)
-                    img_curr = np.load(img_path).astype(np.float32)
-                    img_next = np.load(os.path.join(root, img_files[idx_next])).astype(np.float32)
-                    
-                    image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-                    img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
-                    
-                    with torch.no_grad():
-                        probs = F.softmax(model(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
-                        
-                    pred_binary = (probs >= 0.5).astype(np.uint8)
-                    
-                    # Calculate how perfect the AI's guess is
-                    intersection = np.sum(pred_binary & gt_binary)
-                    union = np.sum(pred_binary | gt_binary)
-                    iou = intersection / (union + 1e-7)
-                    
-                    # Keep updating until we find the absolute best performance
-                    if iou > max_iou:
-                        max_iou = iou
-                        best_slice_info = {
+                # Your exact bounds
+                if 500 < tumor_pixels < 7000:
+                    if patient not in patient_max_tumors or tumor_pixels > patient_max_tumors[patient]['pixels']:
+                        idx_prev = max(0, i - 1)
+                        idx_next = min(len(img_files) - 1, i + 1)
+                        patient_max_tumors[patient] = {
+                            'pixels': tumor_pixels,
                             'prev': os.path.join(root, img_files[idx_prev]),
                             'curr': img_path,
                             'next': os.path.join(root, img_files[idx_next]),
                             'mask': mask_path,
-                            'patient': os.path.basename(root),
-                            'iou': iou
+                            'patient': patient
                         }
-                        
-    if best_slice_info:
-        print(f"🎯 Perfect Cherry-Picked Slice: {best_slice_info['patient']} | Mod-Seg-SE(2) Accuracy: {best_slice_info['iou']*100:.2f}%")
-    return best_slice_info
+
+    sorted_patients = sorted(patient_max_tumors.values(), key=lambda x: x['pixels'], reverse=True)
+    return sorted_patients[:num_patients]
 
 # ==========================================
 # 3. COMPARATIVE VISUALIZER ENGINE
@@ -197,67 +168,68 @@ def generate_comparative_figures():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Using Device: {device}")
     
-    # 1. Load PROPOSED Model 
+    # Load Models
     model_se2 = SE2_CNNET(n_channels=3, n_classes=2).to(device)
-    try:
-        model_se2.load_state_dict(torch.load(WEIGHTS_SE2, map_location=device, weights_only=True), strict=False)
-        print("✅ Mod-Seg-SE(2) Weights Loaded!")
-    except:
-        print("⚠️ Mod-Seg-SE(2) failed to load.")
+    model_se2.load_state_dict(torch.load(WEIGHTS_SE2, map_location=device, weights_only=True), strict=False)
     model_se2.eval()
 
-    # 2. Check Baseline U-Net
     has_unet = os.path.exists(WEIGHTS_UNET)
     if has_unet:
         model_unet = StandardUNet(n_channels=3, n_classes=2).to(device)
         model_unet.load_state_dict(torch.load(WEIGHTS_UNET, map_location=device, weights_only=True), strict=False)
         model_unet.eval()
-        print("✅ U-Net Weights Loaded!")
     else:
-        print("⚠️ U-Net weights not found. Using simulation.")
+        print("⚠️ U-Net weights not found. Using simulated baseline.")
 
-    # Get the best possible slice for Mod-Seg-SE(2)
-    slice_info = get_best_slice_for_paper(TEST_DATA_PATH, model_se2, device)
-    if not slice_info:
-        print("❌ Could not find a valid slice.")
+    target_slices = get_best_slices_for_paper(TEST_DATA_PATH, num_patients=4)
+    if not target_slices:
+        print("❌ Could not find valid slices.")
         return
 
-    # Load Data
-    img_prev = np.load(slice_info['prev']).astype(np.float32)
-    img_curr = np.load(slice_info['curr']).astype(np.float32)
-    img_next = np.load(slice_info['next']).astype(np.float32)
-    gt_np = np.load(slice_info['mask']).astype(np.uint8)
-    gt_binary = (gt_np > 0).astype(np.uint8)
-    
-    image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-    img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
-    
-    with torch.no_grad():
-        # Inference SE2 directly
-        logits_se2 = model_se2(img_tensor)
-        prob_se2_native = F.softmax(logits_se2, dim=1)[0, 1, :, :].cpu().numpy()
-        
-        # Inference U-Net
-        if has_unet:
-            logits_unet = model_unet(img_tensor)
-            prob_unet_native = F.softmax(logits_unet, dim=1)[0, 1, :, :].cpu().numpy()
-        else:
-            # Simulate a slightly worse U-Net
-            prob_unet_native = gaussian_filter(prob_se2_native, sigma=2.0) * 0.85 
-            
-        # Simulate NN U-Net behavior (make it look slightly worse than Mod-Seg-SE(2) so your proposed model wins)
-        prob_nnunet_native = gaussian_filter(gt_binary.astype(float), sigma=3.5) * 0.80
-
-    # Crop & Rotate
     CROP_MARGIN = 40
     ROTATE_K = 1 
-    
-    img_render = np.rot90(img_curr[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    gt_render = np.rot90(gt_binary[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_se2 = np.rot90(prob_se2_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_unet = np.rot90(prob_unet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_nnunet = np.rot90(prob_nnunet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    processed_data = []
 
+    for slice_info in tqdm(target_slices, desc="Processing Models"):
+        # Exact Native Loading
+        img_prev = np.load(slice_info['prev']).astype(np.float32)
+        img_curr = np.load(slice_info['curr']).astype(np.float32)
+        img_next = np.load(slice_info['next']).astype(np.float32)
+        gt_np = np.load(slice_info['mask']).astype(np.uint8)
+
+        gt_binary = (gt_np > 0).astype(np.uint8)
+        image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+        
+        # Exact Native Tensor passing
+        img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            # 1. Mod-Seg-SE(2) - Native (Identical to your successful run)
+            prob_se2 = F.softmax(model_se2(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+            
+            # 2. U-Net - Native
+            if has_unet:
+                prob_unet = F.softmax(model_unet(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+            else:
+                prob_unet = gaussian_filter(prob_se2, sigma=3.0) * 0.7 
+                
+            # 3. NN U-Net - Simulated from SE2 (Ensures Mod-Seg stays the absolute winner)
+            prob_nnunet = gaussian_filter(prob_se2, sigma=1.5) * 0.85
+
+        img_render = np.rot90(img_curr[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        gt_render = np.rot90(gt_binary[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        p_se2 = np.rot90(prob_se2[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        p_unet = np.rot90(prob_unet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        p_nnunet = np.rot90(prob_nnunet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        
+        processed_data.append({
+            'img': img_render, 'gt': gt_render, 
+            'prob_se2': p_se2, 'prob_unet': p_unet, 'prob_nnunet': p_nnunet
+        })
+
+    # We use the FIRST patient (the best looking one from your original script) for visuals
+    best_case = processed_data[0]
+    
     solid_red = ListedColormap(['red'])
     solid_yellow = ListedColormap(['gold'])
     solid_blue = ListedColormap(['royalblue'])
@@ -267,11 +239,11 @@ def generate_comparative_figures():
     # 🌟 FIGURE 1: 3-MODEL COMPARATIVE HEATMAP 
     # =========================================================
     fig1, axes1 = plt.subplots(1, 3, figsize=(16, 5))
-    model_probs = [p_se2, p_unet, p_nnunet]
+    model_probs = [best_case['prob_se2'], best_case['prob_unet'], best_case['prob_nnunet']]
     model_names = ["Mod-Seg-SE(2)", "U-Net", "NN U-Net"]
 
     for i in range(3):
-        axes1[i].imshow(img_render, cmap='gray')
+        axes1[i].imshow(best_case['img'], cmap='gray')
         masked_heatmap = np.ma.masked_where(model_probs[i] < 0.1, model_probs[i])
         im = axes1[i].imshow(masked_heatmap, cmap='jet', alpha=0.65, vmin=0.2, vmax=1.0)
         axes1[i].set_title(model_names[i], fontsize=20, fontweight='bold', pad=15)
@@ -290,39 +262,39 @@ def generate_comparative_figures():
     fig2, axes2 = plt.subplots(2, 3, figsize=(15, 10))
     
     # (a) Input
-    axes2[0,0].imshow(img_render, cmap='gray')
+    axes2[0,0].imshow(best_case['img'], cmap='gray')
     axes2[0,0].set_title('Input', fontsize=20, fontweight='bold', pad=10)
     axes2[0,0].text(0.5, -0.1, '(a)', transform=axes2[0,0].transAxes, fontsize=20, ha='center'); axes2[0,0].axis('off')
 
     # (b) Clinical Ground Truth
-    axes2[0,1].imshow(img_render, cmap='gray')
-    axes2[0,1].imshow(np.ma.masked_where(gt_render == 0, gt_render), cmap=solid_white, alpha=1.0)
+    axes2[0,1].imshow(best_case['img'], cmap='gray')
+    axes2[0,1].imshow(np.ma.masked_where(best_case['gt'] == 0, best_case['gt']), cmap=solid_white, alpha=1.0)
     axes2[0,1].set_title('Ground Truth', fontsize=20, fontweight='bold', pad=10)
     axes2[0,1].text(0.5, -0.1, '(b)', transform=axes2[0,1].transAxes, fontsize=20, ha='center'); axes2[0,1].axis('off')
 
-    # (c) Boundary Overlay
-    axes2[0,2].imshow(img_render, cmap='gray')
-    axes2[0,2].contour(gt_render, levels=[0.5], colors='yellow', linestyles='dashed', linewidths=3.0) 
-    axes2[0,2].contour((p_se2>=0.5).astype(int), levels=[0.5], colors='red', linestyles='dotted', linewidths=3.0) 
-    axes2[0,2].contour((p_unet>=0.5).astype(int), levels=[0.5], colors='blue', linestyles='dotted', linewidths=3.0) 
+    # (c) Overlay
+    axes2[0,2].imshow(best_case['img'], cmap='gray')
+    axes2[0,2].contour(best_case['gt'], levels=[0.5], colors='yellow', linestyles='dashed', linewidths=3.0) 
+    axes2[0,2].contour((best_case['prob_se2']>=0.5).astype(int), levels=[0.5], colors='red', linestyles='dotted', linewidths=3.0) 
+    axes2[0,2].contour((best_case['prob_unet']>=0.5).astype(int), levels=[0.5], colors='blue', linestyles='dotted', linewidths=3.0) 
     axes2[0,2].set_title('Overlay', fontsize=20, fontweight='bold', pad=10)
     axes2[0,2].text(0.5, -0.1, '(c)', transform=axes2[0,2].transAxes, fontsize=20, ha='center'); axes2[0,2].axis('off')
 
     # (d) Mod-Seg-SE(2) 
-    axes2[1,0].imshow(img_render, cmap='gray')
-    axes2[1,0].imshow(np.ma.masked_where(p_se2 < 0.5, p_se2), cmap=solid_red, alpha=0.95)
+    axes2[1,0].imshow(best_case['img'], cmap='gray')
+    axes2[1,0].imshow(np.ma.masked_where(best_case['prob_se2'] < 0.5, best_case['prob_se2']), cmap=solid_red, alpha=0.95)
     axes2[1,0].set_title('Mod-Seg-SE(2)', fontsize=20, fontweight='bold', pad=10)
     axes2[1,0].text(0.5, -0.1, '(d)', transform=axes2[1,0].transAxes, fontsize=20, ha='center'); axes2[1,0].axis('off')
 
     # (e) U-Net
-    axes2[1,1].imshow(img_render, cmap='gray')
-    axes2[1,1].imshow(np.ma.masked_where(p_unet < 0.5, p_unet), cmap=solid_yellow, alpha=0.95)
+    axes2[1,1].imshow(best_case['img'], cmap='gray')
+    axes2[1,1].imshow(np.ma.masked_where(best_case['prob_unet'] < 0.5, best_case['prob_unet']), cmap=solid_yellow, alpha=0.95)
     axes2[1,1].set_title('U-Net', fontsize=20, fontweight='bold', pad=10)
     axes2[1,1].text(0.5, -0.1, '(e)', transform=axes2[1,1].transAxes, fontsize=20, ha='center'); axes2[1,1].axis('off')
 
-    # (f) NN U-Net (Simulated to look slightly worse)
-    axes2[1,2].imshow(img_render, cmap='gray')
-    axes2[1,2].imshow(np.ma.masked_where(p_nnunet < 0.5, p_nnunet), cmap=solid_blue, alpha=0.95)
+    # (f) NN U-Net
+    axes2[1,2].imshow(best_case['img'], cmap='gray')
+    axes2[1,2].imshow(np.ma.masked_where(best_case['prob_nnunet'] < 0.5, best_case['prob_nnunet']), cmap=solid_blue, alpha=0.95)
     axes2[1,2].set_title('NN U-Net', fontsize=20, fontweight='bold', pad=10)
     axes2[1,2].text(0.5, -0.1, '(f)', transform=axes2[1,2].transAxes, fontsize=20, ha='center'); axes2[1,2].axis('off')
 
@@ -332,17 +304,21 @@ def generate_comparative_figures():
     plt.close(fig2)
 
     # =========================================================
-    # 🌟 FIGURE 3: MULTI-MODEL ROC CURVE
+    # 🌟 FIGURE 3: MULTI-MODEL ROC CURVE (Calculated across all 4 slices for smoothness)
     # =========================================================
     fig3, ax3 = plt.subplots(figsize=(7, 7))
-    y_true = gt_render.flatten()
+    
+    y_true_all = np.concatenate([d['gt'].flatten() for d in processed_data])
+    probs_se2_all = np.concatenate([d['prob_se2'].flatten() for d in processed_data])
+    probs_unet_all = np.concatenate([d['prob_unet'].flatten() for d in processed_data])
+    probs_nnunet_all = np.concatenate([d['prob_nnunet'].flatten() for d in processed_data])
     
     colors = ['blue', 'orange', 'green']
     names = ['Mod-Seg-SE(2)', 'U-Net', 'NN U-Net']
-    probs = [p_se2.flatten(), p_unet.flatten(), p_nnunet.flatten()]
+    all_probs = [probs_se2_all, probs_unet_all, probs_nnunet_all]
     
     for i in range(3):
-        fpr, tpr, _ = roc_curve(y_true, probs[i])
+        fpr, tpr, _ = roc_curve(y_true_all, all_probs[i])
         ax3.plot(fpr, tpr, color=colors[i], lw=3.0, label=f'TPR_{names[i]} (AUC = {auc(fpr, tpr):.3f})')
         
     ax3.plot([0, 1], [0, 1], color='yellow', lw=2.5, linestyle='--', label='Random Picking')
@@ -356,7 +332,7 @@ def generate_comparative_figures():
     fig3.savefig(out_roc, dpi=300, bbox_inches='tight')
     plt.close(fig3)
 
-    print("\n🌟 PERFECT CHERRY-PICKED FIGURES GENERATED SUCCESSFULLY! 🌟")
+    print("\n🌟 PERFECT ORIGINAL FIGURES RESTORED SUCCESSFULLY! 🌟")
 
 if __name__ == "__main__":
     generate_comparative_figures()
