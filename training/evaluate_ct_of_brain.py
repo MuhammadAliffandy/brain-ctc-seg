@@ -157,8 +157,17 @@ class FullCTDataset(Dataset):
         if mask.max() > 1:
             mask = (mask > 0).astype(np.uint8)
 
-        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1)
-        mask_tensor = torch.from_numpy(mask).long() 
+        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0)
+        mask_tensor = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float() 
+        
+        # Fix U-Net Crash: Model requires dims divisible by 16 (since it has 4 downsample layers)
+        # Resizing to 256x256 matches the standard 2.5D training resolution
+        TARGET_SIZE = (256, 256)
+        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
+        mask_tensor = F.interpolate(mask_tensor, size=TARGET_SIZE, mode='nearest')
+        
+        image_tensor = image_tensor.squeeze(0)
+        mask_tensor = mask_tensor.squeeze(0).squeeze(0).long()
         
         filename = os.path.basename(slices[slice_idx][0])
         return image_tensor, mask_tensor, filename
