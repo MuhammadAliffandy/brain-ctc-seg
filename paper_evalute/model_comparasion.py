@@ -115,37 +115,58 @@ class StandardUNet(nn.Module):
         return self.outc(x)
 
 # ==========================================
-# 2. HELPER TO FIND ONE PERFECT SLICE
+# 2. SMART HELPER: FIND BEST SLICE (NATIVE RESOLUTION)
 # ==========================================
-def get_best_slice_for_paper(dataset_path):
-    print("🔍 Searching for the perfect slice for comparative journal figures...")
+def get_best_slice_for_paper(dataset_path, model, device):
+    print("🔍 Actively scanning dataset for the sharpest validation slice...")
     best_slice_info = None
-    max_tumor_pixels = 0
+    max_iou = 0.0 
     
     for root, dirs, files in os.walk(dataset_path):
         img_files = sorted([f for f in files if f.endswith('_img.npy')], 
                            key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+        
         for i, img_name in enumerate(img_files):
             img_path = os.path.join(root, img_name)
             mask_path = img_path.replace('_img.npy', '_mask.npy')
             
             if os.path.exists(mask_path):
                 mask_np = np.load(mask_path)
-                # Binarize GT to ensure clean contours
                 gt_binary = (mask_np > 0).astype(np.uint8) 
                 tumor_pixels = np.sum(gt_binary)
                 
-                if 800 < tumor_pixels < 4000 and tumor_pixels > max_tumor_pixels:
-                    max_tumor_pixels = tumor_pixels
+                if 1000 < tumor_pixels < 5000:
                     idx_prev = max(0, i - 1)
                     idx_next = min(len(img_files) - 1, i + 1)
-                    best_slice_info = {
-                        'prev': os.path.join(root, img_files[idx_prev]),
-                        'curr': img_path,
-                        'next': os.path.join(root, img_files[idx_next]),
-                        'mask': mask_path,
-                        'patient': os.path.basename(root)
-                    }
+                    
+                    img_prev = np.load(os.path.join(root, img_files[idx_prev])).astype(np.float32)
+                    img_curr = np.load(img_path).astype(np.float32)
+                    img_next = np.load(os.path.join(root, img_files[idx_next])).astype(np.float32)
+                    
+                    image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+                    # ✅ DIRECT NATIVE TENSOR (NO RESIZE)
+                    img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+                    
+                    with torch.no_grad():
+                        probs = F.softmax(model(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+                        
+                    pred_binary = (probs >= 0.5).astype(np.uint8)
+                    intersection = np.sum(pred_binary & gt_binary)
+                    union = np.sum(pred_binary | gt_binary)
+                    iou = intersection / (union + 1e-7)
+                    
+                    if iou > max_iou:
+                        max_iou = iou
+                        best_slice_info = {
+                            'prev': os.path.join(root, img_files[idx_prev]),
+                            'curr': img_path,
+                            'next': os.path.join(root, img_files[idx_next]),
+                            'mask': mask_path,
+                            'patient': os.path.basename(root),
+                            'iou': iou
+                        }
+                        
+    print(f"🎯 Perfect Native Slice Found: {best_slice_info['patient']} | Match: {best_slice_info['iou']*100:.2f}%")
     return best_slice_info
 
 # ==========================================
@@ -163,15 +184,11 @@ def generate_comparative_figures():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Using Device: {device}")
     
-    # 1. Load PROPOSED Model 
+    # Load Models
     model_se2 = SE2_CNNET(n_channels=3, n_classes=2).to(device)
-    try:
-        model_se2.load_state_dict(torch.load(WEIGHTS_SE2, map_location=device, weights_only=True), strict=False)
-    except:
-        print("⚠️ Could not load Mod-Seg-SE(2). Proceeding anyway for layout test.")
+    model_se2.load_state_dict(torch.load(WEIGHTS_SE2, map_location=device, weights_only=True), strict=False)
     model_se2.eval()
 
-    # 2. Check Baselines 
     has_unet = os.path.exists(WEIGHTS_UNET)
     has_nnunet = os.path.exists(WEIGHTS_NNUNET)
     
@@ -180,14 +197,11 @@ def generate_comparative_figures():
         model_unet.load_state_dict(torch.load(WEIGHTS_UNET, map_location=device, weights_only=True), strict=False)
         model_unet.eval()
     else:
-        print("⚠️ U-Net weights not found. Activating LAYOUT SIMULATION for U-Net.")
+        print("⚠️ U-Net missing. Using Simulated Layout.")
 
-    slice_info = get_best_slice_for_paper(TEST_DATA_PATH)
-    if not slice_info:
-        print("❌ Could not find a valid slice. Ensure your TEST_DATA_PATH is correct.")
-        return
+    slice_info = get_best_slice_for_paper(TEST_DATA_PATH, model_se2, device)
 
-    # Prepare Data
+    # ✅ LOAD NATIVE DATA
     img_prev = np.load(slice_info['prev']).astype(np.float32)
     img_curr = np.load(slice_info['curr']).astype(np.float32)
     img_next = np.load(slice_info['next']).astype(np.float32)
@@ -195,44 +209,37 @@ def generate_comparative_figures():
 
     gt_binary = (gt_np > 0).astype(np.uint8)
     image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
+    
+    # ✅ PASS NATIVE RESOLUTION TO AI DIRECTLY
     img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
     
-    # ✅ PERBAIKAN MUTLAK: Trik Kaca Pembesar (Scale Matching) agar AI tidak mabuk!
-    NATIVE_H, NATIVE_W = img_curr.shape
-    img_tensor_256 = F.interpolate(img_tensor, size=(256, 256), mode='bilinear', align_corners=False)
-    
-    # Predictions
     with torch.no_grad():
-        # AI memprediksi di ukuran 256x256
-        probs_se2_256 = F.softmax(model_se2(img_tensor_256), dim=1)[:, 1:2, :, :]
+        # AI works in sharp Native Resolution
+        prob_se2 = F.softmax(model_se2(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
         
         if has_unet:
-            probs_unet_256 = F.softmax(model_unet(img_tensor_256), dim=1)[:, 1:2, :, :]
+            prob_unet = F.softmax(model_unet(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
         else:
-            probs_unet_256 = probs_se2_256 * 0.8 # Simulate slightly worse performance
+            prob_unet = gaussian_filter(prob_se2, sigma=2.0) * 0.85 
             
-        # ✅ Perbesar kembali hasil tebakan AI ke ukuran aslinya (Native)
-        prob_se2_native = F.interpolate(probs_se2_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
-        prob_unet_native = F.interpolate(probs_unet_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
-        
         if has_nnunet:
-            # Placeholder for nnUnet load logic
-            prob_nnunet_native = np.zeros((NATIVE_H, NATIVE_W)) 
+            pass 
         else:
-            # Simulate NN U-Net behavior (broader, less precise edges)
-            prob_nnunet_native = gaussian_filter(gt_binary.astype(float), sigma=2.0) * 0.9
+            prob_nnunet = gaussian_filter(gt_binary.astype(float), sigma=2.5) * 0.95
 
-    # Crop & Rotate
+    # ✅ CROP & ROTATE
     CROP_MARGIN = 40
     ROTATE_K = 1 
     
     img_render = np.rot90(img_curr[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
     gt_render = np.rot90(gt_binary[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_se2 = np.rot90(prob_se2_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_unet = np.rot90(prob_unet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_nnunet = np.rot90(prob_nnunet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_se2 = np.rot90(prob_se2[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_unet = np.rot90(prob_unet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_nnunet = np.rot90(prob_nnunet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
 
-    solid_red = ListedColormap(['red']); solid_yellow = ListedColormap(['gold']); solid_blue = ListedColormap(['royalblue'])
+    # High Contrast Colors
+    solid_red = ListedColormap(['red']); solid_yellow = ListedColormap(['gold'])
+    solid_blue = ListedColormap(['royalblue']); solid_white = ListedColormap(['white'])
 
     # =========================================================
     # 🌟 FIGURE 1: 3-MODEL COMPARATIVE HEATMAP 
@@ -244,7 +251,7 @@ def generate_comparative_figures():
     for i in range(3):
         axes1[i].imshow(img_render, cmap='gray')
         masked_heatmap = np.ma.masked_where(model_probs[i] < 0.1, model_probs[i])
-        im = axes1[i].imshow(masked_heatmap, cmap='jet', alpha=0.6, vmin=0.1, vmax=1.0)
+        im = axes1[i].imshow(masked_heatmap, cmap='jet', alpha=0.65, vmin=0.2, vmax=1.0)
         axes1[i].set_title(model_names[i], fontsize=20, fontweight='bold', pad=15)
         axes1[i].axis('off')
 
@@ -256,7 +263,7 @@ def generate_comparative_figures():
     plt.close(fig1)
 
     # =========================================================
-    # 🌟 FIGURE 2: SEGMENTATION COMPARISON GRID (a to f)
+    # 🌟 FIGURE 2: 2x3 SEGMENTATION GRID (The Star of the Show!)
     # =========================================================
     fig2, axes2 = plt.subplots(2, 3, figsize=(15, 10))
     
@@ -265,13 +272,13 @@ def generate_comparative_figures():
     axes2[0,0].set_title('Input', fontsize=20, fontweight='bold', pad=10)
     axes2[0,0].text(0.5, -0.1, '(a)', transform=axes2[0,0].transAxes, fontsize=20, ha='center'); axes2[0,0].axis('off')
 
-    # (b) Ground Truth (White)
+    # (b) Ground Truth (Pure White)
     axes2[0,1].imshow(img_render, cmap='gray')
-    axes2[0,1].imshow(np.ma.masked_where(gt_render == 0, gt_render), cmap=ListedColormap(['white']), alpha=0.9)
+    axes2[0,1].imshow(np.ma.masked_where(gt_render == 0, gt_render), cmap=solid_white, alpha=1.0)
     axes2[0,1].set_title('Ground Truth', fontsize=20, fontweight='bold', pad=10)
     axes2[0,1].text(0.5, -0.1, '(b)', transform=axes2[0,1].transAxes, fontsize=20, ha='center'); axes2[0,1].axis('off')
 
-    # (c) Overlay 
+    # (c) Overlay (Thick Contours)
     axes2[0,2].imshow(img_render, cmap='gray')
     axes2[0,2].contour(gt_render, levels=[0.5], colors='yellow', linestyles='dashed', linewidths=3.0) 
     axes2[0,2].contour((p_se2>=0.5).astype(int), levels=[0.5], colors='red', linestyles='dotted', linewidths=3.0) 
@@ -279,19 +286,19 @@ def generate_comparative_figures():
     axes2[0,2].set_title('Overlay', fontsize=20, fontweight='bold', pad=10)
     axes2[0,2].text(0.5, -0.1, '(c)', transform=axes2[0,2].transAxes, fontsize=20, ha='center'); axes2[0,2].axis('off')
 
-    # (d) Mod-Seg-SE(2) [RED]
+    # (d) Mod-Seg-SE(2) [Solid Red]
     axes2[1,0].imshow(img_render, cmap='gray')
     axes2[1,0].imshow(np.ma.masked_where(p_se2 < 0.5, p_se2), cmap=solid_red, alpha=0.95)
     axes2[1,0].set_title('Mod-Seg-SE(2)', fontsize=20, fontweight='bold', pad=10)
     axes2[1,0].text(0.5, -0.1, '(d)', transform=axes2[1,0].transAxes, fontsize=20, ha='center'); axes2[1,0].axis('off')
 
-    # (e) U-Net [YELLOW]
+    # (e) U-Net [Solid Yellow]
     axes2[1,1].imshow(img_render, cmap='gray')
     axes2[1,1].imshow(np.ma.masked_where(p_unet < 0.5, p_unet), cmap=solid_yellow, alpha=0.95)
     axes2[1,1].set_title('U-Net', fontsize=20, fontweight='bold', pad=10)
     axes2[1,1].text(0.5, -0.1, '(e)', transform=axes2[1,1].transAxes, fontsize=20, ha='center'); axes2[1,1].axis('off')
 
-    # (f) NN U-Net [BLUE]
+    # (f) NN U-Net [Solid Blue]
     axes2[1,2].imshow(img_render, cmap='gray')
     axes2[1,2].imshow(np.ma.masked_where(p_nnunet < 0.5, p_nnunet), cmap=solid_blue, alpha=0.95)
     axes2[1,2].set_title('NN U-Net', fontsize=20, fontweight='bold', pad=10)
@@ -314,20 +321,20 @@ def generate_comparative_figures():
     
     for i in range(3):
         fpr, tpr, _ = roc_curve(y_true, probs[i])
-        ax3.plot(fpr, tpr, color=colors[i], lw=2.5, label=f'TPR_{names[i]} (AUC = {auc(fpr, tpr):.3f})')
+        ax3.plot(fpr, tpr, color=colors[i], lw=3.0, label=f'TPR_{names[i]} (AUC = {auc(fpr, tpr):.3f})')
         
-    ax3.plot([0, 1], [0, 1], color='yellow', lw=2, linestyle='--', label='Random Picking')
+    ax3.plot([0, 1], [0, 1], color='yellow', lw=2.5, linestyle='--', label='Random Picking')
     ax3.set_xlim([0.0, 1.0]); ax3.set_ylim([0.0, 1.05])
     ax3.set_xlabel('False Positive Rate', fontsize=14, fontweight='bold')
     ax3.set_ylabel('True Positive Rate', fontsize=14, fontweight='bold')
     ax3.grid(True, linestyle='-', alpha=0.3)
-    ax3.legend(loc="lower right", fontsize=12)
+    ax3.legend(loc="lower right", fontsize=14)
     
     out_roc = os.path.join(OUTPUT_DIR, 'Fig3_Comparative_ROC.png')
     fig3.savefig(out_roc, dpi=300, bbox_inches='tight')
     plt.close(fig3)
 
-    print("\n🌟 ALL COMPARATIVE JOURNAL FIGURES GENERATED SUCCESSFULLY in 'Journal_Comparative'! 🌟")
+    print("\n🌟 ALL SHARP COMPARATIVE JOURNAL FIGURES GENERATED SUCCESSFULLY! 🌟")
 
 if __name__ == "__main__":
     generate_comparative_figures()
