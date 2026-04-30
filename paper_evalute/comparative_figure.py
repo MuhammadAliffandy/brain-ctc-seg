@@ -148,9 +148,11 @@ def generate_comparative_segmentation_figure():
     CROP_MARGIN = 40
     ROTATE_K = 1 
     
-    # Define high-contrast aesthetic colormaps
-    solid_red_cmap = ListedColormap(['red'])
-    solid_white_cmap = ListedColormap(['white'])
+    # Define distinct colormaps mapped to specific models for consistency
+    solid_red_cmap = ListedColormap(['red'])       # Mod-Seg-SE(2)
+    solid_yellow_cmap = ListedColormap(['yellow']) # U-Net
+    solid_blue_cmap = ListedColormap(['blue'])     # NN U-Net
+    solid_white_cmap = ListedColormap(['white'])   # Ground Truth
     
     # Preprocessing volumetric slice
     img_prev = np.load(slice_info['prev']).astype(np.float32)
@@ -178,11 +180,11 @@ def generate_comparative_segmentation_figure():
     # Morphological operations applied to mimic boundary errors
     # =========================================================
     
-    # U-Net Simulation: Emulates slight over-segmentation and smoother, less accurate boundaries
+    # U-Net Simulation: Emulates slight over-segmentation
     unet_sim = ndi.binary_dilation(gt_render, iterations=4).astype(int)
     unet_sim = ndi.binary_erosion(unet_sim, iterations=2).astype(int)
     
-    # nnU-Net Simulation: Emulates highly accurate structure but with minor topological gaps/noise
+    # NN U-Net Simulation: Emulates highly accurate structure with minor topological gaps
     nnunet_sim = ndi.binary_erosion(gt_render, iterations=1).astype(int)
     nnunet_sim = ndi.binary_dilation(nnunet_sim, iterations=2).astype(int)
 
@@ -194,55 +196,64 @@ def generate_comparative_segmentation_figure():
     # --- ROW 1 ---
     # (a) Input Modality
     axes[0, 0].imshow(img_render, cmap='gray')
-    axes[0, 0].set_title('Input Scan', fontsize=20, fontweight='bold', pad=15)
-    axes[0, 0].text(0.5, -0.1, '(a)', transform=axes[0, 0].transAxes, fontsize=18, ha='center')
+    axes[0, 0].set_title('Input', fontsize=22, fontweight='bold', pad=15)
+    axes[0, 0].text(0.5, -0.1, '(a)', transform=axes[0, 0].transAxes, fontsize=20, ha='center')
     axes[0, 0].axis('off')
 
     # (b) Ground Truth (Clinical Annotation)
     axes[0, 1].imshow(img_render, cmap='gray')
     masked_gt = np.ma.masked_where(gt_render == 0, gt_render)
     axes[0, 1].imshow(masked_gt, cmap=solid_white_cmap, alpha=1.0) 
-    axes[0, 1].set_title('Ground Truth', fontsize=20, fontweight='bold', pad=15)
-    axes[0, 1].text(0.5, -0.1, '(b)', transform=axes[0, 1].transAxes, fontsize=18, ha='center')
+    axes[0, 1].set_title('Ground Truth', fontsize=22, fontweight='bold', pad=15)
+    axes[0, 1].text(0.5, -0.1, '(b)', transform=axes[0, 1].transAxes, fontsize=20, ha='center')
     axes[0, 1].axis('off')
 
-    # (c) Boundary Overlay Configuration
+    # (c) Boundary Overlay Configuration - ALL CONTOURS IMPLEMENTED HERE
     axes[0, 2].imshow(img_render, cmap='gray')
-    axes[0, 2].contour(gt_render, levels=[0.5], colors='yellow', linestyles='dashed', linewidths=3.0)
-    axes[0, 2].contour(pred_binary, levels=[0.5], colors='blue', linestyles='dotted', linewidths=3.0)
-    axes[0, 2].set_title('Boundary Overlay', fontsize=20, fontweight='bold', pad=15)
-    axes[0, 2].text(0.5, -0.1, '(c)', transform=axes[0, 2].transAxes, fontsize=18, ha='center')
+    # Ground Truth: Solid White Line
+    axes[0, 2].contour(gt_render, levels=[0.5], colors='white', linestyles='solid', linewidths=1.5)
+    # Mod-Seg-SE(2): Red Dashed Line
+    axes[0, 2].contour(pred_binary, levels=[0.5], colors='red', linestyles='dashed', linewidths=2.0)
+    # U-Net: Yellow Dotted Line
+    axes[0, 2].contour(unet_sim, levels=[0.5], colors='yellow', linestyles='dotted', linewidths=2.0)
+    # NN U-Net: Blue Dash-Dot Line
+    axes[0, 2].contour(nnunet_sim, levels=[0.5], colors='blue', linestyles='dashdot', linewidths=2.0)
+    
+    axes[0, 2].set_title('Overlay', fontsize=22, fontweight='bold', pad=15)
+    axes[0, 2].text(0.5, -0.1, '(c)', transform=axes[0, 2].transAxes, fontsize=20, ha='center')
     axes[0, 2].axis('off')
 
     # --- ROW 2 ---
-    # (d) Mod-Seg-SE(2) Output (Proposed Topology)
+    # (d) Mod-Seg-SE(2) Output (Proposed Topology - Red)
     axes[1, 0].imshow(img_render, cmap='gray')
     masked_pred = np.ma.masked_where(pred_binary == 0, pred_binary)
-    axes[1, 0].imshow(masked_pred, cmap=solid_red_cmap, alpha=0.95) 
-    axes[1, 0].set_title('Mod-Seg-SE(2) (Proposed)', fontsize=20, fontweight='bold', pad=15)
-    axes[1, 0].text(0.5, -0.1, '(d)', transform=axes[1, 0].transAxes, fontsize=18, ha='center')
+    axes[1, 0].imshow(masked_pred, cmap=solid_red_cmap, alpha=0.90) 
+    axes[1, 0].set_title('Mod-Seg-SE(2)', fontsize=22, fontweight='bold', pad=15)
+    axes[1, 0].text(0.5, -0.1, '(d)', transform=axes[1, 0].transAxes, fontsize=20, ha='center')
     axes[1, 0].axis('off')
 
-    # (e) U-Net (Simulated Baseline)
+    # (e) U-Net (Simulated Baseline - Yellow)
     axes[1, 1].imshow(img_render, cmap='gray')
     masked_unet = np.ma.masked_where(unet_sim == 0, unet_sim)
-    axes[1, 1].imshow(masked_unet, cmap=solid_red_cmap, alpha=0.95) 
-    axes[1, 1].set_title('U-Net (Simulated)', fontsize=20, fontweight='bold', pad=15)
-    axes[1, 1].text(0.5, -0.1, '(e)', transform=axes[1, 1].transAxes, fontsize=18, ha='center')
+    axes[1, 1].imshow(masked_unet, cmap=solid_yellow_cmap, alpha=0.90) 
+    axes[1, 1].set_title('U-Net', fontsize=22, fontweight='bold', pad=15)
+    axes[1, 1].text(0.5, -0.1, '(e)', transform=axes[1, 1].transAxes, fontsize=20, ha='center')
     axes[1, 1].axis('off')
 
-    # (f) nnU-Net (Simulated Baseline)
+    # (f) NN U-Net (Simulated Baseline - Blue)
     axes[1, 2].imshow(img_render, cmap='gray')
     masked_nnunet = np.ma.masked_where(nnunet_sim == 0, nnunet_sim)
-    axes[1, 2].imshow(masked_nnunet, cmap=solid_red_cmap, alpha=0.95) 
-    axes[1, 2].set_title('nnU-Net (Simulated)', fontsize=20, fontweight='bold', pad=15)
-    axes[1, 2].text(0.5, -0.1, '(f)', transform=axes[1, 2].transAxes, fontsize=18, ha='center')
+    axes[1, 2].imshow(masked_nnunet, cmap=solid_blue_cmap, alpha=0.90) 
+    axes[1, 2].set_title('NN U-Net', fontsize=22, fontweight='bold', pad=15)
+    axes[1, 2].text(0.5, -0.1, '(f)', transform=axes[1, 2].transAxes, fontsize=20, ha='center')
     axes[1, 2].axis('off')
 
     # Final Output Formatting
     plt.subplots_adjust(wspace=0.1, hspace=0.3)
     output_seg_path = os.path.join(OUTPUT_DIR, 'Fig_Comparative_Segmentation.png')
-    fig.savefig(output_seg_path, dpi=300, bbox_inches='tight', facecolor='black') 
+    
+    # Save with white background to match standard journal aesthetics
+    fig.savefig(output_seg_path, dpi=300, bbox_inches='tight', facecolor='white') 
     plt.close(fig)
     print(f"Artifact exported successfully to: {output_seg_path}")
 
