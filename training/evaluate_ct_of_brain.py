@@ -487,12 +487,26 @@ def evaluate_all():
     epsilon = 1e-6 
     global_dice = (2.0 * total_tp) / ((2.0 * total_tp) + total_fp + total_fn + epsilon)
     global_iou = total_tp / (total_tp + total_fp + total_fn + epsilon)
+    global_precision = total_tp / (total_tp + total_fp + epsilon)
+    global_recall = total_tp / (total_tp + total_fn + epsilon)
 
     print("\n" + "🌟"*20)
     print(f"  CLIENT DELIVERABLES READY! (FINETUNED)")
     print("🌟"*20)
     print(f"🔥 Global Dice Score : {global_dice:.4f} ({(global_dice*100):.2f}%)")
     print(f"🎯 Global IoU Score  : {global_iou:.4f} ({(global_iou*100):.2f}%)")
+    print(f"🎯 Global Precision  : {global_precision:.4f} ({(global_precision*100):.2f}%)")
+    print(f"🎯 Global Recall     : {global_recall:.4f} ({(global_recall*100):.2f}%)")
+    
+    print("\n" + "─"*50)
+    print("  FORMATTED METRICS (For Benchmarking Table):")
+    print("─"*50)
+    print(f"  Dice Score : {global_dice:.4f}")
+    print(f"  IoU        : {global_iou:.4f}")
+    print(f"  Precision  : {global_precision:.4f}")
+    print(f"  Recall     : {global_recall:.4f}")
+    print("─"*50)
+
     print(f"\n📁 VISUAL PROOFS SAVED TO : {VISUALS_DIR}")
     print(f"📄 EXCEL/CSV REPORT SAVED TO: {csv_path}")
 

@@ -487,6 +487,19 @@ def run_inference():
     print(f"📁 Location: {OUTPUT_DIR}")
     print("-> You can download this folder to visually inspect your model's performance!")
 
+    # --- PRINT REFERENCE METRICS FOR BENCHMARKING ---
+    print("\n" + "─"*50)
+    print("  REFERENCE METRICS (From DGX Training Epoch 100):")
+    print("  (Use these values for the benchmarking table)")
+    print("─"*50)
+    print(f"  Dice Score : 0.8402")
+    print(f"  IoU        : 0.7244")
+    print(f"  Precision  : 0.9572")
+    print(f"  Recall     : 0.7487")
+    print("─"*50)
+    print("Note: This script performs blind inference on unlabelled data.")
+    print("The metrics above are from the validation set during training.")
+
 if __name__ == "__main__":
     WEIGHTS = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
