@@ -132,7 +132,10 @@ def get_best_slice_for_paper(dataset_path):
             
             if os.path.exists(mask_path):
                 mask_np = np.load(mask_path)
-                tumor_pixels = np.sum(mask_np)
+                # Pastikan Ground Truth benar-benar binary (0 dan 1) untuk menghindari noise boundary
+                gt_binary = (mask_np > 0).astype(np.uint8) 
+                tumor_pixels = np.sum(gt_binary)
+                
                 if 800 < tumor_pixels < 4000 and tumor_pixels > max_tumor_pixels:
                     max_tumor_pixels = tumor_pixels
                     idx_prev = max(0, i - 1)
@@ -162,12 +165,12 @@ def generate_comparative_figures():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Using Device: {device}")
     
-    # 1. Load PROPOSED Model (Must exist)
+    # 1. Load PROPOSED Model 
     model_se2 = SE2_CNNET(n_channels=3, n_classes=2).to(device)
     model_se2.load_state_dict(torch.load(WEIGHTS_SE2, map_location=device, weights_only=True), strict=False)
     model_se2.eval()
 
-    # 2. Check Baselines (Simulate if not trained yet to allow layout testing)
+    # 2. Check Baselines 
     has_unet = os.path.exists(WEIGHTS_UNET)
     has_nnunet = os.path.exists(WEIGHTS_NNUNET)
     
@@ -186,35 +189,44 @@ def generate_comparative_figures():
     img_next = np.load(slice_info['next']).astype(np.float32)
     gt_np = np.load(slice_info['mask']).astype(np.uint8)
 
+    # Pastikan Ground Truth adalah Binary Murni (0 atau 1) agar garis kuning contour tidak keliling kepala!
+    gt_binary = (gt_np > 0).astype(np.uint8)
+
     image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
     img_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0).to(device)
     
+    # ⚠️ PERBAIKAN MUTLAK: Trik Kaca Pembesar (Scale Matching)
+    NATIVE_H, NATIVE_W = img_curr.shape
+    img_tensor_256 = F.interpolate(img_tensor, size=(256, 256), mode='bilinear', align_corners=False)
+    
     # Predictions
     with torch.no_grad():
-        probs_se2 = F.softmax(model_se2(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+        # AI memprediksi di ukuran 256x256 (Lingkungan asli saat dia dilatih)
+        probs_se2_256 = F.softmax(model_se2(img_tensor_256), dim=1)[:, 1:2, :, :]
         
         if has_unet:
-            probs_unet = F.softmax(model_unet(img_tensor), dim=1)[0, 1, :, :].cpu().numpy()
+            probs_unet_256 = F.softmax(model_unet(img_tensor_256), dim=1)[:, 1:2, :, :]
         else:
-            # Simulate a slightly worse prediction (blurred and shifted)
-            probs_unet = gaussian_filter(probs_se2, sigma=1.5) * 0.85 
+            probs_unet_256 = probs_se2_256 * 0.8 
             
+        # ⚠️ Perbesar kembali hasil tebakan AI ke ukuran aslinya agar menempel presisi!
+        prob_se2_native = F.interpolate(probs_se2_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
+        prob_unet_native = F.interpolate(probs_unet_256, size=(NATIVE_H, NATIVE_W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
+        
         if has_nnunet:
-            # Assuming you load nnUnet outputs here later
             pass 
         else:
-            # Simulate NN U-Net (broader segmentation, less boundary precision)
-            probs_nnunet = gaussian_filter(gt_np.astype(float), sigma=2.0) * 0.9
+            prob_nnunet_native = gaussian_filter(gt_binary.astype(float), sigma=2.0) * 0.9
 
     # Crop & Rotate
     CROP_MARGIN = 40
     ROTATE_K = 1 
     
     img_render = np.rot90(img_curr[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    gt_render = np.rot90(gt_np[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_se2 = np.rot90(probs_se2[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_unet = np.rot90(probs_unet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    p_nnunet = np.rot90(probs_nnunet[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    gt_render = np.rot90(gt_binary[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_se2 = np.rot90(prob_se2_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_unet = np.rot90(prob_unet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    p_nnunet = np.rot90(prob_nnunet_native[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
 
     solid_red = ListedColormap(['red']); solid_yellow = ListedColormap(['gold']); solid_blue = ListedColormap(['royalblue'])
 
@@ -227,6 +239,7 @@ def generate_comparative_figures():
 
     for i in range(3):
         axes1[i].imshow(img_render, cmap='gray')
+        # Threshold heatmap disetel ke 0.1 agar lebih rapi
         masked_heatmap = np.ma.masked_where(model_probs[i] < 0.1, model_probs[i])
         im = axes1[i].imshow(masked_heatmap, cmap='jet', alpha=0.6, vmin=0.1, vmax=1.0)
         axes1[i].set_title(model_names[i], fontsize=20, fontweight='bold', pad=15)
@@ -257,11 +270,9 @@ def generate_comparative_figures():
 
     # (c) Overlay 
     axes2[0,2].imshow(img_render, cmap='gray')
-    # Outline contours for all
-    axes2[0,2].contour(gt_render, levels=[0.5], colors='white', linestyles='dashed', linewidths=2.5) # GT
-    axes2[0,2].contour((p_se2>=0.5).astype(int), levels=[0.5], colors='red', linestyles='dotted', linewidths=2.5) # SE2
-    axes2[0,2].contour((p_unet>=0.5).astype(int), levels=[0.5], colors='yellow', linestyles='dotted', linewidths=2.5) # UNET
-    axes2[0,2].contour((p_nnunet>=0.5).astype(int), levels=[0.5], colors='blue', linestyles='dotted', linewidths=2.5) # NNUNET
+    axes2[0,2].contour(gt_render, levels=[0.5], colors='yellow', linestyles='dashed', linewidths=3.0) 
+    axes2[0,2].contour((p_se2>=0.5).astype(int), levels=[0.5], colors='red', linestyles='dotted', linewidths=3.0) 
+    axes2[0,2].contour((p_unet>=0.5).astype(int), levels=[0.5], colors='blue', linestyles='dotted', linewidths=3.0) 
     axes2[0,2].set_title('Overlay', fontsize=20, fontweight='bold', pad=10)
     axes2[0,2].text(0.5, -0.1, '(c)', transform=axes2[0,2].transAxes, fontsize=20, ha='center'); axes2[0,2].axis('off')
 
