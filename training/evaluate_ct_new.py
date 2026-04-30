@@ -243,8 +243,19 @@ def run_inference():
     # --- LOAD MODEL ---
     model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
     try:
-        model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True))
-        print(f"✅ Loaded weights from {MODEL_WEIGHTS_PATH}")
+        # Load weights into CPU first to modify them safely
+        checkpoint = torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True)
+        
+        # 🔄 DYNAMIC 1-CHANNEL TO 3-CHANNEL ADAPTATION
+        if 'inc.double_conv.0.weights' in checkpoint and checkpoint['inc.double_conv.0.weights'].shape[0] == 144:
+            print(f"🔄 Adapting 1-Channel Weights from {MODEL_WEIGHTS_PATH} to 3-Channel 2.5D Architecture...")
+            checkpoint['inc.double_conv.0.weights'] = checkpoint['inc.double_conv.0.weights'].repeat(3) / 3.0
+            
+            if 'inc.double_conv.0.filter' in checkpoint:
+                checkpoint['inc.double_conv.0.filter'] = checkpoint['inc.double_conv.0.filter'].repeat(1, 3, 1, 1) / 3.0
+                
+        model.load_state_dict(checkpoint, strict=False)
+        print(f"✅ Successfully Loaded & Adapted weights from {MODEL_WEIGHTS_PATH}")
     except Exception as e:
         print(f"❌ Critical Error loading weights: {e}")
         return
