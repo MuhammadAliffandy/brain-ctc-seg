@@ -159,22 +159,24 @@ class CTBrain25DDataset(Dataset):
         img_next = np.load(slices[idx_next][0]).astype(np.float32)
         mask     = np.load(slices[slice_idx][1]).astype(np.uint8)
 
-        # Binarize mask (handle datasets that use 255 for tumor label)
+        # Binarize mask (some datasets use 255 for tumor label)
         if mask.max() > 1:
             mask = (mask > 0).astype(np.uint8)
 
         # Stack 3 channels for 2.5D spatial context
         image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
 
-        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0)
-        mask_tensor  = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float()
+        image_t = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0)  # [1,3,H,W]
+        mask_t  = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float()   # [1,1,H,W]
 
-        # Resize to 256x256 — required by U-Net (dims must be divisible by 16)
-        TARGET_SIZE  = (256, 256)
-        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
-        mask_tensor  = F.interpolate(mask_tensor,  size=TARGET_SIZE, mode='nearest')
+        # CRITICAL: Resize to 256x256 — U-Net requires dims divisible by 16
+        # Without this, predictions are garbage and Dice collapses to near-zero
+        TARGET = (256, 256)
+        image_t = F.interpolate(image_t, size=TARGET, mode='bilinear', align_corners=False)
+        mask_t  = F.interpolate(mask_t,  size=TARGET, mode='nearest')
 
-        return image_tensor.squeeze(0), mask_tensor.squeeze(0).squeeze(0).long()
+        return image_t.squeeze(0), mask_t.squeeze(0).squeeze(0).long()
+
 
 # ==========================================
 # 3. WEIGHT LOADER (with 1ch → 3ch adapter)
@@ -262,7 +264,7 @@ def run_benchmarks():
     # --- PATHS ---
     CSV_REPORT      = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
     LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace")
-    WEIGHTS_SE2     = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_best_25D_Boundary.pth")
+    WEIGHTS_SE2     = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_epoch_100.pth")
     WEIGHTS_UNET    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/unet_baseline.pth")
     OUTPUT_CSV      = os.path.expanduser("~/Clara/benchmarking_results.csv")
 
