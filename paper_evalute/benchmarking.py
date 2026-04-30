@@ -327,29 +327,30 @@ def run_benchmarks():
         del model_unet
         torch.cuda.empty_cache()
     else:
-        print(\"  ⚠️  U-Net weights not found. Using published-paper reference values.\")
+        print("  ⚠️  U-Net weights not found. Using published-paper reference values.")
         results.append({
-            \"Model's type\": \"Non group-equivariant network\",
-            \"Model's name\": \"Standard U-Net\",
-            \"Dice Score\": 0.7650, \"IoU\": 0.6200, \"Precision\": 0.8120, \"Recall\": 0.7240,
-            \"Source\": \"Literature\"
+            "Model's type": "Non group-equivariant network",
+            "Model's name": "Standard U-Net",
+            "Dice Score": 0.7650, "IoU": 0.6200, "Precision": 0.8120, "Recall": 0.7240,
+            "Source": "Literature"
         })
 
     # ─────────────────────────────────────────────
+
     # ③ PUBLISHED BASELINES — Segmentation Dice/IoU
     # ─────────────────────────────────────────────
-    print(\"\\n  📖 Adding published segmentation baseline scores from literature...\")
+    print("\n  📖 Adding published segmentation baseline scores from literature...")
     simulated_baselines = [
         # Group-equivariant
-        {\"Model's type\": \"Group-equivariant network\",     \"Model's name\": \"HarmonicNet\",
-         \"Dice Score\": 0.8670, \"IoU\": 0.7650, \"Precision\": 0.8840, \"Recall\": 0.8510, \"Source\": \"Literature\"},
+        {"Model's type": "Group-equivariant network", "Model's name": "HarmonicNet",
+         "Dice Score": 0.8670, "IoU": 0.7650, "Precision": 0.8840, "Recall": 0.8510, "Source": "Literature"},
         # Non group-equivariant
-        {\"Model's type\": \"Non group-equivariant network\", \"Model's name\": \"nnU-Net\",
-         \"Dice Score\": 0.8320, \"IoU\": 0.7130, \"Precision\": 0.8500, \"Recall\": 0.8150, \"Source\": \"Literature\"},
-        {\"Model's type\": \"Non group-equivariant network\", \"Model's name\": \"Attention U-Net\",
-         \"Dice Score\": 0.8160, \"IoU\": 0.6900, \"Precision\": 0.8360, \"Recall\": 0.7980, \"Source\": \"Literature\"},
-        {\"Model's type\": \"Non group-equivariant network\", \"Model's name\": \"TransUNet\",
-         \"Dice Score\": 0.8080, \"IoU\": 0.6790, \"Precision\": 0.8280, \"Recall\": 0.7890, \"Source\": \"Literature\"},
+        {"Model's type": "Non group-equivariant network", "Model's name": "nnU-Net",
+         "Dice Score": 0.8320, "IoU": 0.7130, "Precision": 0.8500, "Recall": 0.8150, "Source": "Literature"},
+        {"Model's type": "Non group-equivariant network", "Model's name": "Attention U-Net",
+         "Dice Score": 0.8160, "IoU": 0.6900, "Precision": 0.8360, "Recall": 0.7980, "Source": "Literature"},
+        {"Model's type": "Non group-equivariant network", "Model's name": "TransUNet",
+         "Dice Score": 0.8080, "IoU": 0.6790, "Precision": 0.8280, "Recall": 0.7890, "Source": "Literature"},
     ]
     results.extend(simulated_baselines)
 
@@ -359,50 +360,53 @@ def run_benchmarks():
     df_results = pd.DataFrame(results)
 
     # Sort numerically BEFORE converting to string — Dice is the PRIMARY metric
-    seg_cols = [\"Dice Score\", \"IoU\", \"Precision\", \"Recall\"]
+    seg_cols = ["Dice Score", "IoU", "Precision", "Recall"]
     for col in seg_cols:
-        df_results[col] = pd.to_numeric(df_results[col], errors='coerce')
+        df_results[col] = pd.to_numeric(df_results[col], errors="coerce")
 
     df_results = df_results.sort_values(
-        by=[\"Model's type\", \"Dice Score\"], ascending=[True, False]
+        by=["Model's type", "Dice Score"], ascending=[True, False]
     ).reset_index(drop=True)
 
     # Format as strings for display
     for col in seg_cols:
-        df_results[col] = df_results[col].apply(lambda x: f\"{float(x):.4f}\")
+        df_results[col] = df_results[col].apply(lambda x: f"{float(x):.4f}")
 
-    col_w  = 34
-    header = (f\"{'Model Type':<{col_w}} | {'Model Name':<22} | \"
-              f\"{'Dice':>7} | {'IoU':>7} | {'Prec':>7} | {'Rec':>7} | Src\")
-    sep    = \"─\" * len(header)
+    col_w = 34
+    header = (
+        f"{'Model Type':<{col_w}} | {'Model Name':<22} | "
+        f"{'Dice':>7} | {'IoU':>7} | {'Prec':>7} | {'Rec':>7} | Src"
+    )
+    sep = "─" * len(header)
 
-    print(\"\\n\\n\" + \"=\"*len(header))
-    print(\"  Table: Segmentation Performance — Brain Tumor (CT Scan)\")
-    print(\"  PRIMARY METRIC: Dice Score | SECONDARY: IoU, Precision, Recall\")
-    print(\"  Note: Pixel Accuracy excluded (misleading for class-imbalanced seg.)\")
-    print(\"=\"*len(header))
+    print("\n\n" + "=" * len(header))
+    print("  Table: Segmentation Performance — Brain Tumor (CT Scan)")
+    print("  PRIMARY METRIC: Dice Score | SECONDARY: IoU, Precision, Recall")
+    print("  Note: Pixel Accuracy excluded (misleading for class-imbalanced seg.)")
+    print("=" * len(header))
     print(header)
     print(sep)
 
-    cur_type = \"\"
+    cur_type = ""
     for _, row in df_results.iterrows():
-        disp_type  = row[\"Model's type\"] if row[\"Model's type\"] != cur_type else \"\"
-        cur_type   = row[\"Model's type\"]
-        model_name = row[\"Model's name\"]
-        tag        = \"★\" if \"OURS\" in model_name else \" \"
+        model_type = row["Model's type"]
+        model_name = row["Model's name"]
+        disp_type  = model_type if model_type != cur_type else ""
+        cur_type   = model_type
+        tag        = "★" if "OURS" in model_name else " "
         print(
-            f\"{disp_type:<{col_w}} | {model_name:<22} | \"
-            f\"{row['Dice Score']:>7} | {row['IoU']:>7} | \"
-            f\"{row['Precision']:>7} | {row['Recall']:>7} | {row['Source']} {tag}\"
+            f"{disp_type:<{col_w}} | {model_name:<22} | "
+            f"{row['Dice Score']:>7} | {row['IoU']:>7} | "
+            f"{row['Precision']:>7} | {row['Recall']:>7} | {row['Source']} {tag}"
         )
 
-    print(\"=\"*len(header))
-    print(\"  ★ = Our proposed Mod-Seg-SE(2) model\")
-    print(\"  Dice Score = 2×TP / (2×TP + FP + FN)  |  IoU = TP / (TP + FP + FN)\")
+    print("=" * len(header))
+    print("  ★ = Our proposed Mod-Seg-SE(2) model")
+    print("  Dice Score = 2×TP / (2×TP + FP + FN)  |  IoU = TP / (TP + FP + FN)")
 
     # Save to CSV
     df_results.to_csv(OUTPUT_CSV, index=False)
-    print(f\"\\n  💾 Results saved to: {OUTPUT_CSV}\\n\")
+    print(f"\n  💾 Results saved to: {OUTPUT_CSV}\n")
 
 
 if __name__ == "__main__":
