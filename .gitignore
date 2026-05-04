@@ -11,4 +11,5 @@ ppt.py
 *.tar
 *.zip
 *.rar
-*.gif
+*.gifkaggle_venv/
+check_kaggle*.py
