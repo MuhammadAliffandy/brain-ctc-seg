@@ -292,22 +292,26 @@ def run_benchmark():
     
     for name, model in models.items():
         print(f"🚀 Benchmarking {name}...")
+        # Hitung jumlah parameter dalam hitungan Juta (Millions)
+        params = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
+        
         avg_time = measure_speed(model, dataloader, device)
         results.append({
             "Model Name": name,
+            "Parameters (M)": round(params, 2),
             "Inference (seconds/image)": round(avg_time, 4)
         })
-        print(f"   ✅ Done: {round(avg_time, 4)} seconds/image\n")
+        print(f"   ✅ Done: {round(avg_time, 4)} seconds | Params: {round(params, 2)} M\n")
         
     # Print Table
-    print("="*50)
-    print("📋 TABLE 7: Average inference time per image")
-    print("="*50)
-    print(f"{'Model Name':<25} | {'Inference (seconds/image)'}")
-    print("-" * 50)
+    print("="*75)
+    print("📋 TABLE 7: Average inference time & Model Complexity")
+    print("="*75)
+    print(f"{'Model Name':<25} | {'Parameters (M)':<15} | {'Inference (seconds/image)'}")
+    print("-" * 75)
     for r in results:
-        print(f"{r['Model Name']:<25} | {r['Inference (seconds/image)']}")
-    print("-" * 50)
+        print(f"{r['Model Name']:<25} | {str(r['Parameters (M)']) + ' M':<15} | {r['Inference (seconds/image)']}")
+    print("-" * 75)
 
 if __name__ == "__main__":
     run_benchmark()
