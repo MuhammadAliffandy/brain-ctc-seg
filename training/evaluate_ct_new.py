@@ -53,18 +53,18 @@ def download_and_pair_hemorrhage_data():
     valid_pairs = []
     for mask_path in masks:
         mask_name = os.path.basename(mask_path).lower()
-        clean_name = mask_name.replace('_mask', '').replace('mask', '').replace('_seg', '').split('.')[0]
+        # Clean the Kaggle specific mask suffix e.g., '14_hge_seg.jpg' -> '14'
+        clean_name = mask_name.replace('_hge_seg', '').replace('_seg', '').replace('_mask', '').replace('mask', '').split('.')[0]
         
         matched_img = None
-        for img_path in images:
-            img_name = os.path.basename(img_path).lower()
-            if img_name.startswith(clean_name + '.') or clean_name in img_name:
-                matched_img = img_path
-                break
-                
-        if matched_img:
-            valid_pairs.append((matched_img, mask_path))
-            images.remove(matched_img)
+        # We only want to search within the exact same patient folder to avoid mismatching "14.jpg" across different patients.
+        parent_dir = os.path.dirname(mask_path)
+        expected_img_path = os.path.join(parent_dir, f"{clean_name}.jpg")
+        
+        if os.path.exists(expected_img_path):
+            valid_pairs.append((expected_img_path, mask_path))
+            if expected_img_path in images:
+                images.remove(expected_img_path)
 
     print(f"✅ Found {len(valid_pairs)} valid Image-Mask pairs (expected around 318)")
     return valid_pairs
