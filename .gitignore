@@ -11,5 +11,11 @@ ppt.py
 *.tar
 *.zip
 *.rar
-*.gifkaggle_venv/
+*.gif
+kaggle_venv/
 check_kaggle*.py
+
+# Paper large binary assets
+Paper/Client_GIFs_Final_25D/*
+Paper/*.docx
+paper/*.docx
