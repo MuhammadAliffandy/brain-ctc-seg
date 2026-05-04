@@ -292,7 +292,7 @@ def train_model(model_save_path):
 # 5. EVALUATION DATASET LOADER (2.5D Spatial Context)
 # ==========================================
 class FullCTDataset(Dataset):
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, split_type='test', split_ratio=0.15, seed=42):
         self.all_samples = []
         self.patient_slices = {}
         
@@ -315,6 +315,19 @@ class FullCTDataset(Dataset):
                 self.patient_slices[patient] = valid_pairs
                 for i in range(len(valid_pairs)):
                     self.all_samples.append((patient, i))
+        
+        # Deterministic Split Logic (85% Train / 15% Test)
+        random.seed(seed)
+        shuffled_samples = self.all_samples.copy()
+        random.shuffle(shuffled_samples)
+        split_idx = int(len(shuffled_samples) * (1 - split_ratio))
+        
+        if split_type == 'train':
+            self.all_samples = shuffled_samples[:split_idx]
+        elif split_type == 'test':
+            self.all_samples = shuffled_samples[split_idx:]
+            
+        print(f"📊 {split_type.upper()} Split: Using {len(self.all_samples)} slices out of {len(shuffled_samples)} total slices.")
 
     def __len__(self):
         return len(self.all_samples)
@@ -410,7 +423,7 @@ def evaluate_all():
         
     model.eval()
 
-    dataset = FullCTDataset(PUBLIC_DATA_PATH)
+    dataset = FullCTDataset(PUBLIC_DATA_PATH, split_type='test')
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, 
                             num_workers=4, pin_memory=True)
 

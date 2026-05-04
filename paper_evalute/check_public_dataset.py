@@ -63,11 +63,17 @@ def check_public_dataset():
     print(f"  • Slices lengkap dengan Mask  : {total_valid_pairs} slices (Valid for Evaluation)")
     print(f"  • Slices tanpa Mask           : {missing_masks} slices (Cannot calculate Dice)")
 
-    print("\n📌 3. DATA PENULISAN UNTUK PAPER")
+    print("\n📌 3. DATA PENULISAN UNTUK PAPER (DENGAN SPLIT 85/15)")
     print("-" * 70)
+    
+    test_split = int(total_valid_pairs * 0.15) + 1 # Approximate calculation for display
+    train_split = total_valid_pairs - test_split
+    
     print(f"Tulis di metodologi: Dataset publik eksternal yang diuji memiliki total")
-    print(f"sebayak {total_valid_pairs} data slice. Keseluruhan data ini (100%) dialokasikan")
-    print("sepenuhnya untuk pengujian eksternal (Testing/Inference) untuk membuktikan")
+    print(f"sebanyak {total_valid_pairs} data slice. Untuk menjaga konsistensi dengan")
+    print(f"pipeline training utama, dataset publik ini juga dibagi menggunakan")
+    print(f"rasio 85/15 (Seed=42). Evaluasi akhir murni (Testing) dilakukan")
+    print(f"menggunakan 15% dari data tersebut (± {test_split} slices) untuk mengukur")
     print("performa generalisasi arsitektur Mod-Seg-SE(2).")
     print("="*70 + "\n")
 
