@@ -22,25 +22,25 @@ class SE2_CNNET(nn.Module):
         self.feat_type_in  = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
         self.feat_type_out = enn.FieldType(self.r2_act, n_classes * [self.r2_act.trivial_repr])
         
-        from benchmarking import DoubleEquivariantConv, DownEquivariant, UpEquivariant
+        from benchmarking import DoubleEquivariantConv, Down, Up
         
         self.inc   = DoubleEquivariantConv(self.feat_type_in, enn.FieldType(self.r2_act, base_channels * [self.r2_act.regular_repr]))
-        self.down1 = DownEquivariant(enn.FieldType(self.r2_act, base_channels * [self.r2_act.regular_repr]), 
+        self.down1 = Down(enn.FieldType(self.r2_act, base_channels * [self.r2_act.regular_repr]), 
                                      enn.FieldType(self.r2_act, base_channels*2 * [self.r2_act.regular_repr]))
-        self.down2 = DownEquivariant(enn.FieldType(self.r2_act, base_channels*2 * [self.r2_act.regular_repr]), 
+        self.down2 = Down(enn.FieldType(self.r2_act, base_channels*2 * [self.r2_act.regular_repr]), 
                                      enn.FieldType(self.r2_act, base_channels*4 * [self.r2_act.regular_repr]))
-        self.down3 = DownEquivariant(enn.FieldType(self.r2_act, base_channels*4 * [self.r2_act.regular_repr]), 
+        self.down3 = Down(enn.FieldType(self.r2_act, base_channels*4 * [self.r2_act.regular_repr]), 
                                      enn.FieldType(self.r2_act, base_channels*8 * [self.r2_act.regular_repr]))
-        self.down4 = DownEquivariant(enn.FieldType(self.r2_act, base_channels*8 * [self.r2_act.regular_repr]), 
+        self.down4 = Down(enn.FieldType(self.r2_act, base_channels*8 * [self.r2_act.regular_repr]), 
                                      enn.FieldType(self.r2_act, base_channels*16 * [self.r2_act.regular_repr]))
 
-        self.up1 = UpEquivariant(enn.FieldType(self.r2_act, base_channels*16 * [self.r2_act.regular_repr]), 
+        self.up1 = Up(enn.FieldType(self.r2_act, base_channels*16 * [self.r2_act.regular_repr]), 
                                  enn.FieldType(self.r2_act, base_channels*8 * [self.r2_act.regular_repr]))
-        self.up2 = UpEquivariant(enn.FieldType(self.r2_act, base_channels*8 * [self.r2_act.regular_repr]), 
+        self.up2 = Up(enn.FieldType(self.r2_act, base_channels*8 * [self.r2_act.regular_repr]), 
                                  enn.FieldType(self.r2_act, base_channels*4 * [self.r2_act.regular_repr]))
-        self.up3 = UpEquivariant(enn.FieldType(self.r2_act, base_channels*4 * [self.r2_act.regular_repr]), 
+        self.up3 = Up(enn.FieldType(self.r2_act, base_channels*4 * [self.r2_act.regular_repr]), 
                                  enn.FieldType(self.r2_act, base_channels*2 * [self.r2_act.regular_repr]))
-        self.up4 = UpEquivariant(enn.FieldType(self.r2_act, base_channels*2 * [self.r2_act.regular_repr]), 
+        self.up4 = Up(enn.FieldType(self.r2_act, base_channels*2 * [self.r2_act.regular_repr]), 
                                  enn.FieldType(self.r2_act, base_channels * [self.r2_act.regular_repr]))
 
         self.outc = enn.R2Conv(enn.FieldType(self.r2_act, base_channels * [self.r2_act.regular_repr]), 
