@@ -21,67 +21,54 @@ from escnn import gspaces
 import escnn.nn as enn
 
 # ==========================================
-# 0. KAGGLE DOWNLOAD & PREPROCESSING (INFERENCE ONLY)
+# 0. KAGGLE DOWNLOAD & PAIRING
 # ==========================================
 
-def download_and_prepare_inference_data():
-    print("\n" + "="*50)
-    print("📥 STAGE 1: DOWNLOAD DATASET FROM KAGGLE")
-    print("="*50)
+def download_and_pair_hemorrhage_data():
+    print("\n" + "="*60)
+    print("📥 STAGE 1: DOWNLOAD HEMORRHAGE DATASET FROM KAGGLE")
+    print("="*60)
     
     try:
-        download_path = kagglehub.dataset_download("trainingdatapro/computed-tomography-ct-of-the-brain")
+        download_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
         print(f"✅ Download successful! Cache: {download_path}")
     except Exception as e:
         print(f"❌ Failed to download dataset. Error: {e}")
         return None
 
-    # Create target directory for NPY files
-    TARGET_DIR = os.path.expanduser("~/Clara/inference_dataset_npy")
+    print("\n" + "="*60)
+    print("⚙️ STAGE 2: PARSING IMAGES & MASKS (HEMORRHAGE)")
+    print("="*60)
     
-    import shutil
-    if os.path.exists(TARGET_DIR):
-        shutil.rmtree(TARGET_DIR)
-    os.makedirs(TARGET_DIR, exist_ok=True)
+    all_files = []
+    for root, dirs, files in os.walk(download_path):
+        for f in files:
+            if f.lower().endswith(('.jpg', '.png', '.bmp', '.tif')):
+                all_files.append(os.path.join(root, f))
+                
+    # Separate masks and images
+    masks = [f for f in all_files if 'mask' in f.lower() or 'seg' in f.lower()]
+    images = [f for f in all_files if f not in masks]
     
-    print("\n" + "="*50)
-    print("⚙️ STAGE 2: PREPROCESSING FOR INFERENCE (NO MASKS)")
-    print("="*50)
-    
-    processed_count = 0
-    
-    # Scan through the directories (aneurysm, cancer, tumor)
-    for root, dirs, files in tqdm(list(os.walk(download_path)), desc="Scanning & Converting"):
+    valid_pairs = []
+    for mask_path in masks:
+        mask_name = os.path.basename(mask_path).lower()
+        clean_name = mask_name.replace('_mask', '').replace('mask', '').replace('_seg', '').split('.')[0]
         
-        # Filter only JPG files
-        img_files = [f for f in files if f.lower().endswith('.jpg')]
-        
-        for img_name in img_files:
-            base_name = img_name.split('.')[0]
-            img_path = os.path.join(root, img_name)
-            category = os.path.basename(root) # e.g., 'tumor', 'cancer'
-            
-            try:
-                # 1. Load CT Image
-                img_array = np.array(Image.open(img_path).convert('L'), dtype=np.float32)
+        matched_img = None
+        for img_path in images:
+            img_name = os.path.basename(img_path).lower()
+            if img_name.startswith(clean_name + '.') or clean_name in img_name:
+                matched_img = img_path
+                break
                 
-                # Normalize if necessary
-                if img_array.max() > 1.0: 
-                    img_array = img_array / 255.0
-                
-                # 2. Save to NPY with category prefix
-                unique_name = f"{category}_{base_name}"
-                np.save(os.path.join(TARGET_DIR, f"{unique_name}_img.npy"), img_array)
-                processed_count += 1
-                
-            except Exception as e:
-                pass
+        if matched_img:
+            valid_pairs.append((matched_img, mask_path))
+            images.remove(matched_img)
 
-    print(f"\n✅ Preprocessing Complete!")
-    print(f"📊 Total Images Ready for Inference: {processed_count}")
-    print(f"💾 Saved at: {TARGET_DIR}")
-    
-    return TARGET_DIR
+    print(f"✅ Found {len(valid_pairs)} valid Image-Mask pairs (expected around 318)")
+    return valid_pairs
+
 
 # ==========================================
 # 1. MODEL ARCHITECTURE
@@ -210,304 +197,145 @@ class AdvancedCombinedLoss(nn.Module):
         return self.focal(logits, targets) + self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
 
 # ==========================================
-# 3. TRAINING DATASET LOADER
+# 3. DATASET LOADER (HEMORRHAGE 2.5D SIMULATION)
 # ==========================================
-class CTBrain25DDataset(Dataset):
-    def __init__(self, dataframe, root_dir, transform=None):
-        self.root_dir = root_dir; self.transform = transform
-        self.patient_slices = {}; self.all_samples = []
-        patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
-        for patient in dataframe[patient_col].unique():
-            patient_dir = os.path.join(root_dir, patient)
-            if os.path.exists(patient_dir):
-                img_files = sorted([f for f in os.listdir(patient_dir) if f.endswith('_img.npy')],
-                                   key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
-                valid_pairs = []
-                for img_name in img_files:
-                    ip = os.path.join(patient_dir, img_name)
-                    mp = ip.replace('_img.npy', '_mask.npy')
-                    if os.path.exists(mp): valid_pairs.append((ip, mp))
-                if valid_pairs:
-                    self.patient_slices[patient] = valid_pairs
-                    for i in range(len(valid_pairs)): self.all_samples.append((patient, i))
-    def __len__(self): return len(self.all_samples)
-    def __getitem__(self, idx):
-        patient, slice_idx = self.all_samples[idx]
-        slices = self.patient_slices[patient]
-        ip = max(0, slice_idx - 1); nx = min(len(slices) - 1, slice_idx + 1)
-        try:
-            img_prev = np.load(slices[ip][0]).astype(np.float32)
-            img_curr = np.load(slices[slice_idx][0]).astype(np.float32)
-            img_next = np.load(slices[nx][0]).astype(np.float32)
-            mask = np.load(slices[slice_idx][1]).astype(np.uint8)
-            image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-            if self.transform:
-                aug = self.transform(image=image_25d, mask=mask)
-                image_25d = aug['image']; mask = aug['mask']
-            return torch.from_numpy(image_25d).permute(2, 0, 1), torch.from_numpy(mask).long()
-        except:
-            return self.__getitem__(random.randint(0, len(self.all_samples) - 1))
-
-# ==========================================
-# 4. TRAINING PIPELINE
-# ==========================================
-def train_model(model_save_path):
-    print("\n" + "="*60)
-    print("🚀 TRAINING SE2-CNNET (2.5D) — 100 EPOCHS")
-    print("="*60)
-
-    GDRIVE_DATA_DIR = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Preprocessed_NPY")
-    CSV_REPORT      = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
-    LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace")
-
-    os.makedirs(LOCAL_DATA_PATH, exist_ok=True)
-    if not os.listdir(LOCAL_DATA_PATH):
-        print("📦 Copying dataset locally...")
-        for folder in tqdm(os.listdir(GDRIVE_DATA_DIR), desc="Copying"):
-            src = os.path.join(GDRIVE_DATA_DIR, folder)
-            dst = os.path.join(LOCAL_DATA_PATH, folder)
-            if os.path.isdir(src) and not os.path.exists(dst):
-                shutil.copytree(src, dst)
-
-    LEARNING_RATE = 1e-4; BATCH_SIZE = 8; ACCUMULATION_STEPS = 4; EPOCHS = 100
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🖥️  Device: {device}")
-
-    df = pd.read_csv(CSV_REPORT)
-    train_df = df.sample(frac=0.85, random_state=42)
-    val_df   = df.drop(train_df.index)
-
-    train_transform = A.Compose([
-        A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
-        A.ElasticTransform(alpha=1, sigma=50, p=0.3),
-        A.RandomBrightnessContrast(0.2, 0.2, p=0.5),
-        A.GaussNoise(p=0.3), A.HorizontalFlip(p=0.5)
-    ])
-
-    train_set = CTBrain25DDataset(train_df, LOCAL_DATA_PATH, transform=train_transform)
-    val_set   = CTBrain25DDataset(val_df,   LOCAL_DATA_PATH)
-    nw = min(os.cpu_count() or 4, 16)
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True,  pin_memory=True, num_workers=nw, persistent_workers=True)
-    val_loader   = DataLoader(val_set,   batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
-    print(f"📊 Train: {len(train_set)} slices | Val: {len(val_set)} slices")
-
-    model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
-    criterion = AdvancedCombinedLoss().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
-    scaler = torch.amp.GradScaler('cuda')
-    best_iou = 0.0
-    os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
-
-    for epoch in range(EPOCHS):
-        model.train(); optimizer.zero_grad()
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Train]")
-        for i, (images, labels) in enumerate(pbar):
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-            with torch.amp.autocast('cuda'):
-                outputs = model(images)
-                loss = criterion(outputs, labels) / ACCUMULATION_STEPS
-            scaler.scale(loss).backward()
-            if (i + 1) % ACCUMULATION_STEPS == 0:
-                scaler.step(optimizer); scaler.update(); optimizer.zero_grad()
-            pbar.set_postfix({'loss': f"{loss.item() * ACCUMULATION_STEPS:.4f}"})
-            del outputs, loss
-
-        model.eval()
-        total_tp = total_fp = total_fn = 0
-        with torch.no_grad():
-            for images, labels in tqdm(val_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Val]"):
-                images = images.to(device, non_blocking=True)
-                labels = labels.to(device, non_blocking=True)
-                with torch.amp.autocast('cuda'):
-                    logits = model(images)
-                preds = torch.argmax(F.softmax(logits, dim=1), dim=1)
-                total_tp += torch.sum((preds == 1) & (labels == 1)).item()
-                total_fp += torch.sum((preds == 1) & (labels == 0)).item()
-                total_fn += torch.sum((preds == 0) & (labels == 1)).item()
-                del logits
-
-        eps = 1e-7
-        epoch_iou = total_tp / (total_tp + total_fp + total_fn + eps)
-        epoch_dice = (2*total_tp) / (2*total_tp + total_fp + total_fn + eps)
-        print(f"📉 Epoch {epoch+1} | Dice: {epoch_dice:.4f} | IoU: {epoch_iou:.4f}")
-
-        if epoch_iou > best_iou:
-            best_iou = epoch_iou
-            torch.save(model.state_dict(), model_save_path)
-            print(f"🌟 Best model saved → {model_save_path}")
-        if (epoch + 1) % 10 == 0:
-            ck = model_save_path.replace('.pth', f'_epoch{epoch+1}.pth')
-            torch.save(model.state_dict(), ck)
-        torch.cuda.empty_cache()
-
-    print(f"\n✅ Training complete! Best IoU: {best_iou:.4f}")
-    return model_save_path
-
-# ==========================================
-# 5. INFERENCE DATASET LOADER
-# ==========================================
-
-class InferenceCTDataset(Dataset):
-    """
-    Loads images for prediction generation with 2.5D spatial context.
-    """
-    def __init__(self, root_dir):
-        self.root_dir = root_dir
-        self.all_samples = []
-        self.category_slices = {}
+class HemorrhageCTDataset(Dataset):
+    def __init__(self, pairs):
+        self.pairs = pairs
         
-        print(f"🔍 Scanning directory for inference data: {root_dir}...")
-        
-        img_files = [f for f in os.listdir(root_dir) if f.endswith('_img.npy')]
-        
-        for img_name in img_files:
-            category = img_name.split('_')[0] 
-            if category not in self.category_slices:
-                self.category_slices[category] = []
-            self.category_slices[category].append(img_name)
-            
-        for category in self.category_slices:
-            self.category_slices[category] = sorted(self.category_slices[category], 
-                key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
-            
-            for i in range(len(self.category_slices[category])):
-                self.all_samples.append((category, i))
-                
-        print(f"✅ Found a total of {len(self.all_samples)} valid images.")
-
     def __len__(self):
-        return len(self.all_samples)
-
+        return len(self.pairs)
+        
     def __getitem__(self, idx):
-        category, slice_idx = self.all_samples[idx]
-        slices = self.category_slices[category]
+        img_path, mask_path = self.pairs[idx]
         
-        idx_prev = max(0, slice_idx - 1)
-        idx_next = min(len(slices) - 1, slice_idx + 1)
+        # Load Image and Mask
+        img = np.array(Image.open(img_path).convert('L'), dtype=np.float32)
+        mask = np.array(Image.open(mask_path).convert('L'), dtype=np.uint8)
         
-        img_prev = np.load(os.path.join(self.root_dir, slices[idx_prev])).astype(np.float32)
-        img_curr = np.load(os.path.join(self.root_dir, slices[slice_idx])).astype(np.float32)
-        img_next = np.load(os.path.join(self.root_dir, slices[idx_next])).astype(np.float32)
+        if img.max() > 1.0: 
+            img = img / 255.0
+            
+        mask = (mask > 127).astype(np.uint8)
         
-        image_25d = np.stack([img_prev, img_curr, img_next], axis=-1)
-        image_tensor = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0) 
+        # Duplicate slice 3 times to simulate 2.5D input structure
+        image_25d = np.stack([img, img, img], axis=-1)
         
-        TARGET_SIZE = (256, 256) 
-        image_tensor = F.interpolate(image_tensor, size=TARGET_SIZE, mode='bilinear', align_corners=False)
-        image_tensor = image_tensor.squeeze(0)
+        image_t = torch.from_numpy(image_25d).permute(2, 0, 1).unsqueeze(0)
+        mask_t = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0).float()
         
-        filename = slices[slice_idx]
-        return image_tensor, filename
+        # Resize to 256x256
+        image_t = F.interpolate(image_t, size=(256, 256), mode='bilinear', align_corners=False)
+        mask_t = F.interpolate(mask_t, size=(256, 256), mode='nearest')
+        
+        return image_t.squeeze(0), mask_t.squeeze(0).squeeze(0).long()
+
+def calculate_metrics(preds, targets):
+    preds = preds.view(-1)
+    targets = targets.view(-1)
+    tp = torch.sum((preds == 1) & (targets == 1)).item()
+    fp = torch.sum((preds == 1) & (targets == 0)).item()
+    fn = torch.sum((preds == 0) & (targets == 1)).item()
+    tn = torch.sum((preds == 0) & (targets == 0)).item()
+    return tp, fp, fn, tn
 
 # ==========================================
-# 3. INFERENCE ENGINE (SAVE PREDICTIONS)
+# 4. EXTERNAL EVALUATION LOOP
 # ==========================================
-
-def run_inference():
-    # --- 1. SETUP DATASET ---
-    INFERENCE_DATA_PATH = download_and_prepare_inference_data()
-    if not INFERENCE_DATA_PATH:
+def evaluate_external_dataset():
+    # 1. Download & Pair
+    valid_pairs = download_and_pair_hemorrhage_data()
+    if not valid_pairs:
+        print("❌ Dataset pairing failed.")
         return
-
-    # --- CONFIGURATION ---
-    # NAMA MODEL DIKEMBALIKAN KE VERSI 2.5D
-    MODEL_WEIGHTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_models_25D", "se2_unet_best_25D_Boundary.pth")
-    OUTPUT_DIR = os.path.expanduser("~/Clara/inference_results")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+    # 2. Split Data deterministically (85/15)
+    random.seed(42)
+    random.shuffle(valid_pairs)
     
-    # Kept small to prevent OOM
-    BATCH_SIZE = 4 
+    split_idx = int(0.85 * len(valid_pairs))
+    train_pairs = valid_pairs[:split_idx]
+    test_pairs = valid_pairs[split_idx:]
+    
+    print("\n" + "="*60)
+    print("📊 DATASET SPLIT PROFILE (HEMORRHAGE DATASET)")
+    print("="*60)
+    print(f"Total Valid Masked Images: {len(valid_pairs)}")
+    print(f"Train Split (85%)        : {len(train_pairs)} images")
+    print(f"Test/Eval Split (15%)    : {len(test_pairs)} images")
+    print("="*60 + "\n")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\n🚀 Hardware accelerated on: {device}")
+    print(f"🖥️ Using Device: {device}\n")
 
-    # --- LOAD MODEL ---
+    # 3. Load Dataset
+    eval_dataset = HemorrhageCTDataset(test_pairs)
+    eval_loader = DataLoader(eval_dataset, batch_size=8, shuffle=False, num_workers=4, pin_memory=True)
+    
+    # 4. Load Model
     model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
-    try:
-        # Load weights into CPU first to modify them safely
-        checkpoint = torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=True)
+    
+    WEIGHTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_models_25D", "se2_unet_best_25D_Boundary.pth")
+    if not os.path.exists(WEIGHTS_PATH):
+        WEIGHTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_models_25D", "se2_unet_epoch_100.pth")
         
-        # 🔄 DYNAMIC 1-CHANNEL TO 3-CHANNEL ADAPTATION
-        if 'inc.double_conv.0.weights' in checkpoint and checkpoint['inc.double_conv.0.weights'].shape[0] == 144:
-            print(f"🔄 Adapting 1-Channel Weights from {MODEL_WEIGHTS_PATH} to 3-Channel 2.5D Architecture...")
-            checkpoint['inc.double_conv.0.weights'] = checkpoint['inc.double_conv.0.weights'].repeat(3) / 3.0
+    if os.path.exists(WEIGHTS_PATH):
+        try:
+            # Handle possible 1-channel to 3-channel adaptation
+            checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
+            filter_key = 'inc.double_conv.0.weights'
+            if filter_key in checkpoint and checkpoint[filter_key].shape[0] == 144:
+                checkpoint[filter_key] = checkpoint[filter_key].repeat(3) / 3.0
+                buf_key = 'inc.double_conv.0.filter'
+                if buf_key in checkpoint:
+                    checkpoint[buf_key] = checkpoint[buf_key].repeat(1, 3, 1, 1) / 3.0
             
-            if 'inc.double_conv.0.filter' in checkpoint:
-                checkpoint['inc.double_conv.0.filter'] = checkpoint['inc.double_conv.0.filter'].repeat(1, 3, 1, 1) / 3.0
-                
-        model.load_state_dict(checkpoint, strict=False)
-        print(f"✅ Successfully Loaded & Adapted weights from {MODEL_WEIGHTS_PATH}")
-    except Exception as e:
-        print(f"❌ Critical Error loading weights: {e}")
+            model.load_state_dict(checkpoint, strict=False)
+            print(f"✅ Loaded weights from {WEIGHTS_PATH}")
+        except Exception as e:
+            print(f"❌ Failed to load weights: {e}")
+            return
+    else:
+        print("❌ Warning: Model weights not found. Evaluation will fail.")
         return
         
     model.eval()
 
-    # --- SETUP DATA LOADER ---
-    dataset = InferenceCTDataset(INFERENCE_DATA_PATH)
-    if len(dataset) == 0:
-        print("❌ No data found!")
-        return
-        
-    num_workers = min(os.cpu_count(), 8) if os.cpu_count() else 4
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, 
-                            num_workers=num_workers, pin_memory=True)
-
-    print(f"\n⚡ Beginning inference. Predictions will be saved to: {OUTPUT_DIR}")
-    
-    # --- INFERENCE LOOP ---
+    # 5. Evaluate Metrics
+    total_tp, total_fp, total_fn, total_tn = 0, 0, 0, 0
+    print("\n🔍 Evaluating External Kaggle Dataset (Test Split 15%)...")
     with torch.no_grad():
-        for images, filenames in tqdm(dataloader, desc="Generating Predictions"):
+        for images, targets in tqdm(eval_loader, desc="Calculating Metrics"):
             images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
             
-            # Predict
             logits = model(images)
             probs = F.softmax(logits, dim=1)
-            preds = torch.argmax(probs, dim=1) # Shape: [Batch, H, W]
+            preds = torch.argmax(probs, dim=1)
             
-            # Save predictions as images
-            # Convert 1s (tumor) to 255 (white) for clear visibility
-            preds_np = preds.cpu().numpy().astype(np.uint8) * 255 
+            tp, fp, fn, tn = calculate_metrics(preds, targets)
+            total_tp += tp
+            total_fp += fp
+            total_fn += fn
+            total_tn += tn
             
-            for i in range(len(filenames)):
-                pred_img = Image.fromarray(preds_np[i])
-                
-                # Create a clean filename for the prediction
-                base_name = filenames[i].replace('_img.npy', '_prediction.jpg')
-                save_path = os.path.join(OUTPUT_DIR, base_name)
-                
-                pred_img.save(save_path)
-
-    # --- PRINT REPORT ---
+    eps = 1e-7
+    dice = (2 * total_tp) / (2 * total_tp + total_fp + total_fn + eps)
+    iou = total_tp / (total_tp + total_fp + total_fn + eps)
+    precision = total_tp / (total_tp + total_fp + eps)
+    recall = total_tp / (total_tp + total_fn + eps)
+    
     print("\n" + "🌟"*20)
-    print("  INFERENCE COMPLETE")
+    print(" EXTERNAL BENCHMARK RESULTS (HEMORRHAGE KAGGLE DATASET)")
     print("🌟"*20)
-    print(f"✅ Successfully generated and saved {len(dataset)} prediction masks.")
-    print(f"📁 Location: {OUTPUT_DIR}")
-    print("-> You can download this folder to visually inspect your model's performance!")
-
-    # --- PRINT REFERENCE METRICS FOR BENCHMARKING ---
-    print("\n" + "─"*50)
-    print("  REFERENCE METRICS (From DGX Training Epoch 100):")
-    print("  (Use these values for the benchmarking table)")
+    print(f"  Test Images Evaluated : {len(test_pairs)}")
+    print(f"  Dice Score            : {dice:.4f}")
+    print(f"  IoU (Jaccard)         : {iou:.4f}")
+    print(f"  Precision             : {precision:.4f}")
+    print(f"  Recall                : {recall:.4f}")
     print("─"*50)
-    print(f"  Dice Score : 0.8402")
-    print(f"  IoU        : 0.7244")
-    print(f"  Precision  : 0.9572")
-    print(f"  Recall     : 0.7487")
-    print("─"*50)
-    print("Note: This script performs blind inference on unlabelled data.")
-    print("The metrics above are from the validation set during training.")
+    print("This evaluates how well the Tumor-trained SE(2) model")
+    print("generalizes to Intracranial Hemorrhage detection.")
 
 if __name__ == "__main__":
-    WEIGHTS = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "saved_models_25D", "se2_unet_best_25D_Boundary.pth"
-    )
-    if not os.path.exists(WEIGHTS):
-        print("⚠️  No weights found — starting training first...")
-        train_model(WEIGHTS)
-    else:
-        print(f"✅ Weights found: {WEIGHTS}")
-    run_inference()
+    evaluate_external_dataset()
