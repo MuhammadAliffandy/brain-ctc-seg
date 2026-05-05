@@ -221,7 +221,7 @@ def main():
     # ─── Model registry: display name → (class, weight filename, special_loader) ───
     # special_loader=True means use load_se2_weights() instead of generic load_state_dict
     MODELS = [
-        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    "se2_unet_best_25D_Boundary.pth", True),
+        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    "se2_unet_epoch_100.pth", True),
         ("HarmonicNet (C4)",     HarmonicNet,  "harmonic_net_epoch_100.pth",     False),
         ("Standard U-Net",       StandardUNet, "standard_unet_epoch_100.pth",    False),
     ]
