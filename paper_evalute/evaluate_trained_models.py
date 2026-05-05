@@ -314,18 +314,12 @@ class CTBrain25DDataset(Dataset):
         m =np.load(sl[si][1]).astype(np.uint8)
         if m.max()>1: m=(m>0).astype(np.uint8)
 
-        # Stack 2.5D and normalise per-channel (same as training)
-        img = np.stack([i0, i1, i2], axis=-1)  # [H, W, 3]
-        for c in range(3):
-            ch = img[..., c]
-            mn, mx = ch.min(), ch.max()
-            if mx > mn:
-                img[..., c] = (ch - mn) / (mx - mn)
-
-        # Convert to tensor [3, H, W] then resize to 256×256 (same as training)
+        # Stack 2.5D — NO normalization (training used raw .npy values)
+        img    = np.stack([i0, i1, i2], axis=-1)  # [H, W, 3]
         img_t  = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)   # [1,3,H,W]
         mask_t = torch.from_numpy(m).float().unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
 
+        # Resize to 256×256 — same as training pipeline in benchmarking.py
         img_t  = F.interpolate(img_t,  size=(256, 256), mode='bilinear', align_corners=False)
         mask_t = F.interpolate(mask_t, size=(256, 256), mode='nearest')
 
