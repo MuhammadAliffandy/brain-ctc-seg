@@ -283,7 +283,41 @@ class TransUNet(nn.Module):
 
 
 # ================================================================
-# DATASET — mirrors training pipeline exactly
+# DATASET A — NO resize (for SE2_CNNET trained via train.py)
+# ================================================================
+class CTBrain25DDatasetNoResize(Dataset):
+    """Exact mirror of train.py CTBrain25DDataset — NO resize, raw values."""
+    def __init__(self, dataframe, root_dir):
+        self.patient_slices={}; self.all_samples=[]
+        pc='Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
+        for p in dataframe[pc].unique():
+            pd_=os.path.join(root_dir,p)
+            if not os.path.exists(pd_): continue
+            imgs=sorted([f for f in os.listdir(pd_) if f.endswith('_img.npy')],
+                        key=lambda x: int(re.findall(r'\d+',x)[-1]) if re.findall(r'\d+',x) else 0)
+            pairs=[(os.path.join(pd_,n), os.path.join(pd_,n).replace('_img.npy','_mask.npy'))
+                   for n in imgs if os.path.exists(os.path.join(pd_,n).replace('_img.npy','_mask.npy'))]
+            if pairs:
+                self.patient_slices[p]=pairs
+                for i in range(len(pairs)): self.all_samples.append((p,i))
+
+    def __len__(self): return len(self.all_samples)
+
+    def __getitem__(self, idx):
+        p,si=self.all_samples[idx]; sl=self.patient_slices[p]
+        pp=max(0,si-1); nx=min(len(sl)-1,si+1)
+        i0=np.load(sl[pp][0]).astype(np.float32)
+        i1=np.load(sl[si][0]).astype(np.float32)
+        i2=np.load(sl[nx][0]).astype(np.float32)
+        m =np.load(sl[si][1]).astype(np.uint8)
+        if m.max()>1: m=(m>0).astype(np.uint8)
+        # No resize — same as train.py validation pipeline
+        img = np.stack([i0, i1, i2], axis=-1)   # [H, W, 3]
+        return torch.from_numpy(img).permute(2, 0, 1), torch.from_numpy(m).long()
+
+
+# ================================================================
+# DATASET B — WITH 256x256 resize (for models in train_comparison_models.py)
 # ================================================================
 class CTBrain25DDataset(Dataset):
     def __init__(self, dataframe, root_dir):
@@ -385,19 +419,31 @@ def main():
     val_df   = df.drop(train_df.index)
     print(f"  Val patients : {len(val_df)}")
 
-    val_set    = CTBrain25DDataset(val_df, DATA_PATH)
-    val_loader = DataLoader(val_set, batch_size=8, shuffle=False,
-                            num_workers=4, pin_memory=True, persistent_workers=True)
-    print(f"  Val slices   : {len(val_set)}\n")
+    # Dataset A — no resize — for SE2_CNNET (train.py pipeline)
+    val_set_native = CTBrain25DDatasetNoResize(val_df, DATA_PATH)
+    val_loader_native = DataLoader(val_set_native, batch_size=8, shuffle=False,
+                                   num_workers=4, pin_memory=True, persistent_workers=True)
+
+    # Dataset B — resize to 256x256 — for models in train_comparison_models.py
+    val_set_256 = CTBrain25DDataset(val_df, DATA_PATH)
+    val_loader_256 = DataLoader(val_set_256, batch_size=8, shuffle=False,
+                                num_workers=4, pin_memory=True, persistent_workers=True)
+
+    print(f"  Val slices (native) : {len(val_set_native)}")
+    print(f"  Val slices (256px)  : {len(val_set_256)}\n")
 
     all_results = []
     for entry in MODELS:
         display_name, ModelClass, weight_file, use_se2_loader = entry
 
+        # Choose correct val loader based on training pipeline
+        val_loader = val_loader_native if use_se2_loader else val_loader_256
+        loader_tag = "native size" if use_se2_loader else "256x256"
+
         # Fallback weight paths for SE2
         candidates = [weight_file]
         if use_se2_loader:
-            candidates += ["se2_unet_epoch_100.pth", "se2_unet_best_25D.pth"]
+            candidates += ["se2_unet_best_25D_Boundary.pth", "se2_unet_best_25D.pth"]
 
         weight_path = None
         for wf in candidates:
