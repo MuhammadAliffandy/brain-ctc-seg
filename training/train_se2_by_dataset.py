@@ -1,0 +1,381 @@
+"""
+train_se2_by_dataset.py
+=======================
+Exact replica of train.py with --dataset argument for CT/CTC separation.
+
+Usage:
+    python train_se2_by_dataset.py --dataset ct    # Train on CT_* patients only
+    python train_se2_by_dataset.py --dataset ctc   # Train on CTC_*/CTW_* patients only
+    python train_se2_by_dataset.py --dataset all   # All patients (same as original train.py)
+
+Weights saved to:
+    saved_models_25D/se2_unet_ct_best.pth
+    saved_models_25D/se2_unet_ctc_best.pth
+    saved_models_25D/se2_unet_all_best.pth
+"""
+
+import os, sys, re, argparse, datetime, zipfile, shutil, random
+import numpy as np, pandas as pd
+import torch, torch.nn as nn, torch.optim as optim, torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+import albumentations as A
+from escnn import gspaces
+import escnn.nn as enn
+
+
+# ================================================================
+# DATA PREPARATION
+# ================================================================
+def prepare_local_data(gdrive_dir, local_extract_dir):
+    os.makedirs(local_extract_dir, exist_ok=True)
+    zip_files = [f for f in os.listdir(gdrive_dir) if f.endswith('.zip')]
+    if zip_files:
+        print(f"📦 Found {len(zip_files)} .zip files. Extracting...")
+        for z_file in tqdm(zip_files, desc="Extracting Zips"):
+            patient_name = z_file.replace('.zip', '')
+            target_folder = os.path.join(local_extract_dir, patient_name)
+            if not os.path.exists(target_folder):
+                try:
+                    with zipfile.ZipFile(os.path.join(gdrive_dir, z_file), 'r') as zr:
+                        zr.extractall(target_folder)
+                except Exception as e:
+                    print(f"⚠️ Error extracting {z_file}: {e}")
+        return local_extract_dir
+    sub_folders = [f for f in os.listdir(gdrive_dir) if os.path.isdir(os.path.join(gdrive_dir, f))]
+    if sub_folders:
+        print(f"📁 Copying Folders to {local_extract_dir}...")
+        for folder in tqdm(sub_folders, desc="Copying Folders"):
+            src = os.path.join(gdrive_dir, folder)
+            dst = os.path.join(local_extract_dir, folder)
+            if not os.path.exists(dst):
+                shutil.copytree(src, dst)
+    return local_extract_dir
+
+
+# ================================================================
+# DATASET — identical to train.py, NO resize
+# ================================================================
+class CTBrain25DDataset(Dataset):
+    def __init__(self, dataframe, root_dir, transform=None):
+        self.root_dir  = root_dir
+        self.transform = transform
+        self.patient_slices = {}
+        self.all_samples    = []
+        patient_col = 'Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
+        for patient in dataframe[patient_col].unique():
+            patient_dir = os.path.join(root_dir, patient)
+            if not os.path.exists(patient_dir):
+                continue
+            img_files = sorted(
+                [f for f in os.listdir(patient_dir) if f.endswith('_img.npy')],
+                key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0
+            )
+            valid_pairs = []
+            for img_name in img_files:
+                img_path  = os.path.join(patient_dir, img_name)
+                mask_path = img_path.replace('_img.npy', '_mask.npy')
+                if os.path.exists(mask_path):
+                    valid_pairs.append((img_path, mask_path))
+            if valid_pairs:
+                self.patient_slices[patient] = valid_pairs
+                for i in range(len(valid_pairs)):
+                    self.all_samples.append((patient, i))
+
+    def __len__(self): return len(self.all_samples)
+
+    def __getitem__(self, idx):
+        patient, slice_idx = self.all_samples[idx]
+        slices  = self.patient_slices[patient]
+        idx_prev = max(0, slice_idx - 1)
+        idx_next = min(len(slices) - 1, slice_idx + 1)
+        try:
+            i0 = np.load(slices[idx_prev][0]).astype(np.float32)
+            i1 = np.load(slices[slice_idx][0]).astype(np.float32)
+            i2 = np.load(slices[idx_next][0]).astype(np.float32)
+            m  = np.load(slices[slice_idx][1]).astype(np.uint8)
+            image_25d = np.stack([i0, i1, i2], axis=-1)
+            if self.transform is not None:
+                aug       = self.transform(image=image_25d, mask=m)
+                image_25d = aug['image']
+                m         = aug['mask']
+            return torch.from_numpy(image_25d).permute(2, 0, 1), torch.from_numpy(m).long()
+        except Exception:
+            return self.__getitem__(random.randint(0, len(self.all_samples) - 1))
+
+
+# ================================================================
+# SE2_CNNET ARCHITECTURE — exact copy from train.py
+# ================================================================
+class DoubleEquivariantConv(nn.Module):
+    def __init__(self, in_type, out_type, mid_type=None):
+        super().__init__()
+        if not mid_type: mid_type = out_type
+        self.double_conv = enn.SequentialModule(
+            enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False),
+            enn.InnerBatchNorm(mid_type), enn.ReLU(mid_type, inplace=True),
+            enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False),
+            enn.InnerBatchNorm(out_type), enn.ReLU(out_type, inplace=True)
+        )
+    def forward(self, x): return self.double_conv(x)
+
+class Down(nn.Module):
+    def __init__(self, in_type, out_type):
+        super().__init__()
+        self.pool = enn.PointwiseMaxPool(in_type, kernel_size=2)
+        self.conv = DoubleEquivariantConv(in_type, out_type)
+    def forward(self, x): return self.conv(self.pool(x))
+
+class Up(nn.Module):
+    def __init__(self, in_type, out_type):
+        super().__init__()
+        self.up   = enn.R2Upsampling(in_type, scale_factor=2, mode='bilinear', align_corners=True)
+        self.conv = DoubleEquivariantConv(in_type + out_type, out_type)
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        x  = enn.tensor_directsum([x2, x1])
+        return self.conv(x)
+
+class OutConv(nn.Module):
+    def __init__(self, in_type, n_classes):
+        super().__init__()
+        gspace   = in_type.gspace
+        out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
+        self.conv = enn.R2Conv(in_type, out_type, kernel_size=1)
+    def forward(self, x): return self.conv(x)
+
+class SE2_CNNET(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=24):
+        super().__init__()
+        self.r2_act = gspaces.rot2dOnR2(N=N)
+        c = base_channels
+        self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
+        self.feat_type_1  = enn.FieldType(self.r2_act, c      * [self.r2_act.regular_repr])
+        self.feat_type_2  = enn.FieldType(self.r2_act, (c*2)  * [self.r2_act.regular_repr])
+        self.feat_type_3  = enn.FieldType(self.r2_act, (c*4)  * [self.r2_act.regular_repr])
+        self.feat_type_4  = enn.FieldType(self.r2_act, (c*8)  * [self.r2_act.regular_repr])
+        self.feat_type_5  = enn.FieldType(self.r2_act, (c*16) * [self.r2_act.regular_repr])
+        self.inc   = DoubleEquivariantConv(self.feat_type_in, self.feat_type_1)
+        self.down1 = Down(self.feat_type_1, self.feat_type_2)
+        self.down2 = Down(self.feat_type_2, self.feat_type_3)
+        self.down3 = Down(self.feat_type_3, self.feat_type_4)
+        self.down4 = Down(self.feat_type_4, self.feat_type_5)
+        self.up1   = Up(self.feat_type_5, self.feat_type_4)
+        self.up2   = Up(self.feat_type_4, self.feat_type_3)
+        self.up3   = Up(self.feat_type_3, self.feat_type_2)
+        self.up4   = Up(self.feat_type_2, self.feat_type_1)
+        self.outc  = OutConv(self.feat_type_1, n_classes)
+
+    def forward(self, x):
+        x_geom = enn.GeometricTensor(x, self.feat_type_in)
+        x1 = self.inc(x_geom)
+        x2 = self.down1(x1); x3 = self.down2(x2)
+        x4 = self.down3(x3); x5 = self.down4(x4)
+        x  = self.up1(x5, x4); x = self.up2(x, x3)
+        x  = self.up3(x, x2);  x = self.up4(x, x1)
+        return self.outc(x).tensor
+
+
+# ================================================================
+# LOSS FUNCTIONS — identical to train.py
+# ================================================================
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=3.0):
+        super().__init__(); self.alpha = alpha; self.gamma = gamma
+    def forward(self, logits, targets):
+        bce = F.cross_entropy(logits, targets, reduction='none')
+        pt  = torch.exp(-bce)
+        return (self.alpha * (1 - pt) ** self.gamma * bce).mean()
+
+class EdgeBoundaryLoss(nn.Module):
+    def forward(self, logits, targets):
+        tf      = targets.float().unsqueeze(1)
+        dilated = F.max_pool2d(tf, kernel_size=5, stride=1, padding=2)
+        eroded  = -F.max_pool2d(-tf, kernel_size=5, stride=1, padding=2)
+        bnd     = (dilated - eroded).squeeze(1)
+        base    = F.cross_entropy(logits, targets, reduction='none')
+        return (base * (1 + 5.0 * bnd)).mean()
+
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1e-5): super().__init__(); self.smooth = smooth
+    def forward(self, logits, true_masks):
+        nc    = logits.shape[1]
+        oh    = F.one_hot(true_masks, nc).permute(0, 3, 1, 2).float()
+        probs = F.softmax(logits, dim=1)
+        inter = (probs[:, 1] * oh[:, 1]).sum(dim=(1, 2))
+        union = probs[:, 1].sum(dim=(1, 2)) + oh[:, 1].sum(dim=(1, 2))
+        return 1.0 - ((2. * inter + self.smooth) / (union + self.smooth)).mean()
+
+class AdvancedCombinedLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.focal = FocalLoss(gamma=3.0)
+        self.dice  = DiceLoss()
+        self.edge  = EdgeBoundaryLoss()
+    def forward(self, logits, targets):
+        return self.focal(logits, targets) + self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
+
+
+# ================================================================
+# METRICS
+# ================================================================
+def calculate_metrics_tensors(preds, targets):
+    preds = preds.view(-1); targets = targets.view(-1)
+    tp = torch.sum((preds == 1) & (targets == 1)).item()
+    fp = torch.sum((preds == 1) & (targets == 0)).item()
+    fn = torch.sum((preds == 0) & (targets == 1)).item()
+    tn = torch.sum((preds == 0) & (targets == 0)).item()
+    return tp, fp, fn, tn
+
+
+# ================================================================
+# FILTER HELPERS
+# ================================================================
+def filter_df_by_dataset(df, dataset_key, patient_col='Patient_Folder'):
+    """Filter DataFrame rows by CT_* or CTC_*/CTW_* folder prefix."""
+    if dataset_key == 'ct':
+        mask = df[patient_col].str.startswith('CT_')
+    elif dataset_key == 'ctc':
+        mask = df[patient_col].str.startswith('CTC_') | df[patient_col].str.startswith('CTW_')
+    else:  # 'all'
+        mask = pd.Series([True] * len(df), index=df.index)
+    return df[mask]
+
+
+# ================================================================
+# TRAINING
+# ================================================================
+def train(dataset_key: str):
+    GDRIVE_ROOT   = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive")
+    GDRIVE_DATA   = os.path.join(GDRIVE_ROOT, "Dataset_CT_Preprocessed_NPY")
+    CSV_REPORT    = os.path.join(GDRIVE_ROOT, "Dataset_CT_Report.csv")
+    LOCAL_DATA    = os.path.expanduser("~/Clara/local_ct_workspace")
+    PROJECT_ROOT  = os.path.expanduser("~/Clara/brain-ctc-seg/training")
+    MODEL_SAVE_DIR = os.path.join(PROJECT_ROOT, "saved_models_25D")
+    os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
+
+    LEARNING_RATE = 1e-4; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 100; VAL_SPLIT = 0.15
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    print(f"\n{'='*65}")
+    print(f"  Mod-Seg-SE(2) — Dataset: {dataset_key.upper()}")
+    print(f"  Epochs: {EPOCHS} | LR: {LEARNING_RATE} | Batch: {BATCH_SIZE} | Device: {device}")
+    print(f"{'='*65}\n")
+
+    local_root = prepare_local_data(GDRIVE_DATA, LOCAL_DATA)
+
+    df = pd.read_csv(CSV_REPORT)
+    pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
+    df = filter_df_by_dataset(df, dataset_key, pc)
+    print(f"  Dataset filter '{dataset_key}': {len(df)} patients found")
+
+    if len(df) == 0:
+        print("❌ No patients found for this dataset type. Check folder prefix in CSV."); return
+
+    train_df = df.sample(frac=(1 - VAL_SPLIT), random_state=42)
+    val_df   = df.drop(train_df.index)
+    print(f"  Train: {len(train_df)} patients | Val: {len(val_df)} patients")
+
+    train_transform = A.Compose([
+        A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
+        A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.3),
+        A.GridDistortion(p=0.3),
+        A.RandomBrightnessContrast(0.2, 0.2, p=0.5),
+        A.GaussNoise(p=0.3),
+        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+        A.HorizontalFlip(p=0.5),
+    ])
+
+    train_set = CTBrain25DDataset(train_df, local_root, transform=train_transform)
+    val_set   = CTBrain25DDataset(val_df,   local_root, transform=None)
+    nw = min(os.cpu_count() or 4, 16)
+    train_loader = DataLoader(train_set, BATCH_SIZE, shuffle=True,  pin_memory=True, num_workers=nw, persistent_workers=True)
+    val_loader   = DataLoader(val_set,   BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
+    print(f"  Train slices: {len(train_set)} | Val slices: {len(val_set)}\n")
+
+    model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
+    criterion = AdvancedCombinedLoss().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
+    scaler    = torch.amp.GradScaler('cuda')
+
+    best_iou  = 0.0
+    best_path = os.path.join(MODEL_SAVE_DIR, f'se2_unet_{dataset_key}_best.pth')
+
+    for epoch in range(1, EPOCHS + 1):
+        # ── Train ──
+        model.train(); optimizer.zero_grad(); running_loss = 0.0
+        pbar = tqdm(train_loader, desc=f"Ep {epoch}/{EPOCHS} [Train-{dataset_key.upper()}]", ncols=90)
+        for i, (images, labels) in enumerate(pbar):
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+            with torch.amp.autocast('cuda'):
+                loss = criterion(model(images), labels) / ACCUM_STEPS
+            scaler.scale(loss).backward()
+            if (i + 1) % ACCUM_STEPS == 0:
+                scaler.step(optimizer); scaler.update(); optimizer.zero_grad()
+            running_loss += loss.item() * ACCUM_STEPS
+        if len(train_loader) % ACCUM_STEPS != 0:
+            scaler.step(optimizer); scaler.update(); optimizer.zero_grad()
+
+        # ── Validate ──
+        model.eval(); total_tp = total_fp = total_fn = total_tn = 0
+        with torch.no_grad():
+            for images, labels in tqdm(val_loader, desc=f"Ep {epoch}/{EPOCHS} [Val-{dataset_key.upper()}]", ncols=90):
+                images = images.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
+                with torch.amp.autocast('cuda'):
+                    logits = model(images)
+                preds = torch.argmax(F.softmax(logits, dim=1), dim=1)
+                tp, fp, fn, tn = calculate_metrics_tensors(preds, labels)
+                total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
+
+        eps   = 1e-7
+        dice  = (2 * total_tp) / (2 * total_tp + total_fp + total_fn + eps)
+        iou   = total_tp / (total_tp + total_fp + total_fn + eps)
+        prec  = total_tp / (total_tp + total_fp + eps)
+        rec   = total_tp / (total_tp + total_fn + eps)
+        avg_loss = running_loss / len(train_loader)
+
+        print(f"\n  Ep {epoch:>3} [{dataset_key.upper()}] Loss {avg_loss:.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f}")
+
+        if iou > best_iou:
+            best_iou = iou
+            torch.save(model.state_dict(), best_path)
+            print(f"  🌟 New Best [{dataset_key.upper()}] Saved → {best_path} (IoU={iou:.4f})")
+
+        if epoch % 10 == 0:
+            ckpt = os.path.join(MODEL_SAVE_DIR, f'se2_unet_{dataset_key}_epoch_{epoch}.pth')
+            torch.save(model.state_dict(), ckpt)
+            print(f"  💾 Checkpoint → {ckpt}")
+
+        torch.cuda.empty_cache()
+
+    print(f"\n  ✅ Done! Best IoU [{dataset_key.upper()}]: {best_iou:.4f}")
+    print(f"  Best weights: {best_path}")
+
+
+# ================================================================
+# LOGGER
+# ================================================================
+class Logger:
+    def __init__(self, filename, stream):
+        self.terminal = stream; self.log = open(filename, "a", encoding="utf-8")
+    def write(self, m): self.terminal.write(m); self.log.write(m); self.log.flush()
+    def flush(self): self.terminal.flush(); self.log.flush()
+
+
+# ================================================================
+# ENTRY POINT
+# ================================================================
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train SE2_CNNET on CT or CTC dataset separately")
+    parser.add_argument('--dataset', required=True, choices=['ct', 'ctc', 'all'],
+                        help="Dataset type to train on: 'ct' (CT_* folders), 'ctc' (CTC_*/CTW_* folders), 'all' (combined)")
+    args = parser.parse_args()
+
+    ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log = f"training_se2_{args.dataset}_{ts}.txt"
+    sys.stdout = Logger(log, sys.stdout)
+    sys.stderr = Logger(log, sys.stderr)
+    print(f"📝 Logging to {log}")
+    train(args.dataset)

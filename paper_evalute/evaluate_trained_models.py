@@ -1,14 +1,15 @@
 """
 evaluate_trained_models.py
 ==========================
-Quick evaluation of already-trained comparison models.
-Loads weights, runs inference on val split, prints Dice/IoU/Prec/Rec.
+Evaluates trained models on CT or CTC validation split separately.
 
 Usage (DGX):
-    python ~/Clara/brain-ctc-seg/paper_evalute/evaluate_trained_models.py
+    python ~/Clara/brain-ctc-seg/paper_evalute/evaluate_trained_models.py --dataset ct
+    python ~/Clara/brain-ctc-seg/paper_evalute/evaluate_trained_models.py --dataset ctc
+    python ~/Clara/brain-ctc-seg/paper_evalute/evaluate_trained_models.py --dataset all  # legacy combined
 """
 
-import os, re, sys
+import os, re, sys, argparse
 import torch, torch.nn as nn
 import torch.nn.functional as F
 import numpy as np, pandas as pd
@@ -384,37 +385,65 @@ def evaluate(model, loader, device, name):
 
 
 # ================================================================
+# FILTER HELPER
+# ================================================================
+def filter_df_by_dataset(df, dataset_key, patient_col='Patient_Folder'):
+    if dataset_key == 'ct':
+        mask = df[patient_col].str.startswith('CT_')
+    elif dataset_key == 'ctc':
+        mask = df[patient_col].str.startswith('CTC_') | df[patient_col].str.startswith('CTW_')
+    else:
+        mask = pd.Series([True] * len(df), index=df.index)
+    return df[mask]
+
+
+# ================================================================
 # MAIN
 # ================================================================
-def main():
+def main(dataset_key: str = 'all'):
     CSV_REPORT  = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
     DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace")
     SAVE_DIR    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
 
     # ─── Model registry ─────────────────────────────────────────────────────
-    # (display_name, ModelClass, weight_filename, use_se2_loader)
-    # Priority order for paper Table 1: equivariant first, then non-equivariant
+    # Weights now have dataset suffix: *_ct_best.pth / *_ctc_best.pth
+    # For 'all' mode, fall back to old epoch_100 naming (backward compat)
+    ds = dataset_key  # short alias
     MODELS = [
-        # Group-equivariant
-        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,      "se2_unet_epoch_100.pth",       True),
-        ("HarmonicNet (C4)",     HarmonicNet,     "harmonic_net_epoch_100.pth",   False),
-        # Non group-equivariant
-        ("nnU-Net",              nnUNet,          "nn_unet_epoch_100.pth",        False),
-        ("Attention U-Net",      AttentionUNet,   "attention_unet_epoch_100.pth", False),
-        ("TransUNet",            TransUNet,       "trans_unet_epoch_100.pth",     False),
-        ("Standard U-Net",       StandardUNet,    "standard_unet_epoch_100.pth",  False),
+        # (display_name, ModelClass, weight_filename, use_se2_loader)
+        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    f"se2_unet_{ds}_best.pth",        True),
+        ("HarmonicNet (C4)",     HarmonicNet,   f"harmonic_net_{ds}_best.pth",    False),
+        ("nnU-Net",              nnUNet,        f"nn_unet_{ds}_best.pth",         False),
+        ("Attention U-Net",      AttentionUNet, f"attention_unet_{ds}_best.pth",  False),
+        ("TransUNet",            TransUNet,     f"trans_unet_{ds}_best.pth",      False),
+        ("Standard U-Net",       StandardUNet,  f"standard_unet_{ds}_best.pth",   False),
     ]
+    # Fallback weight names for backward compatibility (old 'all' combined run)
+    FALLBACK = {
+        "Mod-Seg-SE(2) [OURS]": ["se2_unet_epoch_100.pth", "se2_unet_best_25D_Boundary.pth"],
+        "HarmonicNet (C4)":     ["harmonic_net_epoch_100.pth"],
+        "nnU-Net":              ["nn_unet_epoch_100.pth"],
+        "Attention U-Net":      ["attention_unet_epoch_100.pth"],
+        "TransUNet":            ["trans_unet_epoch_100.pth"],
+        "Standard U-Net":       ["standard_unet_epoch_100.pth"],
+    }
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*65}")
-    print(f"  📊 EVALUATION — Trained Comparison Models")
-    print(f"  Device: {device} | Split: 15% val | Metric: Dice / IoU")
+    print(f"  📊 EVALUATION — Dataset: {dataset_key.upper()} | Split: 15% val")
+    print(f"  Device: {device} | Metric: Dice / IoU")
     print(f"{'='*65}\n")
 
     if not os.path.exists(CSV_REPORT):
         print(f"❌ CSV not found: {CSV_REPORT}"); sys.exit(1)
 
-    df       = pd.read_csv(CSV_REPORT)
+    df = pd.read_csv(CSV_REPORT)
+    pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
+    df = filter_df_by_dataset(df, dataset_key, pc)
+    print(f"  Dataset '{dataset_key}': {len(df)} patients total")
+    if len(df) == 0:
+        print("❌ No patients match this dataset type."); sys.exit(1)
+
     train_df = df.sample(frac=0.85, random_state=42)
     val_df   = df.drop(train_df.index)
     print(f"  Val patients : {len(val_df)}")
@@ -438,13 +467,9 @@ def main():
 
         # Choose correct val loader based on training pipeline
         val_loader = val_loader_native if use_se2_loader else val_loader_256
-        loader_tag = "native size" if use_se2_loader else "256x256"
 
-        # Fallback weight paths for SE2
-        candidates = [weight_file]
-        if use_se2_loader:
-            candidates += ["se2_unet_best_25D_Boundary.pth", "se2_unet_best_25D.pth"]
-
+        # Try primary weight path, then fallbacks
+        candidates = [weight_file] + FALLBACK.get(display_name, [])
         weight_path = None
         for wf in candidates:
             p = os.path.join(SAVE_DIR, wf)
@@ -478,15 +503,19 @@ def main():
     if all_results:
         df_res = pd.DataFrame(all_results).sort_values('F1 (Dice)', ascending=False)
         print(f"\n{'='*65}")
-        print("  SUMMARY TABLE")
+        print(f"  SUMMARY TABLE — Dataset: {dataset_key.upper()}")
         print(f"{'='*65}")
         print(df_res.to_string(index=False))
         print(f"{'='*65}\n")
 
-        out_csv = os.path.expanduser("~/Clara/comparison_eval_results.csv")
+        out_csv = os.path.expanduser(f"~/Clara/comparison_eval_{dataset_key}.csv")
         df_res.to_csv(out_csv, index=False)
         print(f"  💾 Saved to: {out_csv}\n")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Evaluate all models on CT or CTC val split")
+    parser.add_argument('--dataset', default='all', choices=['ct', 'ctc', 'all'],
+                        help="Dataset type to evaluate on: 'ct', 'ctc', or 'all' (combined)")
+    args = parser.parse_args()
+    main(args.dataset)

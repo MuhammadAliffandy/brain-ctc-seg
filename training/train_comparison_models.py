@@ -5,11 +5,15 @@ Train competitor architectures from scratch using the SAME pipeline as SE2.
 Hyperparameters: 100 epochs | LR 1e-4 | Batch 8 | Split 85/15 | Loss: Focal+Dice+Edge
 
 Usage:
-    python train_comparison_models.py --model harmonic    # Priority 1: Equivariant
-    python train_comparison_models.py --model unet        # Priority 2: Non-equivariant
-    python train_comparison_models.py --model nnunet      # Priority 3
-    python train_comparison_models.py --model attention   # Priority 4
-    python train_comparison_models.py --model transunet   # Priority 5
+    python train_comparison_models.py --model harmonic --dataset ct    # CT only
+    python train_comparison_models.py --model harmonic --dataset ctc   # CTC only
+    python train_comparison_models.py --model harmonic --dataset all   # All combined
+    python train_comparison_models.py --model unet     --dataset ct
+    python train_comparison_models.py --model nnunet   --dataset ct
+    python train_comparison_models.py --model attention --dataset ct
+    python train_comparison_models.py --model transunet --dataset ct
+
+Weights saved as: {model_name}_{dataset}_best.pth
 """
 
 import os, sys, re, argparse, random
@@ -295,6 +299,20 @@ class CombinedLoss(nn.Module):
 
 
 # ================================================================
+# FILTER HELPER
+# ================================================================
+def filter_df_by_dataset(df, dataset_key, patient_col='Patient_Folder'):
+    """Filter DataFrame by folder prefix to separate CT and CTC patients."""
+    if dataset_key == 'ct':
+        mask = df[patient_col].str.startswith('CT_')
+    elif dataset_key == 'ctc':
+        mask = df[patient_col].str.startswith('CTC_') | df[patient_col].str.startswith('CTW_')
+    else:  # 'all'
+        mask = pd.Series([True] * len(df), index=df.index)
+    return df[mask]
+
+
+# ================================================================
 # TRAINING LOOP
 # ================================================================
 MODEL_REGISTRY = {
@@ -305,14 +323,15 @@ MODEL_REGISTRY = {
     'transunet':  (TransUNet,      'Non group-equivariant',  'trans_unet'),
 }
 
-def train(model_key: str):
+def train(model_key: str, dataset_key: str = 'all'):
     ModelClass, model_type, save_name = MODEL_REGISTRY[model_key]
 
     CSV_REPORT  = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
     DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace")
     SAVE_DIR    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
     os.makedirs(SAVE_DIR, exist_ok=True)
-    SAVE_PATH   = os.path.join(SAVE_DIR, f"{save_name}_epoch_100.pth")
+    # Weights named with dataset suffix for easy identification
+    SAVE_PATH   = os.path.join(SAVE_DIR, f"{save_name}_{dataset_key}_best.pth")
 
     # Hyperparameters — identical to train.py
     LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=100
@@ -320,10 +339,15 @@ def train(model_key: str):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*65}")
     print(f"  Training: {ModelClass.__name__} ({model_type})")
-    print(f"  Epochs: {EPOCHS} | LR: {LR} | Batch: {BATCH} | Device: {device}")
+    print(f"  Dataset:  {dataset_key.upper()} | Epochs: {EPOCHS} | LR: {LR} | Batch: {BATCH} | Device: {device}")
     print(f"{'='*65}\n")
 
     df       = pd.read_csv(CSV_REPORT)
+    pc       = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
+    df       = filter_df_by_dataset(df, dataset_key, pc)
+    print(f"  Dataset filter '{dataset_key}': {len(df)} patients found")
+    if len(df) == 0:
+        print("❌ No patients for this dataset type. Check folder prefix in CSV."); return
     train_df = df.sample(frac=0.85, random_state=42)
     val_df   = df.drop(train_df.index)
     print(f"  Train patients: {len(train_df)} | Val patients: {len(val_df)}")
@@ -379,15 +403,15 @@ def train(model_key: str):
         rec = tp/(tp+fn+eps)
         print(f"  Ep {epoch:>3} | Loss {train_loss/len(train_loader):.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f}")
 
-        if iou>best_iou:
-            best_iou=iou
+        if iou > best_iou:
+            best_iou = iou
             torch.save(model.state_dict(), SAVE_PATH)
-            print(f"  ★ Best model saved → {SAVE_PATH} (IoU={iou:.4f})")
+            print(f"  ★ Best [{dataset_key.upper()}] saved → {SAVE_PATH} (IoU={iou:.4f})")
 
         torch.cuda.empty_cache()
 
-    print(f"\n  ✅ Training complete! Best IoU: {best_iou:.4f}")
-    print(f"  Weights saved at: {SAVE_PATH}")
+    print(f"\n  ✅ Training complete! Best IoU [{dataset_key.upper()}]: {best_iou:.4f}")
+    print(f"  Weights: {SAVE_PATH}")
 
 
 # ================================================================
@@ -397,6 +421,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train comparison segmentation model")
     parser.add_argument('--model', required=True,
                         choices=['harmonic','unet','nnunet','attention','transunet'],
-                        help="Model to train. Priority: harmonic → unet → nnunet → attention → transunet")
+                        help="Model to train")
+    parser.add_argument('--dataset', default='all',
+                        choices=['ct', 'ctc', 'all'],
+                        help="Dataset type: 'ct' (CT_* folders), 'ctc' (CTC_*/CTW_* folders), 'all' (combined)")
     args = parser.parse_args()
-    train(args.model)
+    train(args.model, args.dataset)
