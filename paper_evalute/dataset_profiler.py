@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import re
+import zipfile
 
 def run_profiler():
     print("\n" + "="*70)
@@ -9,7 +10,30 @@ def run_profiler():
 
     CSV_REPORT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
     LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
+    GDRIVE_DATA_DIR = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Preprocessed_NPY")
     VALIDATION_SPLIT = 0.15 
+
+    # ==========================================
+    # 0. SCAN ORIGINAL ZIP FILES (TRUE TOTAL)
+    # ==========================================
+    print("Scanning original ZIP files in GDrive for TRUE totals...\n")
+    true_ct_img = 0
+    true_ctc_img = 0
+    
+    if os.path.exists(GDRIVE_DATA_DIR):
+        zip_files = [f for f in os.listdir(GDRIVE_DATA_DIR) if f.endswith('.zip')]
+        for z_file in zip_files:
+            is_ct = z_file.startswith('CT_')
+            is_ctc = z_file.startswith('CTC_') or z_file.startswith('CTW_')
+            
+            try:
+                with zipfile.ZipFile(os.path.join(GDRIVE_DATA_DIR, z_file), 'r') as zr:
+                    # Count files ending with _img.npy inside the zip
+                    img_count = sum(1 for name in zr.namelist() if name.endswith('_img.npy'))
+                    if is_ct: true_ct_img += img_count
+                    elif is_ctc: true_ctc_img += img_count
+            except Exception as e:
+                pass
 
     # ==========================================
     # 1. SCAN DIRECTLY FROM LOCAL WORKSPACE FOLDERS
@@ -73,13 +97,25 @@ def run_profiler():
     # ==========================================
     # 2. OUTPUT DETAILED STATISTICS
     # ==========================================
-    print("📁 1. ORIGINAL RAW DATASET (Acquisition Stage)")
+    print("📁 1. ORIGINAL RAW DATASET (From ZIP files)")
     print("-" * 70)
-    print(f"  • Total Raw Slices Found      : {raw_img_total} .npy files")
+    print(f"  • TRUE CT Slices found in ZIPs  : {true_ct_img} slices")
+    print(f"  • TRUE CTC Slices found in ZIPs : {true_ctc_img} slices")
+    print(f"  • TRUE Total Slices             : {true_ct_img + true_ctc_img} slices")
+    
+    print("\n📁 2. EXTRACTED DATASET (In Local Workspace)")
+    print("-" * 70)
+    print(f"  • Total Extracted Slices        : {raw_img_total} .npy files")
     print(f"       - CT type slices         : {count_ct_img} files")
     print(f"       - CTC type slices        : {count_ctc_img} files")
     
-    print("\n✂️ 2. DATA FILTERING (Exclusion Criteria)")
+    if raw_img_total < (true_ct_img + true_ctc_img):
+        print("\n⚠️  WARNING: EXTRACTED SLICES < TRUE SLICES!")
+        print("   This means the extraction process was interrupted previously.")
+        print("   To fix this, please run: rm -rf ~/Clara/local_ct_workspace")
+        print("   Then the next training script will re-extract everything fully.")
+    
+    print("\n✂️ 3. DATA FILTERING (Exclusion Criteria on Extracted Data)")
     print("-" * 70)
     print(f"  • Slices excluded (No Mask)   : {missing_masks_total} slices")
     print(f"  • Slices included (Valid Pair): {valid_ct_pairs + valid_ctc_pairs} slices")
