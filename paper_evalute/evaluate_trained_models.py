@@ -151,8 +151,105 @@ class StandardUNet(nn.Module):
         return self.out(x)
 
 
-# ================================================================
-# DATASET
+# ── nnU-Net (InstanceNorm + LeakyReLU) ──
+class _NNC(nn.Module):
+    def __init__(self, i, o):
+        super().__init__()
+        self.seq=nn.Sequential(
+            nn.Conv2d(i,o,3,padding=1,bias=False),nn.InstanceNorm2d(o),nn.LeakyReLU(0.01,True),
+            nn.Conv2d(o,o,3,padding=1,bias=False),nn.InstanceNorm2d(o),nn.LeakyReLU(0.01,True),
+        )
+    def forward(self, x): return self.seq(x)
+
+class nnUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        ch=[32,64,128,256,320]
+        self.enc=nn.ModuleList([_NNC(n_channels if i==0 else ch[i-1],ch[i]) for i in range(5)])
+        self.pool=nn.MaxPool2d(2)
+        self.ups=nn.ModuleList([nn.ConvTranspose2d(ch[i],ch[i-1],2,stride=2) for i in range(4,0,-1)])
+        self.dec=nn.ModuleList([_NNC(ch[i-1]*2,ch[i-1]) for i in range(4,0,-1)])
+        self.out=nn.Conv2d(ch[0],n_classes,1)
+    def forward(self, x):
+        skips=[]
+        for i,enc in enumerate(self.enc):
+            x=enc(x)
+            if i<4: skips.append(x); x=self.pool(x)
+        for up,dec,skip in zip(self.ups,self.dec,reversed(skips)):
+            x=up(x)
+            dy=skip.size(2)-x.size(2); dx=skip.size(3)-x.size(3)
+            x=dec(torch.cat([skip,F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1))
+        return self.out(x)
+
+
+# ── Attention U-Net ──
+class _AttnGate(nn.Module):
+    def __init__(self, g, x, mid):
+        super().__init__()
+        self.Wg=nn.Conv2d(g,mid,1); self.Wx=nn.Conv2d(x,mid,1)
+        self.psi=nn.Sequential(nn.Conv2d(mid,1,1),nn.Sigmoid())
+    def forward(self, g, x):
+        a=self.psi(F.relu(self.Wg(g)+self.Wx(x),True))
+        return x*F.interpolate(a,size=x.shape[2:],mode='nearest')
+
+class AttentionUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        self.inc=_DC(n_channels,64)
+        self.d1=nn.Sequential(nn.MaxPool2d(2),_DC(64,128))
+        self.d2=nn.Sequential(nn.MaxPool2d(2),_DC(128,256))
+        self.d3=nn.Sequential(nn.MaxPool2d(2),_DC(256,512))
+        self.u1=nn.ConvTranspose2d(512,256,2,stride=2); self.a1=_AttnGate(256,256,128); self.c1=_DC(512,256)
+        self.u2=nn.ConvTranspose2d(256,128,2,stride=2); self.a2=_AttnGate(128,128,64);  self.c2=_DC(256,128)
+        self.u3=nn.ConvTranspose2d(128,64, 2,stride=2); self.a3=_AttnGate(64,64,32);    self.c3=_DC(128,64)
+        self.out=nn.Conv2d(64,n_classes,1)
+    def _pc(self, x, s):
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s,F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
+    def forward(self, x):
+        x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3)
+        u=self.u1(x4); x=self.c1(self._pc(u,self.a1(u,x3)))
+        u=self.u2(x);  x=self.c2(self._pc(u,self.a2(u,x2)))
+        u=self.u3(x);  x=self.c3(self._pc(u,self.a3(u,x1)))
+        return self.out(x)
+
+
+# ── TransUNet (Transformer bottleneck) ──
+class _TransBlock(nn.Module):
+    def __init__(self, dim, heads=8):
+        super().__init__()
+        self.n1=nn.LayerNorm(dim); self.attn=nn.MultiheadAttention(dim,heads,batch_first=True)
+        self.n2=nn.LayerNorm(dim); self.mlp=nn.Sequential(nn.Linear(dim,dim*4),nn.GELU(),nn.Linear(dim*4,dim))
+    def forward(self, x):
+        B,C,H,W=x.shape; t=x.flatten(2).transpose(1,2)
+        t=t+self.attn(self.n1(t),self.n1(t),self.n1(t))[0]
+        t=t+self.mlp(self.n2(t))
+        return t.transpose(1,2).reshape(B,C,H,W)
+
+class TransUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        self.inc=_DC(n_channels,64)
+        self.d1=nn.Sequential(nn.MaxPool2d(2),_DC(64,128))
+        self.d2=nn.Sequential(nn.MaxPool2d(2),_DC(128,256))
+        self.d3=nn.Sequential(nn.MaxPool2d(2),_DC(256,512))
+        self.trans=nn.Sequential(_TransBlock(512),_TransBlock(512))
+        self.u1=nn.ConvTranspose2d(512,256,2,stride=2); self.c1=_DC(512,256)
+        self.u2=nn.ConvTranspose2d(256,128,2,stride=2); self.c2=_DC(256,128)
+        self.u3=nn.ConvTranspose2d(128,64, 2,stride=2); self.c3=_DC(128,64)
+        self.out=nn.Conv2d(64,n_classes,1)
+    def _pc(self, x, s):
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s,F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
+    def forward(self, x):
+        x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3)
+        x4=self.trans(x4)
+        x=self.c1(self._pc(self.u1(x4),x3))
+        x=self.c2(self._pc(self.u2(x),x2))
+        x=self.c3(self._pc(self.u3(x),x1))
+        return self.out(x)
+
+
 # ================================================================
 class CTBrain25DDataset(Dataset):
     def __init__(self, dataframe, root_dir):
@@ -218,12 +315,18 @@ def main():
     DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace")
     SAVE_DIR    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
 
-    # ─── Model registry: display name → (class, weight filename, special_loader) ───
-    # special_loader=True means use load_se2_weights() instead of generic load_state_dict
+    # ─── Model registry ─────────────────────────────────────────────────────
+    # (display_name, ModelClass, weight_filename, use_se2_loader)
+    # Priority order for paper Table 1: equivariant first, then non-equivariant
     MODELS = [
-        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    "se2_unet_epoch_100.pth", True),
-        ("HarmonicNet (C4)",     HarmonicNet,  "harmonic_net_epoch_100.pth",     False),
-        ("Standard U-Net",       StandardUNet, "standard_unet_epoch_100.pth",    False),
+        # Group-equivariant
+        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,      "se2_unet_epoch_100.pth",       True),
+        ("HarmonicNet (C4)",     HarmonicNet,     "harmonic_net_epoch_100.pth",   False),
+        # Non group-equivariant
+        ("nnU-Net",              nnUNet,          "nn_unet_epoch_100.pth",        False),
+        ("Attention U-Net",      AttentionUNet,   "attention_unet_epoch_100.pth", False),
+        ("TransUNet",            TransUNet,       "trans_unet_epoch_100.pth",     False),
+        ("Standard U-Net",       StandardUNet,    "standard_unet_epoch_100.pth",  False),
     ]
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
