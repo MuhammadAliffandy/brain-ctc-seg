@@ -19,8 +19,63 @@ import escnn.nn as enn
 
 
 # ================================================================
-# ARCHITECTURES (same as train_comparison_models.py)
+# ARCHITECTURES
 # ================================================================
+
+# ── SE2_CNNET (C8 — Proposed Model) ──
+class _SE2Conv(nn.Module):
+    def __init__(self, a, b, m=None):
+        super().__init__()
+        if m is None: m = b
+        self.seq = enn.SequentialModule(
+            enn.R2Conv(a,m,3,padding=1,bias=False), enn.InnerBatchNorm(m), enn.ReLU(m,inplace=True),
+            enn.R2Conv(m,b,3,padding=1,bias=False), enn.InnerBatchNorm(b), enn.ReLU(b,inplace=True),
+        )
+    def forward(self, x): return self.seq(x)
+
+class _SE2Down(nn.Module):
+    def __init__(self, a, b):
+        super().__init__(); self.pool=enn.PointwiseMaxPool(a,2); self.conv=_SE2Conv(a,b)
+    def forward(self, x): return self.conv(self.pool(x))
+
+class _SE2Up(nn.Module):
+    def __init__(self, a, b):
+        super().__init__()
+        self.up=enn.R2Upsampling(a,scale_factor=2,mode='bilinear',align_corners=True)
+        self.conv=_SE2Conv(a+b,b)
+    def forward(self, x1, x2): return self.conv(enn.tensor_directsum([x2, self.up(x1)]))
+
+class SE2_CNNET(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=24):
+        super().__init__()
+        self.act = gspaces.rot2dOnR2(N=N)
+        c = base_channels
+        def ft(n): return enn.FieldType(self.act, n * [self.act.regular_repr])
+        self.fin = enn.FieldType(self.act, n_channels * [self.act.trivial_repr])
+        f1,f2,f3,f4,f5 = ft(c),ft(c*2),ft(c*4),ft(c*8),ft(c*16)
+        self.inc = _SE2Conv(self.fin,f1)
+        self.d1,self.d2,self.d3,self.d4 = _SE2Down(f1,f2),_SE2Down(f2,f3),_SE2Down(f3,f4),_SE2Down(f4,f5)
+        self.u1,self.u2,self.u3,self.u4 = _SE2Up(f5,f4),_SE2Up(f4,f3),_SE2Up(f3,f2),_SE2Up(f2,f1)
+        self.outc = enn.R2Conv(f1, enn.FieldType(self.act, n_classes*[self.act.trivial_repr]), 1)
+    def forward(self, x):
+        g=enn.GeometricTensor(x,self.fin)
+        x1=self.inc(g); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3); x5=self.d4(x4)
+        x=self.u1(x5,x4); x=self.u2(x,x3); x=self.u3(x,x2); x=self.u4(x,x1)
+        return self.outc(x).tensor
+
+
+def load_se2_weights(model, path, device):
+    """Load SE2 weights with automatic 1ch → 3ch adapter."""
+    ckpt = torch.load(path, map_location=device, weights_only=True)
+    fk = 'inc.double_conv.0.weights'
+    if fk in ckpt and ckpt[fk].shape[0] == 144:
+        print("  🔄 Adapting 1-ch checkpoint → 3-ch 2.5D...")
+        ckpt[fk] = ckpt[fk].repeat(3) / 3.0
+        bk = 'inc.double_conv.0.filter'
+        if bk in ckpt: ckpt[bk] = ckpt[bk].repeat(1,3,1,1) / 3.0
+    model.load_state_dict(ckpt, strict=False)
+    return model
+
 
 # ── HarmonicNet (C4) ──
 class _EqConv(nn.Module):
@@ -163,10 +218,12 @@ def main():
     DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace")
     SAVE_DIR    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
 
-    # ─── Model registry: display name → (class, weight filename) ───
+    # ─── Model registry: display name → (class, weight filename, special_loader) ───
+    # special_loader=True means use load_se2_weights() instead of generic load_state_dict
     MODELS = [
-        ("HarmonicNet (C4)",   HarmonicNet,   "harmonic_net_epoch_100.pth"),
-        ("Standard U-Net",     StandardUNet,  "standard_unet_epoch_100.pth"),
+        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    "se2_unet_best_25D_Boundary.pth", True),
+        ("HarmonicNet (C4)",     HarmonicNet,  "harmonic_net_epoch_100.pth",     False),
+        ("Standard U-Net",       StandardUNet, "standard_unet_epoch_100.pth",    False),
     ]
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -189,20 +246,34 @@ def main():
     print(f"  Val slices   : {len(val_set)}\n")
 
     all_results = []
-    for display_name, ModelClass, weight_file in MODELS:
-        weight_path = os.path.join(SAVE_DIR, weight_file)
-        print(f"{'─'*65}")
-        print(f"  Model : {display_name}")
-        print(f"  Weights: {weight_path}")
+    for entry in MODELS:
+        display_name, ModelClass, weight_file, use_se2_loader = entry
 
-        if not os.path.exists(weight_path):
+        # Fallback weight paths for SE2
+        candidates = [weight_file]
+        if use_se2_loader:
+            candidates += ["se2_unet_epoch_100.pth", "se2_unet_best_25D.pth"]
+
+        weight_path = None
+        for wf in candidates:
+            p = os.path.join(SAVE_DIR, wf)
+            if os.path.exists(p): weight_path = p; break
+
+        print(f"{'─'*65}")
+        print(f"  Model  : {display_name}")
+        print(f"  Weights: {weight_path or 'NOT FOUND'}")
+
+        if weight_path is None:
             print(f"  ⚠️  Weight file not found — skipping\n")
             continue
 
         model = ModelClass(n_channels=3, n_classes=2).to(device)
-        model.load_state_dict(
-            torch.load(weight_path, map_location=device, weights_only=True), strict=False
-        )
+        if use_se2_loader:
+            model = load_se2_weights(model, weight_path, device)
+        else:
+            model.load_state_dict(
+                torch.load(weight_path, map_location=device, weights_only=True), strict=False
+            )
         print(f"  ✅ Weights loaded\n")
 
         metrics = evaluate(model, val_loader, device, display_name)
