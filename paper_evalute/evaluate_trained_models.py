@@ -91,15 +91,24 @@ class SE2_CNNET(nn.Module):
 def load_se2_weights(model, path, device):
     """Load SE2 weights with automatic 1ch → 3ch adapter."""
     ckpt = torch.load(path, map_location=device, weights_only=True)
-    # Check if checkpoint was saved from a 1-channel model
+
+    # Debug: show first few checkpoint keys so we can detect naming mismatch
+    sample_keys = list(ckpt.keys())[:5]
+    print(f"  🔑 Checkpoint key samples: {sample_keys}")
+
+    # Auto-adapt 1-channel → 3-channel if needed
     fk = 'inc.double_conv.0.weights'
-    if fk in ckpt and ckpt[fk].shape[0] == 144:   # 144 = 1ch * 24 base * 6 (C8 filters)
+    if fk in ckpt and ckpt[fk].shape[0] == 144:
         print("  🔄 Adapting 1-ch checkpoint → 3-ch 2.5D...")
         ckpt[fk] = ckpt[fk].repeat(3) / 3.0
         bk = 'inc.double_conv.0.filter'
         if bk in ckpt: ckpt[bk] = ckpt[bk].repeat(1, 3, 1, 1) / 3.0
+
     result = model.load_state_dict(ckpt, strict=False)
-    print(f"  ℹ️  Missing keys: {len(result.missing_keys)} | Unexpected: {len(result.unexpected_keys)}")
+    if result.missing_keys:
+        print(f"  ⚠️  Missing  : {result.missing_keys[:4]}")
+    if result.unexpected_keys:
+        print(f"  ⚠️  Unexpected: {result.unexpected_keys[:4]}")
     return model
 
 
@@ -277,6 +286,8 @@ class TransUNet(nn.Module):
 
 
 # ================================================================
+# DATASET — mirrors training pipeline exactly
+# ================================================================
 class CTBrain25DDataset(Dataset):
     def __init__(self, dataframe, root_dir):
         self.root_dir=root_dir; self.patient_slices={}; self.all_samples=[]
@@ -302,9 +313,23 @@ class CTBrain25DDataset(Dataset):
         i2=np.load(sl[nx][0]).astype(np.float32)
         m =np.load(sl[si][1]).astype(np.uint8)
         if m.max()>1: m=(m>0).astype(np.uint8)
-        img=torch.from_numpy(np.stack([i0,i1,i2],-1)).permute(2,0,1)
-        mask=torch.from_numpy(m).long()
-        return img, mask
+
+        # Stack 2.5D and normalise per-channel (same as training)
+        img = np.stack([i0, i1, i2], axis=-1)  # [H, W, 3]
+        for c in range(3):
+            ch = img[..., c]
+            mn, mx = ch.min(), ch.max()
+            if mx > mn:
+                img[..., c] = (ch - mn) / (mx - mn)
+
+        # Convert to tensor [3, H, W] then resize to 256×256 (same as training)
+        img_t  = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)   # [1,3,H,W]
+        mask_t = torch.from_numpy(m).float().unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+
+        img_t  = F.interpolate(img_t,  size=(256, 256), mode='bilinear', align_corners=False)
+        mask_t = F.interpolate(mask_t, size=(256, 256), mode='nearest')
+
+        return img_t.squeeze(0), mask_t.squeeze(0).squeeze(0).long()
 
 
 # ================================================================
