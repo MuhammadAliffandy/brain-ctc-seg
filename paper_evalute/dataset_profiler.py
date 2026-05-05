@@ -40,12 +40,6 @@ def run_profiler():
     # ==========================================
     print("Scanning local workspace for ALL Raw Files (CT & CTC)...\n")
     
-    if not os.path.exists(LOCAL_DATA_PATH):
-        print(f"❌ Cannot find local data path: {LOCAL_DATA_PATH}")
-        return
-
-    all_patient_folders = sorted([d for d in os.listdir(LOCAL_DATA_PATH) if os.path.isdir(os.path.join(LOCAL_DATA_PATH, d))])
-    
     # Initialize specific counters for slice types
     count_ct_img = 0
     count_ctc_img = 0
@@ -57,6 +51,13 @@ def run_profiler():
     missing_masks_total = 0
     
     patient_valid_counts = {} 
+
+    if not os.path.exists(LOCAL_DATA_PATH):
+        print(f"⚠️  Local data path not found yet: {LOCAL_DATA_PATH}")
+        print("   (Data will be extracted when you run the training script)")
+        all_patient_folders = []
+    else:
+        all_patient_folders = sorted([d for d in os.listdir(LOCAL_DATA_PATH) if os.path.isdir(os.path.join(LOCAL_DATA_PATH, d))])
 
     for patient in all_patient_folders:
         patient_dir = os.path.join(LOCAL_DATA_PATH, patient)
