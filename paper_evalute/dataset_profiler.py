@@ -9,7 +9,7 @@ def run_profiler():
     print("="*70 + "\n")
 
     CSV_REPORT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
-    LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace") 
+    LOCAL_DATA_PATH = os.path.expanduser("~/Clara/local_ct_workspace_full") 
     GDRIVE_DATA_DIR = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Preprocessed_NPY")
     VALIDATION_SPLIT = 0.15 
 
@@ -112,8 +112,8 @@ def run_profiler():
     if raw_img_total < (true_ct_img + true_ctc_img):
         print("\n⚠️  WARNING: EXTRACTED SLICES < TRUE SLICES!")
         print("   This means the extraction process was interrupted previously.")
-        print("   To fix this, please run: rm -rf ~/Clara/local_ct_workspace")
-        print("   Then the next training script will re-extract everything fully.")
+        print("   We are using a new workspace: ~/Clara/local_ct_workspace_full")
+        print("   If it is still incomplete, please delete it to force re-extraction.")
     
     print("\n✂️ 3. DATA FILTERING (Exclusion Criteria on Extracted Data)")
     print("-" * 70)

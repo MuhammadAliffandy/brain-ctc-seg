@@ -402,7 +402,7 @@ def filter_df_by_dataset(df, dataset_key, patient_col='Patient_Folder'):
 # ================================================================
 def main(dataset_key: str = 'all'):
     CSV_REPORT  = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
-    DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace")
+    DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace_full")
     SAVE_DIR    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
 
     # ─── Model registry ─────────────────────────────────────────────────────
