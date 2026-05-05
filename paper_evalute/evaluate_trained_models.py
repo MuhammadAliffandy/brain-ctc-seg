@@ -22,58 +22,84 @@ import escnn.nn as enn
 # ARCHITECTURES
 # ================================================================
 
-# ── SE2_CNNET (C8 — Proposed Model) ──
-class _SE2Conv(nn.Module):
-    def __init__(self, a, b, m=None):
+# ── SE2_CNNET (C8 — Proposed) ──
+# IMPORTANT: Layer names MUST match the training script exactly
+# so that load_state_dict() correctly maps weights.
+class DoubleEquivariantConv(nn.Module):
+    def __init__(self, in_type, out_type, mid_type=None):
         super().__init__()
-        if m is None: m = b
-        self.seq = enn.SequentialModule(
-            enn.R2Conv(a,m,3,padding=1,bias=False), enn.InnerBatchNorm(m), enn.ReLU(m,inplace=True),
-            enn.R2Conv(m,b,3,padding=1,bias=False), enn.InnerBatchNorm(b), enn.ReLU(b,inplace=True),
+        if not mid_type: mid_type = out_type
+        self.double_conv = enn.SequentialModule(
+            enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False),
+            enn.InnerBatchNorm(mid_type), enn.ReLU(mid_type, inplace=True),
+            enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False),
+            enn.InnerBatchNorm(out_type), enn.ReLU(out_type, inplace=True)
         )
-    def forward(self, x): return self.seq(x)
+    def forward(self, x): return self.double_conv(x)
 
 class _SE2Down(nn.Module):
-    def __init__(self, a, b):
-        super().__init__(); self.pool=enn.PointwiseMaxPool(a,2); self.conv=_SE2Conv(a,b)
+    def __init__(self, in_type, out_type):
+        super().__init__()
+        self.pool = enn.PointwiseMaxPool(in_type, kernel_size=2)
+        self.conv = DoubleEquivariantConv(in_type, out_type)
     def forward(self, x): return self.conv(self.pool(x))
 
 class _SE2Up(nn.Module):
-    def __init__(self, a, b):
+    def __init__(self, in_type, out_type):
         super().__init__()
-        self.up=enn.R2Upsampling(a,scale_factor=2,mode='bilinear',align_corners=True)
-        self.conv=_SE2Conv(a+b,b)
-    def forward(self, x1, x2): return self.conv(enn.tensor_directsum([x2, self.up(x1)]))
+        self.up   = enn.R2Upsampling(in_type, scale_factor=2, mode='bilinear', align_corners=True)
+        self.conv = DoubleEquivariantConv(in_type + out_type, out_type)
+    def forward(self, x1, x2):
+        return self.conv(enn.tensor_directsum([x2, self.up(x1)]))
 
 class SE2_CNNET(nn.Module):
     def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=24):
         super().__init__()
-        self.act = gspaces.rot2dOnR2(N=N)
+        self.r2_act = gspaces.rot2dOnR2(N=N)
         c = base_channels
-        def ft(n): return enn.FieldType(self.act, n * [self.act.regular_repr])
-        self.fin = enn.FieldType(self.act, n_channels * [self.act.trivial_repr])
-        f1,f2,f3,f4,f5 = ft(c),ft(c*2),ft(c*4),ft(c*8),ft(c*16)
-        self.inc = _SE2Conv(self.fin,f1)
-        self.d1,self.d2,self.d3,self.d4 = _SE2Down(f1,f2),_SE2Down(f2,f3),_SE2Down(f3,f4),_SE2Down(f4,f5)
-        self.u1,self.u2,self.u3,self.u4 = _SE2Up(f5,f4),_SE2Up(f4,f3),_SE2Up(f3,f2),_SE2Up(f2,f1)
-        self.outc = enn.R2Conv(f1, enn.FieldType(self.act, n_classes*[self.act.trivial_repr]), 1)
+        self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
+        self.feat_type_1  = enn.FieldType(self.r2_act, c        * [self.r2_act.regular_repr])
+        self.feat_type_2  = enn.FieldType(self.r2_act, (c*2)    * [self.r2_act.regular_repr])
+        self.feat_type_3  = enn.FieldType(self.r2_act, (c*4)    * [self.r2_act.regular_repr])
+        self.feat_type_4  = enn.FieldType(self.r2_act, (c*8)    * [self.r2_act.regular_repr])
+        self.feat_type_5  = enn.FieldType(self.r2_act, (c*16)   * [self.r2_act.regular_repr])
+
+        self.inc   = DoubleEquivariantConv(self.feat_type_in, self.feat_type_1)
+        self.down1 = _SE2Down(self.feat_type_1, self.feat_type_2)
+        self.down2 = _SE2Down(self.feat_type_2, self.feat_type_3)
+        self.down3 = _SE2Down(self.feat_type_3, self.feat_type_4)
+        self.down4 = _SE2Down(self.feat_type_4, self.feat_type_5)
+        self.up1   = _SE2Up(self.feat_type_5, self.feat_type_4)
+        self.up2   = _SE2Up(self.feat_type_4, self.feat_type_3)
+        self.up3   = _SE2Up(self.feat_type_3, self.feat_type_2)
+        self.up4   = _SE2Up(self.feat_type_2, self.feat_type_1)
+
+        gspace   = self.feat_type_1.gspace
+        out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
+        self.outc = enn.R2Conv(self.feat_type_1, out_type, kernel_size=1)
+
     def forward(self, x):
-        g=enn.GeometricTensor(x,self.fin)
-        x1=self.inc(g); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3); x5=self.d4(x4)
-        x=self.u1(x5,x4); x=self.u2(x,x3); x=self.u3(x,x2); x=self.u4(x,x1)
+        x_geom = enn.GeometricTensor(x, self.feat_type_in)
+        x1 = self.inc(x_geom)
+        x2 = self.down1(x1); x3 = self.down2(x2)
+        x4 = self.down3(x3); x5 = self.down4(x4)
+        x  = self.up1(x5, x4); x = self.up2(x, x3)
+        x  = self.up3(x, x2);  x = self.up4(x, x1)
         return self.outc(x).tensor
 
 
 def load_se2_weights(model, path, device):
     """Load SE2 weights with automatic 1ch → 3ch adapter."""
     ckpt = torch.load(path, map_location=device, weights_only=True)
+    # Check if checkpoint was saved from a 1-channel model
     fk = 'inc.double_conv.0.weights'
-    if fk in ckpt and ckpt[fk].shape[0] == 144:
+    if fk in ckpt and ckpt[fk].shape[0] == 144:   # 144 = 1ch * 24 base * 6 (C8 filters)
         print("  🔄 Adapting 1-ch checkpoint → 3-ch 2.5D...")
         ckpt[fk] = ckpt[fk].repeat(3) / 3.0
         bk = 'inc.double_conv.0.filter'
-        if bk in ckpt: ckpt[bk] = ckpt[bk].repeat(1,3,1,1) / 3.0
-    model.load_state_dict(ckpt, strict=False)
+        if bk in ckpt: ckpt[bk] = ckpt[bk].repeat(1, 3, 1, 1) / 3.0
+    result = model.load_state_dict(ckpt, strict=False)
+    print(f"  ℹ️  Missing keys: {len(result.missing_keys)} | Unexpected: {len(result.unexpected_keys)}")
     return model
 
 
