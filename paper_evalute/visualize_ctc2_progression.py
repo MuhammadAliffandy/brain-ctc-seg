@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 from matplotlib.colors import ListedColormap
 
 # Import arsitektur SE2 dari script evaluasi
@@ -121,9 +122,20 @@ def main():
         img_path = img_files[0]
         mask_path = img_path.replace('_img.npy', '_mask.npy')
         
-        # Load raw numpy arrays
+        # Format tetangga untuk 2.5D context
+        z_prev_str = f"z{z-1:03d}"
+        z_next_str = f"z{z+1:03d}"
+        
+        prev_path = img_path.replace(z_str, z_prev_str)
+        next_path = img_path.replace(z_str, z_next_str)
+        
+        # Load raw numpy arrays (Stack 2.5D)
         try:
-            img_25d = np.load(img_path).astype(np.float32)  # (H, W, 3)
+            i0 = np.load(prev_path).astype(np.float32) if os.path.exists(prev_path) else np.load(img_path).astype(np.float32)
+            i1 = np.load(img_path).astype(np.float32)
+            i2 = np.load(next_path).astype(np.float32) if os.path.exists(next_path) else np.load(img_path).astype(np.float32)
+            
+            img_25d = np.stack([i0, i1, i2], axis=-1)  # (H, W, 3)
             gt_mask = np.load(mask_path).astype(np.uint8)   # (H, W)
         except Exception as e:
             print(f"⚠️ Gagal meload slice {z}: {e}"); continue
