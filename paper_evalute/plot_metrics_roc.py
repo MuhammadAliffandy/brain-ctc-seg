@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+plt.switch_backend('agg') # Wajib untuk server DGX (headless) agar gambar tidak corrupted
 from scipy.stats import norm
 
 def generate_synthetic_roc(performance_score, n_points=200):
