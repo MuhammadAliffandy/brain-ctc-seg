@@ -1,24 +1,30 @@
 #!/bin/bash
 # Menjalankan 5 model pembanding secara berurutan untuk dataset CTC
+# Menggunakan nohup agar training tidak terhenti jika SSH terputus
 
 echo "=========================================================="
 echo "🚀 STARTING COMPARISON MODELS TRAINING FOR [CTC] DATASET"
 echo "=========================================================="
 
 echo -e "\n[1/5] Training HarmonicNet (CTC)..."
-python train_comparison_models.py --model harmonic --dataset ctc
+nohup python train_comparison_models.py --model harmonic --dataset ctc > log_harmonic_ctc.txt 2>&1
+echo "✅ HarmonicNet CTC done. Log: log_harmonic_ctc.txt"
 
 echo -e "\n[2/5] Training Standard UNet (CTC)..."
-python train_comparison_models.py --model unet --dataset ctc
+nohup python train_comparison_models.py --model unet --dataset ctc > log_unet_ctc.txt 2>&1
+echo "✅ Standard UNet CTC done. Log: log_unet_ctc.txt"
 
 echo -e "\n[3/5] Training nnUNet (CTC)..."
-python train_comparison_models.py --model nnunet --dataset ctc
+nohup python train_comparison_models.py --model nnunet --dataset ctc > log_nnunet_ctc.txt 2>&1
+echo "✅ nnUNet CTC done. Log: log_nnunet_ctc.txt"
 
 echo -e "\n[4/5] Training Attention UNet (CTC)..."
-python train_comparison_models.py --model attention --dataset ctc
+nohup python train_comparison_models.py --model attention --dataset ctc > log_attention_ctc.txt 2>&1
+echo "✅ Attention UNet CTC done. Log: log_attention_ctc.txt"
 
 echo -e "\n[5/5] Training TransUNet (CTC)..."
-python train_comparison_models.py --model transunet --dataset ctc
+nohup python train_comparison_models.py --model transunet --dataset ctc > log_transunet_ctc.txt 2>&1
+echo "✅ TransUNet CTC done. Log: log_transunet_ctc.txt"
 
 echo -e "\n=========================================================="
 echo "✅ ALL CTC COMPARISON MODELS COMPLETED!"
