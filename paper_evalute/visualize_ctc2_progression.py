@@ -92,19 +92,15 @@ def main():
     print("✅ Model loaded successfully.")
 
     # ─── 4. PROSES INFERENCE & PLOTTING ───
-    # Layout Vertikal: 6 Baris (Slices) x 3 Kolom (Input, GT, Pred)
-    fig, axes = plt.subplots(nrows=len(TARGET_SLICES), ncols=3, figsize=(9, 2.5 * len(TARGET_SLICES)))
+    # Layout Horizontal: 3 Baris (Input, GT, Pred) x N Kolom (Slices)
+    fig, axes = plt.subplots(nrows=3, ncols=len(TARGET_SLICES), figsize=(4 * len(TARGET_SLICES), 12))
     fig.patch.set_facecolor('black')
     plt.subplots_adjust(wspace=0.05, hspace=0.05)
 
-    col_titles = ["Input Image", "Ground Truth", "Mod-Seg-SE(2) Pred"]
-    for i, title in enumerate(col_titles):
-        axes[0, i].set_title(title, color='white', fontsize=14, fontweight='bold', pad=10)
-
     for i, z in enumerate(TARGET_SLICES):
-        ax_input = axes[i, 0]
-        ax_gt    = axes[i, 1]
-        ax_pred  = axes[i, 2]
+        ax_input = axes[0, i]
+        ax_gt    = axes[1, i]
+        ax_pred  = axes[2, i]
         
         for ax in [ax_input, ax_gt, ax_pred]:
             ax.set_xticks([])
@@ -112,8 +108,8 @@ def main():
             for spine in ax.spines.values():
                 spine.set_visible(False)
 
-        # Judul Baris (Slice Number) di sebelah kiri
-        ax_input.set_ylabel(f"Slice {z}", color='yellow', fontsize=14, fontweight='bold', labelpad=15)
+        # Judul Kolom (Slice Number) di baris paling atas
+        ax_input.set_title(f"Slice {z}", color='yellow', fontsize=14, fontweight='bold', pad=10)
 
         # Format slice ke string (z065, z066, dst)
         z_str = f"z{z:03d}"
@@ -157,9 +153,9 @@ def main():
                 logits = model(input_tensor)
             pred_mask = torch.argmax(F.softmax(logits, dim=1), dim=1).squeeze(0).cpu().numpy()
 
-        # Cropping & Rotation (Sama seperti comparative_figure.py)
+        # Cropping & Rotation
         CROP_MARGIN = 40
-        ROTATE_K = 1
+        ROTATE_K = 3  # K=3 memutar ke arah sebaliknya (flip/berlawanan) agar mata di atas
         
         mid_img = np.rot90(mid_img[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
         gt_mask = np.rot90(gt_mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
@@ -173,6 +169,11 @@ def main():
         ax_input.imshow(mid_img, cmap='gray')
         ax_gt.imshow(gt_overlay)
         ax_pred.imshow(pred_overlay)
+
+    # Label Baris
+    axes[0, 0].set_ylabel("Input Image", color='white', fontsize=16, fontweight='bold', labelpad=20)
+    axes[1, 0].set_ylabel("Ground Truth", color='red', fontsize=16, fontweight='bold', labelpad=20)
+    axes[2, 0].set_ylabel("Mod-Seg-SE(2)", color='green', fontsize=16, fontweight='bold', labelpad=20)
 
     # Simpan
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
