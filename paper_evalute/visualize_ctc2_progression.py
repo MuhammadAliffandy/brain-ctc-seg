@@ -153,6 +153,14 @@ def main():
                 logits = model(input_tensor)
             pred_mask = torch.argmax(F.softmax(logits, dim=1), dim=1).squeeze(0).cpu().numpy()
 
+        # Cropping & Rotation (Sama seperti comparative_figure.py)
+        CROP_MARGIN = 40
+        ROTATE_K = 1
+        
+        mid_img = np.rot90(mid_img[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        gt_mask = np.rot90(gt_mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+        pred_mask = np.rot90(pred_mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+
         # Buat overlay
         gt_overlay = overlay_mask(mid_img, gt_mask, color=[1, 0, 0])      # Merah untuk Ground Truth
         pred_overlay = overlay_mask(mid_img, pred_mask, color=[0, 1, 0])  # Hijau untuk Prediction
