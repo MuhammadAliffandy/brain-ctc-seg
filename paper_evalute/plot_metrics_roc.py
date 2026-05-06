@@ -33,7 +33,7 @@ def main():
     args = parser.parse_args()
 
     ds = args.dataset
-    CSV_PATH = f"comparison_eval_{ds}.csv"
+    CSV_PATH = os.path.expanduser(f"~/Clara/comparison_eval_{ds}.csv")
     OUT_FILE = os.path.expanduser(f"~/Clara/brain-ctc-seg/training/Journal_Figures/ROC_Curve_From_Metrics_{ds.upper()}.png")
     
     # ========================================================
