@@ -101,9 +101,9 @@ def main():
                 # Get probabilities for positive class (tumor)
                 probs = F.softmax(logits, dim=1)[:, 1, :, :]
                 
-                # Flatten and subsample
-                y_true = masks.view(-1).cpu().numpy()[::SUBSAMPLE_FACTOR]
-                y_scores = probs.view(-1).cpu().numpy()[::SUBSAMPLE_FACTOR]
+                # Flatten and subsample using reshape instead of view to handle non-contiguous tensors
+                y_true = masks.reshape(-1).cpu().numpy()[::SUBSAMPLE_FACTOR]
+                y_scores = probs.reshape(-1).cpu().numpy()[::SUBSAMPLE_FACTOR]
                 
                 all_y_true.append(y_true)
                 all_y_scores.append(y_scores)
