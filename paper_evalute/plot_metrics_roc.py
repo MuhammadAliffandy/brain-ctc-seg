@@ -50,10 +50,10 @@ def main():
     # Dictionary warna agar seragam dengan standar paper kita
     COLOR_MAP = {
         "Mod-Seg-SE(2)": ('red', 'solid', 3.0),
-        "HarmonicNet":   ('orange', 'dashed', 2.0),
-        "nnU-Net":       ('blue', 'dashdot', 2.0),
-        "Attention U-Net": ('purple', 'dotted', 2.0),
-        "TransUNet":     ('green', 'dashed', 2.0),
+        "HarmonicNet":   ('orange', 'solid', 2.0),
+        "nnU-Net":       ('blue', 'solid', 2.0),
+        "Attention U-Net": ('purple', 'solid', 2.0),
+        "TransUNet":     ('green', 'solid', 2.0),
         "Standard U-Net": ('gray', 'solid', 1.5)
     }
 
