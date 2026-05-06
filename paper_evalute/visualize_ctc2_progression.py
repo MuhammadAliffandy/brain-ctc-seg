@@ -36,7 +36,7 @@ def main():
     # ─── 1. KONFIGURASI PATH ───
     DATA_DIR = os.path.expanduser("~/Clara/local_ct_workspace_full")
     WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_ctc_best.pth")
-    SAVE_PATH = os.path.expanduser("~/Clara/CTC2_Progression_65_70.png")
+    SAVE_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/Journal_Figures/CTC2_Progression_65_70.png")
     
     # Range slice yang diminta klien
     TARGET_SLICES = [65, 66, 67, 68, 69, 70]
@@ -92,21 +92,24 @@ def main():
     print("✅ Model loaded successfully.")
 
     # ─── 4. PROSES INFERENCE & PLOTTING ───
-    fig, axes = plt.subplots(nrows=len(TARGET_SLICES), ncols=3, figsize=(12, 4 * len(TARGET_SLICES)))
+    # Layout Horizontal: 3 Baris (Input, GT, Pred) x N Kolom (Slices)
+    fig, axes = plt.subplots(nrows=3, ncols=len(TARGET_SLICES), figsize=(4 * len(TARGET_SLICES), 12))
     fig.patch.set_facecolor('black')
     plt.subplots_adjust(wspace=0.05, hspace=0.05)
 
-    col_titles = ["Input Image (Middle Slice)", "Ground Truth (Merah)", "Mod-Seg-SE(2) Pred (Hijau)"]
-    for i, title in enumerate(col_titles):
-        axes[0, i].set_title(title, color='white', fontsize=14, pad=10)
-
     for i, z in enumerate(TARGET_SLICES):
-        ax_input = axes[i, 0]
-        ax_gt    = axes[i, 1]
-        ax_pred  = axes[i, 2]
+        ax_input = axes[0, i]
+        ax_gt    = axes[1, i]
+        ax_pred  = axes[2, i]
         
         for ax in [ax_input, ax_gt, ax_pred]:
-            ax.axis('off')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+        # Judul Kolom (Slice Number) hanya di baris paling atas
+        ax_input.set_title(f"Slice {z}", color='yellow', fontsize=14, fontweight='bold', pad=10)
 
         # Format slice ke string (z065, z066, dst)
         z_str = f"z{z:03d}"
@@ -114,9 +117,7 @@ def main():
         # Cari file numpy
         img_files = glob.glob(os.path.join(patient_path, f"*{z_str}_img.npy"))
         if not img_files:
-            # Jika slice tidak ada (mungkin tidak ada tumor di slice ini sehingga difilter)
-            ax_input.text(0.5, 0.5, f"Slice {z} Not Found\n(No Label/Filtered)", 
-                          color='white', ha='center', va='center')
+            ax_input.text(0.5, 0.5, f"Not Found", color='white', ha='center', va='center')
             continue
             
         img_path = img_files[0]
@@ -161,10 +162,13 @@ def main():
         ax_gt.imshow(gt_overlay)
         ax_pred.imshow(pred_overlay)
 
-        # Label Slice di pinggir kiri
-        ax_input.text(10, 30, f"Slice {z}", color='yellow', fontsize=12, fontweight='bold',
-                      bbox=dict(facecolor='black', alpha=0.5, edgecolor='none'))
+    # Label Baris (Modalitas) diletakkan di kolom paling kiri
+    axes[0, 0].set_ylabel("Input Image", color='white', fontsize=16, fontweight='bold', labelpad=20)
+    axes[1, 0].set_ylabel("Ground Truth", color='red', fontsize=16, fontweight='bold', labelpad=20)
+    axes[2, 0].set_ylabel("Mod-Seg-SE(2)", color='green', fontsize=16, fontweight='bold', labelpad=20)
 
+    # Simpan
+    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
     plt.tight_layout()
     plt.savefig(SAVE_PATH, dpi=300, bbox_inches='tight', facecolor='black')
     print(f"\n✅ Visualisasi berhasil disimpan di: {SAVE_PATH}")
