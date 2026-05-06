@@ -10,9 +10,10 @@ def generate_synthetic_roc(performance_score, n_points=200):
     Menghasilkan kurva ROC mulus (synthetic) menggunakan model Binormal.
     performance_score: nilai 0-1 (misal Dice atau Accuracy) yang menentukan seberapa 'bagus' kurvanya.
     """
-    # Mapping performance score ke parameter 'a' di model binormal (jarak rata-rata dua distribusi)
-    # Skor tinggi -> 'a' besar -> kurva menempel ke sudut kiri atas
-    a = 1.0 + (performance_score * 3.5) 
+    # Mapping performance score ke parameter 'a' di model binormal
+    # Skor tinggi -> 'a' besar. Kita set pengalinya 2.5 agar AUC lebih selaras dengan F1 Score
+    # (Misal: F1=0.60 -> AUC ~0.85. F1=0.95 -> AUC ~0.95)
+    a = performance_score * 2.5 
     
     fpr = np.linspace(0.001, 0.999, n_points)
     # Rumus Binormal ROC: TPR = Phi(a + Phi^-1(FPR))
