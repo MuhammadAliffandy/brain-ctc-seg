@@ -2,7 +2,8 @@
 train_comparison_models.py
 ==========================
 Train competitor architectures from scratch using the SAME pipeline as SE2.
-Hyperparameters: 100 epochs | LR 1e-4 | Batch 8 | Split 85/15 | Loss: Focal+Dice+Edge
+v2: Hyperparameters: 150 epochs | LR 1e-4 | Batch 8 | Split 85/15 | Loss: Focal+Dice+Edge
+    Added: ReduceLROnPlateau, class weighting [1,10], early stopping (patience=20)
 
 Usage:
     python train_comparison_models.py --model harmonic --dataset ct    # CT only
@@ -288,13 +289,18 @@ class DiceLoss(nn.Module):
         return 1-((2*i+self.s)/(u+self.s)).mean()
 
 class EdgeBoundaryLoss(nn.Module):
+    def __init__(self, class_weights=None):
+        super().__init__()
+        self.class_weights = class_weights
     def forward(self,l,t):
         tf=t.float().unsqueeze(1)
         bnd=(F.max_pool2d(tf,5,1,2)-(-F.max_pool2d(-tf,5,1,2))).squeeze(1)
-        return (F.cross_entropy(l,t,reduction='none')*(1+5*bnd)).mean()
+        return (F.cross_entropy(l,t,weight=self.class_weights,reduction='none')*(1+5*bnd)).mean()
 
 class CombinedLoss(nn.Module):
-    def __init__(self): super().__init__(); self.f=FocalLoss(); self.d=DiceLoss(); self.e=EdgeBoundaryLoss()
+    def __init__(self, class_weights=None):
+        super().__init__()
+        self.f=FocalLoss(); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
     def forward(self,l,t): return self.f(l,t)+self.d(l,t)+0.5*self.e(l,t)
 
 
@@ -333,8 +339,8 @@ def train(model_key: str, dataset_key: str = 'all'):
     # Weights named with dataset suffix for easy identification
     SAVE_PATH   = os.path.join(SAVE_DIR, f"{save_name}_{dataset_key}_best.pth")
 
-    # Hyperparameters — identical to train.py
-    LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=100
+    # Hyperparameters — identical to train_se2_by_dataset.py v2
+    LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=150; EARLY_STOP_PATIENCE=20
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*65}")
@@ -366,12 +372,19 @@ def train(model_key: str, dataset_key: str = 'all'):
     val_loader   = DataLoader(val_set,   BATCH, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
     print(f"  Train slices : {len(train_set)} | Val slices: {len(val_set)}\n")
 
+    # Class weighting — identik dengan SE2, untuk CT imbalance
+    class_weights = torch.tensor([1.0, 10.0], device=device)
+
     # HarmonicNet uses escnn so no need for special init
     model     = ModelClass(n_channels=3, n_classes=2).to(device)
-    criterion = CombinedLoss().to(device)
+    criterion = CombinedLoss(class_weights=class_weights).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
+    )
     scaler    = torch.amp.GradScaler('cuda')
     best_iou  = 0.0
+    early_stop_counter = 0
 
     for epoch in range(1, EPOCHS+1):
         # ── Train ──
@@ -401,12 +414,23 @@ def train(model_key: str, dataset_key: str = 'all'):
         dice=(2*tp)/(2*tp+fp+fn+eps)
         prec= tp/(tp+fp+eps)
         rec = tp/(tp+fn+eps)
-        print(f"  Ep {epoch:>3} | Loss {train_loss/len(train_loader):.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"  Ep {epoch:>3} | Loss {train_loss/len(train_loader):.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f} | LR {current_lr:.2e}")
+
+        # Scheduler step — turunkan LR jika Dice stagnan
+        scheduler.step(dice)
 
         if iou > best_iou:
             best_iou = iou
+            early_stop_counter = 0
             torch.save(model.state_dict(), SAVE_PATH)
             print(f"  ★ Best [{dataset_key.upper()}] saved → {SAVE_PATH} (IoU={iou:.4f})")
+        else:
+            early_stop_counter += 1
+            print(f"  ⏳ No improvement. Early stop: {early_stop_counter}/{EARLY_STOP_PATIENCE}")
+            if early_stop_counter >= EARLY_STOP_PATIENCE:
+                print(f"  🛑 Early stopping at epoch {epoch}!")
+                break
 
         torch.cuda.empty_cache()
 

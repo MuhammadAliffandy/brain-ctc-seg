@@ -2,6 +2,7 @@
 train_se2_by_dataset.py
 =======================
 Exact replica of train.py with --dataset argument for CT/CTC separation.
+v2: Added ReduceLROnPlateau scheduler, class weighting, early stopping, EPOCHS=150.
 
 Usage:
     python train_se2_by_dataset.py --dataset ct    # Train on CT_* patients only
@@ -188,12 +189,15 @@ class FocalLoss(nn.Module):
         return (self.alpha * (1 - pt) ** self.gamma * bce).mean()
 
 class EdgeBoundaryLoss(nn.Module):
+    def __init__(self, class_weights=None):
+        super().__init__()
+        self.class_weights = class_weights
     def forward(self, logits, targets):
         tf      = targets.float().unsqueeze(1)
         dilated = F.max_pool2d(tf, kernel_size=5, stride=1, padding=2)
         eroded  = -F.max_pool2d(-tf, kernel_size=5, stride=1, padding=2)
         bnd     = (dilated - eroded).squeeze(1)
-        base    = F.cross_entropy(logits, targets, reduction='none')
+        base    = F.cross_entropy(logits, targets, weight=self.class_weights, reduction='none')
         return (base * (1 + 5.0 * bnd)).mean()
 
 class DiceLoss(nn.Module):
@@ -207,11 +211,11 @@ class DiceLoss(nn.Module):
         return 1.0 - ((2. * inter + self.smooth) / (union + self.smooth)).mean()
 
 class AdvancedCombinedLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, class_weights=None):
         super().__init__()
         self.focal = FocalLoss(gamma=3.0)
         self.dice  = DiceLoss()
-        self.edge  = EdgeBoundaryLoss()
+        self.edge  = EdgeBoundaryLoss(class_weights=class_weights)
     def forward(self, logits, targets):
         return self.focal(logits, targets) + self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
 
@@ -254,7 +258,8 @@ def train(dataset_key: str):
     MODEL_SAVE_DIR = os.path.join(PROJECT_ROOT, "saved_models_25D")
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
 
-    LEARNING_RATE = 1e-4; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 100; VAL_SPLIT = 0.15
+    LEARNING_RATE = 1e-4; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 150; VAL_SPLIT = 0.15
+    EARLY_STOP_PATIENCE = 20
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     print(f"\n{'='*65}")
@@ -293,12 +298,21 @@ def train(dataset_key: str):
     val_loader   = DataLoader(val_set,   BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
     print(f"  Train slices: {len(train_set)} | Val slices: {len(val_set)}\n")
 
+    # Class weighting — bobot lebih besar untuk kelas tumor (kelas 1) agar model tidak
+    # hanya belajar background, terutama penting untuk CT yang class imbalance-nya ekstrem.
+    # Hitung dari sampel: rasio background:tumor biasanya 99:1 → weight [1, 10]
+    class_weights = torch.tensor([1.0, 10.0], device=device)
+
     model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
-    criterion = AdvancedCombinedLoss().to(device)
+    criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
+    )
     scaler    = torch.amp.GradScaler('cuda')
 
     best_iou  = 0.0
+    early_stop_counter = 0
     best_path = os.path.join(MODEL_SAVE_DIR, f'se2_unet_{dataset_key}_best.pth')
 
     for epoch in range(1, EPOCHS + 1):
@@ -336,12 +350,23 @@ def train(dataset_key: str):
         rec   = total_tp / (total_tp + total_fn + eps)
         avg_loss = running_loss / len(train_loader)
 
-        print(f"\n  Ep {epoch:>3} [{dataset_key.upper()}] Loss {avg_loss:.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"\n  Ep {epoch:>3} [{dataset_key.upper()}] Loss {avg_loss:.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f} | LR {current_lr:.2e}")
+
+        # Scheduler step — turunkan LR jika Dice stagnan selama 10 epoch
+        scheduler.step(dice)
 
         if iou > best_iou:
             best_iou = iou
+            early_stop_counter = 0
             torch.save(model.state_dict(), best_path)
             print(f"  🌟 New Best [{dataset_key.upper()}] Saved → {best_path} (IoU={iou:.4f})")
+        else:
+            early_stop_counter += 1
+            print(f"  ⏳ No improvement. Early stop counter: {early_stop_counter}/{EARLY_STOP_PATIENCE}")
+            if early_stop_counter >= EARLY_STOP_PATIENCE:
+                print(f"  🛑 Early stopping triggered at epoch {epoch}!")
+                break
 
         if epoch % 10 == 0:
             ckpt = os.path.join(MODEL_SAVE_DIR, f'se2_unet_{dataset_key}_epoch_{epoch}.pth')
