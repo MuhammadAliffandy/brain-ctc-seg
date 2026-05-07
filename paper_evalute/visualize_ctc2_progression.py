@@ -86,10 +86,11 @@ def main():
             print("❌ Error: Weight model tidak ditemukan sama sekali!")
             sys.exit(1)
 
-    model = SE2_CNNET(n_channels=3, n_classes=2).to(device)
-    model = load_se2_weights(model, WEIGHT_PATH, device)
+    # Auto-detect base_channels dari checkpoint (24 atau 32)
+    model = load_se2_weights(SE2_CNNET, WEIGHT_PATH, device)
     model.eval()
     print("✅ Model loaded successfully.")
+
 
     # ─── 4. PROSES INFERENCE & PLOTTING ───
     # Layout Horizontal: 3 Baris (Input, GT, Pred) x N Kolom (Slices)
