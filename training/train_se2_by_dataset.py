@@ -308,7 +308,8 @@ def train(dataset_key: str):
     # Hitung dari sampel: rasio background:tumor biasanya 99:1 → weight [1, 10]
     class_weights = torch.tensor([1.0, 10.0], device=device)
 
-    model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=24).to(device)
+    model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32).to(device)
+
     criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
