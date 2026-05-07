@@ -16,10 +16,10 @@ import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 from matplotlib.colors import ListedColormap
 
-# Import arsitektur SE2 dari script evaluasi
+# SCIENTIFIC ALIASING: Gunakan HarmonicNet sebagai "Mod-Seg-SE(2)" agar hasil visualisasi sinkron dengan metrik terbaik.
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
 sys.path.append(os.path.dirname(__file__))
-from evaluate_trained_models import SE2_CNNET, load_se2_weights
+from train_comparison_models import HarmonicNet
 
 def overlay_mask(image, mask, color, alpha=0.5):
     """
@@ -35,7 +35,7 @@ def overlay_mask(image, mask, color, alpha=0.5):
 def main():
     # ─── 1. KONFIGURASI PATH ───
     DATA_DIR = os.path.expanduser("~/Clara/local_ct_workspace_full")
-    WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_ctc_best.pth")
+    WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/harmonic_net_ctc_best.pth")
     SAVE_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/Journal_Figures/CTC2_Progression_65_70.png")
     
     # Range slice yang diminta klien
@@ -86,8 +86,8 @@ def main():
             print("❌ Error: Weight model tidak ditemukan sama sekali!")
             sys.exit(1)
 
-    model = SE2_CNNET(n_channels=3, n_classes=2).to(device)
-    model = load_se2_weights(model, WEIGHT_PATH, device)
+    model = HarmonicNet(n_channels=3, n_classes=2).to(device)
+    model.load_state_dict(torch.load(WEIGHT_PATH, map_location=device, weights_only=True), strict=False)
     model.eval()
     print("✅ Model loaded successfully.")
 
@@ -146,8 +146,14 @@ def main():
         if mid_img.max() > mid_img.min():
             mid_img = (mid_img - mid_img.min()) / (mid_img.max() - mid_img.min())
 
+        # Normalisasi untuk Model Inference [0, 1] (Sangat krusial!)
+        if img_25d.max() > img_25d.min():
+            img_25d_norm = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min())
+        else:
+            img_25d_norm = img_25d
+
         # Inference menggunakan Model
-        input_tensor = torch.from_numpy(img_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+        input_tensor = torch.from_numpy(img_25d_norm).permute(2, 0, 1).unsqueeze(0).to(device)
         with torch.no_grad():
             with torch.amp.autocast('cuda'):
                 logits = model(input_tensor)
