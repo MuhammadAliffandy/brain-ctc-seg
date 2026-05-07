@@ -322,50 +322,7 @@ class CTBrain25DDatasetNoResize(Dataset):
         return torch.from_numpy(img).permute(2, 0, 1), torch.from_numpy(m).long()
 
 
-# ================================================================
-# DATASET B — WITH 256x256 resize (for models in train_comparison_models.py)
-# ================================================================
-class CTBrain25DDataset(Dataset):
-    def __init__(self, dataframe, root_dir):
-        self.root_dir=root_dir; self.patient_slices={}; self.all_samples=[]
-        pc='Patient_Folder' if 'Patient_Folder' in dataframe.columns else 'Patient'
-        for p in dataframe[pc].unique():
-            pd_=os.path.join(root_dir,p)
-            if not os.path.exists(pd_): continue
-            imgs=sorted([f for f in os.listdir(pd_) if f.endswith('_img.npy')],
-                        key=lambda x: int(re.findall(r'\d+',x)[-1]) if re.findall(r'\d+',x) else 0)
-            pairs=[(os.path.join(pd_,n), os.path.join(pd_,n).replace('_img.npy','_mask.npy'))
-                   for n in imgs if os.path.exists(os.path.join(pd_,n).replace('_img.npy','_mask.npy'))]
-            if pairs:
-                self.patient_slices[p]=pairs
-                for i in range(len(pairs)): self.all_samples.append((p,i))
-
-    def __len__(self): return len(self.all_samples)
-
-    def __getitem__(self, idx):
-        p,si=self.all_samples[idx]; sl=self.patient_slices[p]
-        pp=max(0,si-1); nx=min(len(sl)-1,si+1)
-        i0=np.load(sl[pp][0]).astype(np.float32)
-        i1=np.load(sl[si][0]).astype(np.float32)
-        i2=np.load(sl[nx][0]).astype(np.float32)
-        m =np.load(sl[si][1]).astype(np.uint8)
-        if m.max()>1: m=(m>0).astype(np.uint8)
-
-        # Stack 2.5D
-        img    = np.stack([i0, i1, i2], axis=-1)  # [H, W, 3]
-        
-        # NORMALIZATION FIX: Min-Max scale to [0, 1]
-        if img.max() > img.min():
-            img = (img - img.min()) / (img.max() - img.min())
-            
-        img_t  = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)   # [1,3,H,W]
-        mask_t = torch.from_numpy(m).float().unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-
-        # Resize to 256×256 — same as training pipeline in benchmarking.py
-        img_t  = F.interpolate(img_t,  size=(256, 256), mode='bilinear', align_corners=False)
-        mask_t = F.interpolate(mask_t, size=(256, 256), mode='nearest')
-
-        return img_t.squeeze(0), mask_t.squeeze(0).squeeze(0).long()
+# (Removed Dataset B as all models were trained on native resolution)
 
 
 # ================================================================
@@ -420,7 +377,7 @@ def main(dataset_key: str = 'all'):
     # For 'all' mode, fall back to old epoch_100 naming (backward compat)
     ds = dataset_key  # short alias
     MODELS = [
-        # (display_name, ModelClass, weight_filename, use_se2_loader)
+        # (display_name, ModelClass, weight_filename, is_se2)
         ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    f"se2_unet_{ds}_best.pth",        True),
         ("HarmonicNet (C4)",     HarmonicNet,   f"harmonic_net_{ds}_best.pth",    False),
         ("nnU-Net",              nnUNet,        f"nn_unet_{ds}_best.pth",         False),
@@ -458,25 +415,19 @@ def main(dataset_key: str = 'all'):
     val_df   = df.drop(train_df.index)
     print(f"  Val patients : {len(val_df)}")
 
-    # Dataset A — no resize — for SE2_CNNET (train.py pipeline)
+    # ALL models were trained on the native resolution pipeline
     val_set_native = CTBrain25DDatasetNoResize(val_df, DATA_PATH)
     val_loader_native = DataLoader(val_set_native, batch_size=8, shuffle=False,
                                    num_workers=4, pin_memory=True, persistent_workers=True)
 
-    # Dataset B — resize to 256x256 — for models in train_comparison_models.py
-    val_set_256 = CTBrain25DDataset(val_df, DATA_PATH)
-    val_loader_256 = DataLoader(val_set_256, batch_size=8, shuffle=False,
-                                num_workers=4, pin_memory=True, persistent_workers=True)
-
-    print(f"  Val slices (native) : {len(val_set_native)}")
-    print(f"  Val slices (256px)  : {len(val_set_256)}\n")
+    print(f"  Val slices : {len(val_set_native)}\n")
 
     all_results = []
     for entry in MODELS:
-        display_name, ModelClass, weight_file, use_se2_loader = entry
+        display_name, ModelClass, weight_file, is_se2 = entry
 
-        # Choose correct val loader based on training pipeline
-        val_loader = val_loader_native if use_se2_loader else val_loader_256
+        # ALL models were trained on native resolution, so we use val_loader_native for all!
+        val_loader = val_loader_native
 
         # Try primary weight path, then fallbacks
         candidates = [weight_file] + FALLBACK.get(display_name, [])
@@ -494,7 +445,7 @@ def main(dataset_key: str = 'all'):
             continue
 
         model = ModelClass(n_channels=3, n_classes=2).to(device)
-        if use_se2_loader:
+        if is_se2:
             model = load_se2_weights(model, weight_path, device)
         else:
             model.load_state_dict(
