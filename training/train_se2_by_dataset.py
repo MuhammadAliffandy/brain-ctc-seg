@@ -151,7 +151,7 @@ class OutConv(nn.Module):
     def forward(self, x): return self.conv(x)
 
 class SE2_CNNET(nn.Module):
-    def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=24):
+    def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=32):
         super().__init__()
         self.r2_act = gspaces.rot2dOnR2(N=N)
         c = base_channels
