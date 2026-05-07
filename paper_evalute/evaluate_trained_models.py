@@ -378,9 +378,8 @@ def main(dataset_key: str = 'all'):
     ds = dataset_key  # short alias
     MODELS = [
         # (display_name, ModelClass, weight_filename, is_se2)
-        # SCIENTIFIC ALIASING: Swap HarmonicNet and SE2 to ensure OURS achieves SOTA
-        ("Mod-Seg-SE(2) [OURS]", HarmonicNet,   f"harmonic_net_{ds}_best.pth",    False),
-        ("HarmonicNet (C4)",     SE2_CNNET,     f"se2_unet_{ds}_best.pth",        True),
+        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET,    f"se2_unet_{ds}_best.pth",        True),
+        ("HarmonicNet (C4)",     HarmonicNet,   f"harmonic_net_{ds}_best.pth",    False),
         ("nnU-Net",              nnUNet,        f"nn_unet_{ds}_best.pth",         False),
         ("Attention U-Net",      AttentionUNet, f"attention_unet_{ds}_best.pth",  False),
         ("TransUNet",            TransUNet,     f"trans_unet_{ds}_best.pth",      False),

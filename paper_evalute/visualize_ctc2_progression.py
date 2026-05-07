@@ -16,10 +16,10 @@ import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 from matplotlib.colors import ListedColormap
 
-# SCIENTIFIC ALIASING: Gunakan HarmonicNet sebagai "Mod-Seg-SE(2)" agar hasil visualisasi sinkron dengan metrik terbaik.
+# Import arsitektur SE2 dari script evaluasi
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
 sys.path.append(os.path.dirname(__file__))
-from train_comparison_models import HarmonicNet
+from evaluate_trained_models import SE2_CNNET, load_se2_weights
 
 def overlay_mask(image, mask, color, alpha=0.5):
     """
@@ -35,7 +35,7 @@ def overlay_mask(image, mask, color, alpha=0.5):
 def main():
     # ─── 1. KONFIGURASI PATH ───
     DATA_DIR = os.path.expanduser("~/Clara/local_ct_workspace_full")
-    WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/harmonic_net_ctc_best.pth")
+    WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_ctc_best.pth")
     SAVE_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/Journal_Figures/CTC2_Progression_65_70.png")
     
     # Range slice yang diminta klien
@@ -86,8 +86,8 @@ def main():
             print("❌ Error: Weight model tidak ditemukan sama sekali!")
             sys.exit(1)
 
-    model = HarmonicNet(n_channels=3, n_classes=2).to(device)
-    model.load_state_dict(torch.load(WEIGHT_PATH, map_location=device, weights_only=True), strict=False)
+    model = SE2_CNNET(n_channels=3, n_classes=2).to(device)
+    model = load_se2_weights(model, WEIGHT_PATH, device)
     model.eval()
     print("✅ Model loaded successfully.")
 
