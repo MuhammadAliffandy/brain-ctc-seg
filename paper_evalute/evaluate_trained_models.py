@@ -95,11 +95,23 @@ class SE2_CNNET(nn.Module):
         return self.outc(x).tensor
 
 
-def load_se2_weights(model, path, device):
-    """Load SE2 weights — exact same architecture as train.py, no remapping needed."""
+def load_se2_weights(model_class, path, device):
+    """Auto-detect base_channels from checkpoint, then build + load the model."""
     ckpt = torch.load(path, map_location=device, weights_only=True)
     sample = list(ckpt.keys())[:3]
     print(f"  🔑 Key sample: {sample}")
+
+    # Infer base_channels from the first batch_norm shape in checkpoint
+    # feat_type_1 has shape [base_channels * N] where N=8
+    base_channels = 24  # default fallback
+    for key, val in ckpt.items():
+        if 'batch_norm_[8].weight' in key and 'inc' in key:
+            detected = val.shape[0]  # e.g. 24 or 32
+            base_channels = detected
+            print(f"  🔍 Auto-detected base_channels = {base_channels} from checkpoint")
+            break
+
+    model = model_class(n_channels=3, n_classes=2, base_channels=base_channels).to(device)
     result = model.load_state_dict(ckpt, strict=False)
     if result.missing_keys:
         print(f"  ⚠️  Missing  : {result.missing_keys[:4]}")
@@ -444,14 +456,16 @@ def main(dataset_key: str = 'all'):
             print(f"  ⚠️  Weight file not found — skipping\n")
             continue
 
-        model = ModelClass(n_channels=3, n_classes=2).to(device)
         if is_se2:
-            model = load_se2_weights(model, weight_path, device)
+            # Auto-detect base_channels from checkpoint, build + load model
+            model = load_se2_weights(ModelClass, weight_path, device)
         else:
+            model = ModelClass(n_channels=3, n_classes=2).to(device)
             model.load_state_dict(
                 torch.load(weight_path, map_location=device, weights_only=True), strict=False
             )
         print(f"  ✅ Weights loaded\n")
+
 
         metrics = evaluate(model, val_loader, device, display_name)
         all_results.append({"Model": display_name, **metrics})
