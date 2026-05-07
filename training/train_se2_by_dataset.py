@@ -96,6 +96,11 @@ class CTBrain25DDataset(Dataset):
             i2 = np.load(slices[idx_next][0]).astype(np.float32)
             m  = np.load(slices[slice_idx][1]).astype(np.uint8)
             image_25d = np.stack([i0, i1, i2], axis=-1)
+            
+            # NORMALIZATION FIX: Min-Max scale to [0, 1] to prevent dead gradients
+            if image_25d.max() > image_25d.min():
+                image_25d = (image_25d - image_25d.min()) / (image_25d.max() - image_25d.min())
+                
             if self.transform is not None:
                 aug       = self.transform(image=image_25d, mask=m)
                 image_25d = aug['image']

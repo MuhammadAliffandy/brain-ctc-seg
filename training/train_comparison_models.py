@@ -265,6 +265,11 @@ class CTBrain25DDataset(Dataset):
             m=np.load(sl[si][1]).astype(np.uint8)
             if m.max()>1: m=(m>0).astype(np.uint8)
             img=np.stack([i0,i1,i2],axis=-1)
+            
+            # NORMALIZATION FIX: Min-Max scale to [0, 1]
+            if img.max() > img.min():
+                img = (img - img.min()) / (img.max() - img.min())
+                
             if self.transform:
                 aug=self.transform(image=img,mask=m); img=aug['image']; m=aug['mask']
             return torch.from_numpy(img).permute(2,0,1), torch.from_numpy(m).long()

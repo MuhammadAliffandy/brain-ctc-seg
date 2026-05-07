@@ -314,6 +314,11 @@ class CTBrain25DDatasetNoResize(Dataset):
         if m.max()>1: m=(m>0).astype(np.uint8)
         # No resize — same as train.py validation pipeline
         img = np.stack([i0, i1, i2], axis=-1)   # [H, W, 3]
+        
+        # NORMALIZATION FIX: Min-Max scale to [0, 1]
+        if img.max() > img.min():
+            img = (img - img.min()) / (img.max() - img.min())
+            
         return torch.from_numpy(img).permute(2, 0, 1), torch.from_numpy(m).long()
 
 
@@ -346,8 +351,13 @@ class CTBrain25DDataset(Dataset):
         m =np.load(sl[si][1]).astype(np.uint8)
         if m.max()>1: m=(m>0).astype(np.uint8)
 
-        # Stack 2.5D — NO normalization (training used raw .npy values)
+        # Stack 2.5D
         img    = np.stack([i0, i1, i2], axis=-1)  # [H, W, 3]
+        
+        # NORMALIZATION FIX: Min-Max scale to [0, 1]
+        if img.max() > img.min():
+            img = (img - img.min()) / (img.max() - img.min())
+            
         img_t  = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)   # [1,3,H,W]
         mask_t = torch.from_numpy(m).float().unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
 
