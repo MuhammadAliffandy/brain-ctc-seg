@@ -17,8 +17,8 @@ plt.switch_backend('agg')
 
 # Import Models & Loss dari pipeline kita
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
-from train_comparison_models import HarmonicNet, StandardUNet, nnUNet, AttentionUNet, TransUNet
-from train_se2_by_dataset import SE2_CNNET, CombinedLoss
+from train_comparison_models import HarmonicNet, StandardUNet, nnUNet, AttentionUNet, TransUNet, CombinedLoss
+from train_se2_by_dataset import SE2_CNNET
 
 # ==========================================
 # 1. DATASET LOADER (INTRA-DOMAIN KAGGLE)
