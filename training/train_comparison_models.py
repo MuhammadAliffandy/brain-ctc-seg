@@ -392,15 +392,17 @@ def train(model_key: str, dataset_key: str = 'all'):
     model     = ModelClass(n_channels=3, n_classes=2).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
 
+    # Definisi class weights untuk mengkompensasi imbalance ekstrem di CT (agar Attn U-Net tidak 0.0)
+    class_weights = torch.tensor([1.0, 10.0], device=device)
+
     if use_standard_pipeline:
-        # Standard: plain CrossEntropy, no class weighting
-        criterion = nn.CrossEntropyLoss().to(device)
+        # Standard: CrossEntropy with weights (to prevent collapse), no LR scheduler
+        criterion = nn.CrossEntropyLoss(weight=class_weights).to(device)
         scheduler = None
-        print(f"  📌 Using STANDARD pipeline (CE loss, no class weights, no LR scheduler)")
+        print(f"  📌 Using STANDARD pipeline (CE loss + weights, no LR scheduler)")
 
     else:
         # Our proposed: class-weighted EdgeBoundaryLoss + CombinedLoss + LR scheduler
-        class_weights = torch.tensor([1.0, 10.0], device=device)
         criterion = CombinedLoss(class_weights=class_weights).to(device)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
