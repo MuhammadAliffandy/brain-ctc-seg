@@ -35,11 +35,22 @@ class PublicKaggleDataset(Dataset):
         self.root_dir = root_dir
         self.samples = []
         
-        png_dir = os.path.join(root_dir, "External_Test", "PNG")
-        mask_dir = os.path.join(root_dir, "External_Test", "MASKS")
+        # Temukan letak persis folder External_Test secara dinamis
+        external_test_dir = None
+        for r, d, f in os.walk(root_dir):
+            if "External_Test" in d:
+                external_test_dir = os.path.join(r, "External_Test")
+                break
+                
+        if not external_test_dir:
+            print(f"\n⚠️  WARNING: Folder External_Test tidak ditemukan di dalam {root_dir}.")
+            return
+            
+        png_dir = os.path.join(external_test_dir, "PNG")
+        mask_dir = os.path.join(external_test_dir, "MASKS")
         
         if not os.path.exists(png_dir) or not os.path.exists(mask_dir):
-            print(f"\n⚠️  WARNING: Folder PNG atau MASKS tidak ditemukan di {root_dir}/External_Test.")
+            print(f"\n⚠️  WARNING: Folder PNG atau MASKS tidak ditemukan di {external_test_dir}.")
             print("Perlu menyesuaikan nama folder jika dataset berbeda.")
             return
 
