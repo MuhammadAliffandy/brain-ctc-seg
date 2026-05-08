@@ -35,30 +35,35 @@ class PublicKaggleDataset(Dataset):
         self.root_dir = root_dir
         self.samples = []
         
-        # Cari semua gambar (PNG/JPG)
-        all_images = glob.glob(os.path.join(root_dir, '**', '*.*'), recursive=True)
-        img_exts = ['.png', '.jpg', '.jpeg']
+        png_dir = os.path.join(root_dir, "External_Test", "PNG")
+        mask_dir = os.path.join(root_dir, "External_Test", "MASKS")
         
-        images = [f for f in all_images if any(f.lower().endswith(ext) for ext in img_exts)]
+        if not os.path.exists(png_dir) or not os.path.exists(mask_dir):
+            print(f"\n⚠️  WARNING: Folder PNG atau MASKS tidak ditemukan di {root_dir}/External_Test.")
+            print("Perlu menyesuaikan nama folder jika dataset berbeda.")
+            return
+
+        # Load all PNGs in the External_Test/PNG folder
+        inputs = sorted(glob.glob(os.path.join(png_dir, "*.png")))
         
-        # Pisahkan mana yang gambar input dan mana yang mask
-        # Asumsi umum: file mask mengandung kata 'mask' di namanya
-        masks = [f for f in images if 'mask' in os.path.basename(f).lower()]
-        inputs = [f for f in images if 'mask' not in os.path.basename(f).lower()]
-        
-        # Pairing logic (Mencocokkan nama file input dengan mask)
+        # Pairing logic
         for img_path in inputs:
-            base_name = os.path.splitext(os.path.basename(img_path))[0]
-            # Cari mask yang cocok dengan nama gambar (misal: image_1.png -> image_1_mask.png)
-            matching_mask = next((m for m in masks if base_name in m), None)
+            base_name = os.path.basename(img_path)
+            mask_path_exact = os.path.join(mask_dir, base_name)
             
-            if matching_mask:
-                self.samples.append((img_path, matching_mask))
+            if os.path.exists(mask_path_exact):
+                # Nama file mask persis sama dengan nama image
+                self.samples.append((img_path, mask_path_exact))
+            else:
+                # Fallback: Cari mask yang mengandung nama image
+                name_without_ext = os.path.splitext(base_name)[0]
+                possible_masks = glob.glob(os.path.join(mask_dir, f"*{name_without_ext}*.png"))
+                if possible_masks:
+                    self.samples.append((img_path, possible_masks[0]))
         
         if len(self.samples) == 0:
             print("\n⚠️  WARNING: Tidak dapat menemukan pasangan image-mask.")
-            print(f"Ditemukan {len(inputs)} input images dan {len(masks)} mask images.")
-            print("Perlu menyesuaikan Dataset Loader jika Kaggle menggunakan struktur spesifik.")
+            print(f"Ditemukan {len(inputs)} input images di PNG, tapi tidak ada mask yang cocok di MASKS.")
         else:
             print(f"📊 Ditemukan {len(self.samples)} pasangan data untuk evaluasi.")
 
