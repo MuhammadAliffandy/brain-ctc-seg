@@ -128,11 +128,25 @@ def get_models_dict(device):
 
 def evaluate():
     print("="*60)
-    print("📥 1. DOWNLOADING KAGGLE DATASET")
+    print("📥 1. DOWNLOADING / LOCATING KAGGLE DATASET")
     print("="*60)
-    dataset_path = kagglehub.dataset_download("ozguraslank/brain-stroke-ct-dataset")
-    print(f"✅ Dataset Path: {dataset_path}\n")
+    
+    LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+    
+    if not os.path.exists(LOCAL_DATA_DIR):
+        print("Mendownload dataset ke cache Kaggle...")
+        cache_path = kagglehub.dataset_download("ozguraslank/brain-stroke-ct-dataset")
+        print(f"✅ Downloaded to cache: {cache_path}")
+        
+        print(f"📦 Memindahkan dataset ke workspace lokal: {LOCAL_DATA_DIR}")
+        import shutil
+        shutil.copytree(cache_path, LOCAL_DATA_DIR)
+        print("✅ Proses copy selesai!")
+    else:
+        print(f"✅ Dataset sudah ada di lokal: {LOCAL_DATA_DIR}")
 
+    dataset_path = LOCAL_DATA_DIR
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🖥️ Device: {device}\n")
 
