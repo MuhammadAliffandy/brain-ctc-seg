@@ -14,9 +14,9 @@ from tqdm import tqdm
 
 from train_comparison_models import (
     HarmonicNet, StandardUNet, nnUNet, AttentionUNet, TransUNet, 
-    filter_df_by_dataset, CTBrain25DDataset, DiceLoss, FocalLoss
+    filter_df_by_dataset, CTBrain25DDataset, DiceLoss, FocalLoss, CombinedLoss
 )
-from train_se2_by_dataset import SE2_CNNET, CombinedLoss
+from train_se2_by_dataset import SE2_CNNET
 
 # ================================================================
 # MODEL REGISTRY
