@@ -126,8 +126,8 @@ def run_kfold(model_key: str, dataset_key: str, k_folds: int = 5):
         train_df = df[df[pc].isin(train_patients)]
         val_df = df[df[pc].isin(val_patients)]
         
-        train_dataset = CTBrain25DDataset(DATA_PATH, train_df, transform=aug_train)
-        val_dataset = CTBrain25DDataset(DATA_PATH, val_df, transform=None)
+        train_dataset = CTBrain25DDataset(train_df, DATA_PATH, transform=aug_train)
+        val_dataset = CTBrain25DDataset(val_df, DATA_PATH, transform=None)
         
         nw = min(os.cpu_count() or 4, 8)
         train_loader = DataLoader(train_dataset, batch_size=BATCH, shuffle=True, num_workers=nw, pin_memory=True)
