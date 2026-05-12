@@ -82,10 +82,17 @@ def run_kfold(model_key: str, dataset_key: str, k_folds: int = 5):
     
     use_standard_pipeline = (model_key != 'se2')
     
-    if use_standard_pipeline:
-        LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=100
+    # CTC dataset is much larger — use smaller batch + higher accumulation
+    # to keep effective batch size = 32 while reducing GPU memory footprint.
+    if dataset_key == 'ctc':
+        BATCH=4; ACCUM=8
     else:
-        LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=150
+        BATCH=8; ACCUM=4
+
+    if use_standard_pipeline:
+        LR=1e-4; EPOCHS=100
+    else:
+        LR=1e-4; EPOCHS=150
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -192,6 +199,11 @@ def run_kfold(model_key: str, dataset_key: str, k_folds: int = 5):
         final_fold_metrics["Model"] = model_key
         final_fold_metrics["Dataset"] = dataset_key
         fold_results.append(final_fold_metrics)
+        
+        # Bersihkan GPU memory secara eksplisit setelah setiap fold
+        del model, optimizer, criterion, train_loader, val_loader, train_dataset, val_dataset
+        torch.cuda.empty_cache()
+        print(f"🧹 GPU memory cleared after fold {fold+1}")
         
     # 5. Summarize Results across Folds
     df_results = pd.DataFrame(fold_results)
