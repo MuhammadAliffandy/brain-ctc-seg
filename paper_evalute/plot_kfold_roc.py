@@ -86,8 +86,20 @@ def main():
 
     df = pd.read_csv(CSV_PATH)
     
-    # 1. Bersihkan Duplikat (ambil baris paling terakhir untuk kombinasi Model + Dataset)
-    df = df.drop_duplicates(subset=['Dataset', 'Model'], keep='last')
+    # Sort by Dice_Mean ascending, so the "worst" performance is at the top
+    df['Dice_Mean'] = pd.to_numeric(df['Dice_Mean'], errors='coerce')
+    df = df.sort_values(by=['Dataset', 'Model', 'Dice_Mean'], ascending=[True, True, True])
+    
+    # 1. Bersihkan Duplikat (ambil baris paling pertama alias yang paling "jelek" karena sudah di-sort)
+    df = df.drop_duplicates(subset=['Dataset', 'Model'], keep='first')
+    
+    EXPECTED_MODELS = {'se2', 'harmonic', 'unet', 'nnunet', 'attention', 'transunet'}
+    
+    for ds in ['ct', 'ctc']:
+        found_models = set(df[df['Dataset'].str.lower() == ds]['Model'].str.lower())
+        missing = EXPECTED_MODELS - found_models
+        if missing:
+             print(f"⚠️ PERINGATAN: Di dataset {ds.upper()}, model berikut belum ada di CSV: {missing}")
     
     # 2. Plot untuk CT
     plot_kfold_roc_for_dataset(df, 'ct', os.path.join(OUT_DIR, "ROC_Curve_KFold_CT.png"))
