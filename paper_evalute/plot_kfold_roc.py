@@ -60,7 +60,36 @@ def plot_kfold_roc_for_dataset(df, dataset_name, out_file):
     plt.ylabel('True Positive Rate (Sensitivity)', fontsize=14, fontweight='bold')
     plt.title(f'K-Fold Cross Validation ROC - {dataset_name.upper()} Dataset', fontsize=16, fontweight='bold', pad=20)
     
-    plt.legend(loc="lower right", fontsize=11, frameon=True, shadow=True, edgecolor='black')
+    handles, labels = plt.gca().get_legend_handles_labels()
+    new_handles, new_labels = [], []
+    se2_h, se2_l = None, None
+    rg_h, rg_l = None, None
+    other_h, other_l = [], []
+    
+    for h, l in zip(handles, labels):
+        if 'Mod-Seg-SE(2)' in l:
+            se2_h, se2_l = h, l
+        elif 'Random Guess' in l:
+            rg_h, rg_l = h, l
+        else:
+            # Sort others by AUC descending (extract AUC from label if possible, or just keep as is)
+            other_h.append(h)
+            other_l.append(l)
+            
+    # Sort others by extracting the AUC float value from the label string "(AUC = 0.xxx)"
+    others_sorted = sorted(zip(other_h, other_l), key=lambda x: float(x[1].split('AUC = ')[1].replace(')', '')) if 'AUC =' in x[1] else 0.0, reverse=True)
+    other_h = [x[0] for x in others_sorted]
+    other_l = [x[1] for x in others_sorted]
+
+    if se2_h:
+        new_handles.append(se2_h)
+        new_labels.append(se2_l)
+    new_handles.extend(other_h)
+    if rg_h:
+        new_handles.append(rg_h)
+        new_labels.append(rg_l)
+        
+    plt.legend(new_handles, new_labels, loc="lower right", fontsize=11, frameon=True, shadow=True, edgecolor='black')
     plt.grid(True, linestyle=':', alpha=0.7)
     
     ax = plt.gca()
