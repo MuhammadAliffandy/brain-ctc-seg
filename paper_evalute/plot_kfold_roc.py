@@ -44,10 +44,8 @@ def plot_kfold_roc_for_dataset(df, dataset_name, out_file):
         base_perf = (dice_mean + acc_mean) / 2.0
         
         color, ls, lw, display_name = 'black', 'solid', 1.5, model_name.upper()
-        for key in COLOR_MAP:
-            if key in model_name:
-                color, ls, lw, display_name = COLOR_MAP[key]
-                break
+        if model_name in COLOR_MAP:
+            color, ls, lw, display_name = COLOR_MAP[model_name]
         
         fpr, tpr, auc_val = generate_synthetic_roc(base_perf)
         plt.plot(fpr, tpr, color=color, linestyle=ls, linewidth=lw, 
@@ -84,7 +82,10 @@ def plot_kfold_roc_for_dataset(df, dataset_name, out_file):
     if se2_h:
         new_handles.append(se2_h)
         new_labels.append(se2_l)
+        
     new_handles.extend(other_h)
+    new_labels.extend(other_l)
+    
     if rg_h:
         new_handles.append(rg_h)
         new_labels.append(rg_l)
