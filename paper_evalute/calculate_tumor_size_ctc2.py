@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import nibabel as nib
+import scipy.ndimage
 plt.switch_backend('agg')
 
 # Import arsitektur SE2 dari script evaluasi
@@ -140,7 +141,7 @@ def main():
         gt_mask = np.rot90(gt_mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
         pred_mask = np.rot90(pred_mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
 
-        # Hitung Ukuran (Pixels -> mm^2 -> cm^2)
+        # Hitung Ukuran (Pixels -> mm^2 -> cm^2) untuk OVERALL
         gt_pixels = np.sum(gt_mask == 1)
         pred_pixels = np.sum(pred_mask == 1)
         
@@ -154,12 +155,39 @@ def main():
         ax_gt.imshow(gt_overlay)
         ax_pred.imshow(pred_overlay)
 
-        # Annotations di gambar
-        ax_gt.set_title(f"Slice {z} (Ground Truth)\nArea: {gt_area_mm2:.1f} mm² ({gt_area_mm2/100:.2f} cm²)\nPixels: {gt_pixels}", 
-                        fontsize=12, fontweight='bold', pad=10, color='darkred')
-        
-        ax_pred.set_title(f"Slice {z} (SE(2) Prediction)\nArea: {pred_area_mm2:.1f} mm² ({pred_area_mm2/100:.2f} cm²)\nPixels: {pred_pixels}", 
-                          fontsize=12, fontweight='bold', pad=10, color='darkgreen')
+        # Annotate individual tumors for Ground Truth
+        gt_labels, gt_num = scipy.ndimage.label(gt_mask)
+        for idx in range(1, gt_num + 1):
+            blob = (gt_labels == idx)
+            pixels = np.sum(blob)
+            if pixels < 5: continue
+            area_mm2 = pixels * pixel_area_mm2
+            y_idx, x_idx = np.where(blob)
+            cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
+            
+            # Draw text near centroid, slightly above
+            ax_gt.text(cx, cy - 10, f"{area_mm2:.1f} mm²", color='white', 
+                       fontsize=9, fontweight='bold', ha='center', va='center',
+                       bbox=dict(facecolor='darkred', alpha=0.7, edgecolor='none', pad=1))
+
+        # Annotate individual tumors for Prediction
+        pred_labels, pred_num = scipy.ndimage.label(pred_mask)
+        for idx in range(1, pred_num + 1):
+            blob = (pred_labels == idx)
+            pixels = np.sum(blob)
+            if pixels < 5: continue
+            area_mm2 = pixels * pixel_area_mm2
+            y_idx, x_idx = np.where(blob)
+            cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
+            
+            # Draw text near centroid, slightly above
+            ax_pred.text(cx, cy - 10, f"{area_mm2:.1f} mm²", color='white', 
+                       fontsize=9, fontweight='bold', ha='center', va='center',
+                       bbox=dict(facecolor='darkgreen', alpha=0.7, edgecolor='none', pad=1))
+
+        # Annotations di gambar (Hanya menampilkan slice info, area total bisa dihilangkan atau dipertahankan)
+        ax_gt.set_title(f"Slice {z} (Ground Truth)", fontsize=14, fontweight='bold', pad=10, color='darkred')
+        ax_pred.set_title(f"Slice {z} (SE(2) Prediction)", fontsize=14, fontweight='bold', pad=10, color='darkgreen')
 
         # Print to console
         print(f"\n--- SLICE {z} ---")
