@@ -54,9 +54,9 @@ def get_best_ct_ctc_slices(dataset_prefix, num_slices=4):
                 
             # Check for reasonable tumor size (avoid bounding box artifacts or skull masks)
             if t_sum > max_tumor and t_sum < 4000:
-                    max_tumor = t_sum
-                    
-                    z_str = img_path.split('_')[-2]
+                max_tumor = t_sum
+                
+                z_str = img_path.split('_')[-2]
                 z = int(z_str.replace('z', ''))
                 prev_path = img_path.replace(z_str, f"z{z-1:03d}")
                 next_path = img_path.replace(z_str, f"z{z+1:03d}")
