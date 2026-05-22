@@ -51,10 +51,12 @@ def get_best_ct_ctc_slices(dataset_prefix, num_slices=4):
             if not os.path.exists(mask_path): continue
             m = np.load(mask_path).astype(np.uint8)
             t_sum = np.sum(m)
-            if t_sum > max_tumor:
-                max_tumor = t_sum
                 
-                z_str = img_path.split('_')[-2]
+            # Check for reasonable tumor size (avoid bounding box artifacts or skull masks)
+            if t_sum > max_tumor and t_sum < 4000:
+                    max_tumor = t_sum
+                    
+                    z_str = img_path.split('_')[-2]
                 z = int(z_str.replace('z', ''))
                 prev_path = img_path.replace(z_str, f"z{z-1:03d}")
                 next_path = img_path.replace(z_str, f"z{z+1:03d}")
@@ -107,7 +109,9 @@ def get_kaggle_slices(dataset_type, num_slices=4):
         mask = cv2.resize(mask, (256, 256), interpolation=cv2.INTER_NEAREST)
         mask = (mask > 127).astype(np.uint8)
         
-        if np.sum(mask) > 100:
+        # Check for reasonable tumor size (avoid full brain/skull masks which have > 5000 pixels)
+        pixel_count = np.sum(mask)
+        if pixel_count > 50 and pixel_count < 4000:
             img_float = img.astype(np.float32)
             if img_float.max() > img_float.min():
                 img_norm = (img_float - img_float.min()) / (img_float.max() - img_float.min())
