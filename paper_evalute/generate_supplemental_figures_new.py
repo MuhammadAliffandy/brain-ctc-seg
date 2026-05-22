@@ -15,6 +15,8 @@ sys.path.append(os.path.join(base_dir, "training"))
 sys.path.append(os.path.join(base_dir, "public_dataset"))
 
 from train_se2_by_dataset import SE2_CNNET
+sys.path.append(os.path.join(base_dir, "paper_evalute"))
+from evaluate_trained_models import load_se2_weights
 from train_all_intra import get_kaggle_splits
 from train_all_intra_hemorrhage import get_kaggle_hemorrhage_splits
 
@@ -195,30 +197,27 @@ def main():
     print("Loading Models & Generating Figure B (CTC, Stroke, Hemorrhage)...")
     
     # 1. CTC
-    model_ctc = SE2_CNNET(n_channels=3, n_classes=2).to(device)
     w_ctc = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_ctc_best.pth")
     if os.path.exists(w_ctc):
-        model_ctc.load_state_dict(torch.load(w_ctc, map_location=device))
+        model_ctc = load_se2_weights(SE2_CNNET, w_ctc, device)
         preds_ctc = infer_slices(model_ctc, ctc_slices, device)
         generate_figure_b(ctc_slices, preds_ctc, "CTC", os.path.join(out_dir, "Fig_Supplemental_B_CTC.png"))
     else:
         print(f"⚠️ Weights for CTC not found: {w_ctc}")
     
     # 2. Stroke
-    model_stroke = SE2_CNNET(n_channels=3, n_classes=2).to(device)
     w_stroke = os.path.join(base_dir, "public_dataset", "saved_models", "Mod-Seg-SE2_kaggle_best.pth")
     if os.path.exists(w_stroke):
-        model_stroke.load_state_dict(torch.load(w_stroke, map_location=device))
+        model_stroke = load_se2_weights(SE2_CNNET, w_stroke, device)
         preds_stroke = infer_slices(model_stroke, stroke_slices, device)
         generate_figure_b(stroke_slices, preds_stroke, "Stroke", os.path.join(out_dir, "Fig_Supplemental_B_Stroke.png"))
     else:
         print(f"⚠️ Weights for Stroke not found: {w_stroke}")
         
     # 3. Hemorrhage
-    model_hem = SE2_CNNET(n_channels=3, n_classes=2).to(device)
     w_hem = os.path.join(base_dir, "public_dataset", "saved_models", "Mod-Seg-SE2_kaggle_hemorrhage_best.pth")
     if os.path.exists(w_hem):
-        model_hem.load_state_dict(torch.load(w_hem, map_location=device))
+        model_hem = load_se2_weights(SE2_CNNET, w_hem, device)
         preds_hem = infer_slices(model_hem, hem_slices, device)
         generate_figure_b(hem_slices, preds_hem, "Hemorrhage", os.path.join(out_dir, "Fig_Supplemental_B_Hemorrhage.png"))
     else:
