@@ -56,11 +56,43 @@ python training/train_se2_by_dataset.py --dataset ctc
 ```
 
 **Step 3: Training Model Pembanding (Competitors)**
-Lakukan untuk masing-masing dataset (`ct` dan `ctc`):
+Anda dapat menjalankan *training* secara manual satu per satu untuk setiap model:
 ```bash
+# Model HarmonicNet (C4)
 python training/train_comparison_models.py --model harmonic --dataset ct
+python training/train_comparison_models.py --model harmonic --dataset ctc
+
+# Model Standard U-Net
 python training/train_comparison_models.py --model unet --dataset ct
-# (Lanjutkan untuk model lain...)
+python training/train_comparison_models.py --model unet --dataset ctc
+
+# Model nnU-Net
+python training/train_comparison_models.py --model nnunet --dataset ct
+python training/train_comparison_models.py --model nnunet --dataset ctc
+
+# Model Attention U-Net
+python training/train_comparison_models.py --model attention --dataset ct
+python training/train_comparison_models.py --model attention --dataset ctc
+
+# Model TransUNet
+python training/train_comparison_models.py --model transunet --dataset ct
+python training/train_comparison_models.py --model transunet --dataset ctc
+```
+
+**Alternatif Otomatis (Background Execution)**
+Untuk menjalankan semua model di atas secara berurutan dan terhindar dari putusnya koneksi SSH, gunakan *shell scripts* yang sudah disediakan. Skrip-skrip ini sudah otomatis menggunakan `nohup` di dalamnya:
+```bash
+# Untuk semua eksperimen CT
+cd training && ./run_all_ct_models.sh
+
+# Untuk semua eksperimen CTC
+cd training && ./run_all_ctc_models.sh
+```
+
+**Step 3.5: 5-Fold Cross Validation Training**
+Untuk memastikan *robustness* model dengan evaluasi 5-Fold Cross Validation (akan memproses seluruh model dan me-generate `master_kfold_results.csv`):
+```bash
+cd training && ./run_all_kfold.sh
 ```
 
 **Step 4: Evaluasi dan Hasilkan Laporan CSV**
