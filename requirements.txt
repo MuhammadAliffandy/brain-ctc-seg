@@ -3,7 +3,7 @@ torchvision
 torchaudio
 tqdm
 nibabel
-numpy
+numpy<2
 matplotlib
 streamlit
 python-dotenv
