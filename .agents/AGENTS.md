@@ -25,3 +25,12 @@ We benchmarked 6 models, categorized into Equivariant vs. Non-Equivariant:
 ## Evaluation & Benchmarking Strategy
 - **Primary Metric**: **F1 Score / Dice Coefficient** is the main ground-truth metric for ranking models due to heavy background imbalance in medical tumor segmentation. Other tracked metrics include IoU, Accuracy, Precision, and Recall.
 - **Benchmark Plotting (`model_benchmark_full.py`)**: For ROC curves and certain evaluations, a **Degradation Engine** was utilized. It applies specific, scaled spatial degradation (morphological noise + missed boundary pixels) based on known architectural limitations (e.g., nnU-Net: 5.5% degradation, Standard U-Net: 15.5%) to the SE(2) base predictions. This yields highly realistic comparative metric distributions ensuring Mod-Seg-SE(2) outperformance is accurately represented visually.
+
+## DGX Server & Environment Troubleshooting
+When operating on the DGX server (e.g., `DGXH100`), keep the following environment quirks in mind:
+1. **PyTorch CUDA Issues**: If training scripts fall back to `Device: cpu` despite GPUs being available, it implies the conda environment installed a CPU-only PyTorch. Fix this by uninstalling torch and installing the explicit CUDA wheel (e.g., `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121`).
+2. **ESCNN / Py3nj Compilation Errors**: If `escnn` throws NumPy crash errors, it's because `lie_learn` / `py3nj` was compiled against NumPy 1.x. Resolve this by strictly downgrading: `pip install "numpy<2"`.
+3. **Dataset Rclone Mount**: The dataset is mounted via Google Drive (`rclone`). If the server restarts, the mount point drops. 
+   - Re-mount command: `rclone mount clara_drive: /raid/D13K48009/Clara/new_drive --daemon`
+   - If `rclone` is missing, install it via conda without sudo: `conda install -c conda-forge rclone -y`
+4. **Hardcoded Paths & Symlinks**: Many scripts hardcode `~/Clara/new_drive/...`. Since the repo and mount reside in `/raid/D13K48009/Clara`, a symlink is required: `ln -s /raid/D13K48009/Clara ~/Clara`.

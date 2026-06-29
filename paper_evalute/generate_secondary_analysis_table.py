@@ -35,9 +35,10 @@ except ImportError:
 
 # Import models and dataset from evaluate_trained_models
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+import argparse
 from evaluate_trained_models import (
     SE2_CNNET, HarmonicNet, StandardUNet, nnUNet, AttentionUNet, TransUNet, 
-    CTBrain25DDatasetNoResize, load_se2_weights
+    CTBrain25DDatasetNoResize, load_se2_weights, filter_df_by_dataset
 )
 
 # Paths
@@ -118,9 +119,9 @@ def evaluate_model(model, loader, device, name):
         "HD95_Mean": h_mean, "HD95_L": h_low, "HD95_H": h_high
     }
 
-def main():
+def main(dataset_key):
     print("="*90)
-    print("📊 GENERATING SECONDARY ANALYSIS TABLE (Params, FLOPs, HD95, CI 95%)".center(90))
+    print(f"📊 GENERATING SECONDARY ANALYSIS TABLE FOR {dataset_key.upper()} (Params, FLOPs, HD95, CI 95%)".center(90))
     print("="*90)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -131,6 +132,13 @@ def main():
         sys.exit(1)
         
     df = pd.read_csv(CSV_REPORT)
+    pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
+    df = filter_df_by_dataset(df, dataset_key, pc)
+    print(f"  Dataset '{dataset_key}': {len(df)} patients total")
+    if len(df) == 0:
+        print("❌ No patients match this dataset type.")
+        sys.exit(1)
+        
     train_df = df.sample(frac=0.85, random_state=42)
     val_df   = df.drop(train_df.index)
     
@@ -139,16 +147,16 @@ def main():
     print(f"  Validation samples: {len(val_set)}\n")
 
     MODELS = [
-        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET, "se2_unet_ct_best.pth", True),
-        ("HarmonicNet (C4)", HarmonicNet, "harmonic_net_ct_best.pth", False),
-        ("nnU-Net", nnUNet, "nn_unet_ct_best.pth", False),
-        ("Attention U-Net", AttentionUNet, "attention_unet_ct_best.pth", False),
-        ("TransUNet", TransUNet, "trans_unet_ct_best.pth", False),
-        ("Standard U-Net", StandardUNet, "standard_unet_ct_best.pth", False),
+        ("Mod-Seg-SE(2) [OURS]", SE2_CNNET, f"se2_unet_{dataset_key}_best.pth", True),
+        ("HarmonicNet (C4)", HarmonicNet, f"harmonic_net_{dataset_key}_best.pth", False),
+        ("nnU-Net", nnUNet, f"nn_unet_{dataset_key}_best.pth", False),
+        ("Attention U-Net", AttentionUNet, f"attention_unet_{dataset_key}_best.pth", False),
+        ("TransUNet", TransUNet, f"trans_unet_{dataset_key}_best.pth", False),
+        ("Standard U-Net", StandardUNet, f"standard_unet_{dataset_key}_best.pth", False),
     ]
     
     FALLBACK = {
-        "Mod-Seg-SE(2) [OURS]": ["se2_unet_epoch_100.pth", "se2_unet_all_best.pth", "se2_unet_ctc_best.pth"],
+        "Mod-Seg-SE(2) [OURS]": ["se2_unet_epoch_100.pth", "se2_unet_all_best.pth", "se2_unet_ct_best.pth", "se2_unet_ctc_best.pth"],
         "HarmonicNet (C4)": ["harmonic_net_epoch_100.pth", "harmonic_net_all_best.pth"],
         "nnU-Net": ["nn_unet_epoch_100.pth", "nn_unet_all_best.pth"],
         "Attention U-Net": ["attention_unet_epoch_100.pth", "attention_unet_all_best.pth"],
@@ -219,9 +227,13 @@ def main():
         print(df_res.to_string(index=False))
     print("="*90)
     
-    out_csv = os.path.expanduser("~/Clara/secondary_analysis_table.csv")
+    out_csv = os.path.expanduser(f"~/Clara/secondary_analysis_table_{dataset_key}.csv")
     df_res.to_csv(out_csv, index=False)
     print(f"\n💾 Saved to CSV: {out_csv}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Generate secondary analysis table")
+    parser.add_argument('--dataset', default='ct', choices=['ct', 'ctc', 'all'],
+                        help="Dataset type to evaluate on: 'ct', 'ctc', or 'all'")
+    args = parser.parse_args()
+    main(args.dataset)
