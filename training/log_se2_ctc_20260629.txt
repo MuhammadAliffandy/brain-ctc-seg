@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "/Users/aliffandy/Documents/PukulEnam/brain-ctc-seg/training/train_se2_by_dataset.py", line 23, in <module>
-    import albumentations as A
-ModuleNotFoundError: No module named 'albumentations'
