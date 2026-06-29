@@ -26,9 +26,9 @@ CUDA_VISIBLE_DEVICES=3 nohup python train_comparison_models.py --model unet --da
 echo "[GPU 4] Training nnU-Net (CTC)..."
 CUDA_VISIBLE_DEVICES=4 nohup python train_comparison_models.py --model nnunet --dataset ctc > "log_nnunet_ctc_${DATE}.txt" 2>&1 &
 
-# GPU 5: Attention U-Net
-echo "[GPU 5] Training Attention U-Net (CTC)..."
-CUDA_VISIBLE_DEVICES=5 nohup python train_comparison_models.py --model attention --dataset ctc > "log_attention_ctc_${DATE}.txt" 2>&1 &
+# GPU 0: Attention U-Net
+echo "[GPU 0] Training Attention U-Net (CTC)..."
+CUDA_VISIBLE_DEVICES=0 nohup python train_comparison_models.py --model attention --dataset ctc > "log_attention_ctc_${DATE}.txt" 2>&1 &
 
 # GPU 6: TransUNet
 echo "[GPU 6] Training TransUNet (CTC)..."
