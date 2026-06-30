@@ -341,7 +341,7 @@ class CTBrain25DDatasetNoResize(Dataset):
 # EVALUATION
 # ================================================================
 def evaluate(model, loader, device, name):
-    model.eval(); tp=fp=fn=0
+    model.eval(); tp=fp=fn=tn=0
     with torch.no_grad():
         for imgs, masks in tqdm(loader, desc=f"  {name}", ncols=80):
             imgs=imgs.to(device,non_blocking=True)
@@ -353,9 +353,10 @@ def evaluate(model, loader, device, name):
             tp+=((pf==1)&(mf==1)).sum().item()
             fp+=((pf==1)&(mf==0)).sum().item()
             fn+=((pf==0)&(mf==1)).sum().item()
+            tn+=((pf==0)&(mf==0)).sum().item()
     eps=1e-7
-    total=tp+fp+fn
-    acc=(tp)/(total+eps)   # approximate (no TN tracked, but gives relative measure)
+    total=tp+fp+fn+tn
+    acc=(tp+tn)/(total+eps)
     prec=tp/(tp+fp+eps)
     rec =tp/(tp+fn+eps)
     f1  =(2*tp)/(2*tp+fp+fn+eps)
