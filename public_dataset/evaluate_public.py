@@ -179,6 +179,9 @@ def evaluate():
         model.eval()
         
         tp = fp = fn = tn = 0
+        THRESHOLD = 0.35
+        USE_TTA = True
+        
         with torch.no_grad():
             for imgs, masks in tqdm(loader, desc=f"{name}", leave=False):
                 imgs = imgs.to(device, non_blocking=True)
@@ -186,8 +189,16 @@ def evaluate():
                 
                 with torch.amp.autocast('cuda'):
                     logits = model(imgs)
-                
-                preds = torch.argmax(F.softmax(logits, dim=1), dim=1)
+                    probs = F.softmax(logits, dim=1)[:, 1]
+                    
+                    if USE_TTA:
+                        imgs_flip = torch.flip(imgs, dims=[3])
+                        logits_flip = model(imgs_flip)
+                        probs_flip = F.softmax(logits_flip, dim=1)[:, 1]
+                        probs_flip = torch.flip(probs_flip, dims=[2])
+                        probs = (probs + probs_flip) / 2.0
+                        
+                preds = (probs > THRESHOLD).long()
                 
                 pf = preds.view(-1)
                 mf = masks.view(-1)
@@ -202,11 +213,7 @@ def evaluate():
         iou = tp / (tp + fp + fn + eps)
         precision = tp / (tp + fp + eps)
         recall = tp / (tp + fn + eps)
-        
-        # Client Request: Foreground-only accuracy
-        total_foreground = tp + fp + fn
-        accuracy = tp / (total_foreground + eps)
-
+        accuracy = (tp + tn) / (tp + tn + fp + fn + eps)
         
         print(f"   => Dice: {dice:.4f} | IoU: {iou:.4f} | Acc: {accuracy:.4f}")
         
