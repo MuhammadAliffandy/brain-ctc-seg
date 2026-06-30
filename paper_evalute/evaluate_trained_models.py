@@ -355,8 +355,11 @@ def evaluate(model, loader, device, name):
             fn+=((pf==0)&(mf==1)).sum().item()
             tn+=((pf==0)&(mf==0)).sum().item()
     eps=1e-7
-    total=tp+fp+fn+tn
-    acc=(tp+tn)/(total+eps)
+    # Client Request: Modify Accuracy to focus strictly on segmented area (Foreground-Only)
+    # This intentionally removes TN (True Negatives) to prevent background-inflation
+    total_foreground = tp + fp + fn
+    acc = tp / (total_foreground + eps) 
+    
     prec=tp/(tp+fp+eps)
     rec =tp/(tp+fn+eps)
     f1  =(2*tp)/(2*tp+fp+fn+eps)

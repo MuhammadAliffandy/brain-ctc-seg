@@ -206,7 +206,9 @@ def train_and_eval_model(model_name, ModelClass, is_se2, train_loader, test_load
     iou = tp / (tp + fp + fn + eps)
     precision = tp / (tp + fp + eps)
     recall = tp / (tp + fn + eps)
-    accuracy = (tp + tn) / (tp + tn + fp + fn + eps)
+    # Client Request: Foreground-only accuracy
+    total_foreground = tp + fp + fn
+    accuracy = tp / (total_foreground + eps)
     
     return {
         "Model": model_name,

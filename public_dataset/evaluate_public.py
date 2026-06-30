@@ -202,7 +202,11 @@ def evaluate():
         iou = tp / (tp + fp + fn + eps)
         precision = tp / (tp + fp + eps)
         recall = tp / (tp + fn + eps)
-        accuracy = (tp + tn) / (tp + tn + fp + fn + eps)
+        
+        # Client Request: Foreground-only accuracy
+        total_foreground = tp + fp + fn
+        accuracy = tp / (total_foreground + eps)
+
         
         print(f"   => Dice: {dice:.4f} | IoU: {iou:.4f} | Acc: {accuracy:.4f}")
         
