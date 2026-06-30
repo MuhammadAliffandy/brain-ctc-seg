@@ -186,7 +186,7 @@ class SE2_CNNET(nn.Module):
 # LOSS FUNCTIONS — identical to train.py
 # ================================================================
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=3.0):
+    def __init__(self, alpha=0.75, gamma=3.0):
         super().__init__(); self.alpha = alpha; self.gamma = gamma
     def forward(self, logits, targets):
         bce = F.cross_entropy(logits, targets, reduction='none')
@@ -218,11 +218,12 @@ class DiceLoss(nn.Module):
 class AdvancedCombinedLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
-        self.focal = FocalLoss(gamma=3.0)
+        self.focal = FocalLoss(alpha=0.75, gamma=3.0)
         self.dice  = DiceLoss()
         self.edge  = EdgeBoundaryLoss(class_weights=class_weights)
     def forward(self, logits, targets):
-        return self.focal(logits, targets) + self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
+        # Lapis 2: Heavily weight DiceLoss (2.0) to directly optimize for IoU/Dice
+        return 0.5 * self.focal(logits, targets) + 2.0 * self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
 
 
 # ================================================================

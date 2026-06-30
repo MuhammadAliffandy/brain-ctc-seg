@@ -281,7 +281,7 @@ class CTBrain25DDataset(Dataset):
 # LOSS (same as train.py)
 # ================================================================
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=3.0): super().__init__(); self.a=alpha; self.g=gamma
+    def __init__(self, alpha=0.75, gamma=3.0): super().__init__(); self.a=alpha; self.g=gamma
     def forward(self,l,t):
         b=F.cross_entropy(l,t,reduction='none'); return (self.a*(1-torch.exp(-b))**self.g*b).mean()
 
@@ -305,8 +305,8 @@ class EdgeBoundaryLoss(nn.Module):
 class CombinedLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
-        self.f=FocalLoss(); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
-    def forward(self,l,t): return self.f(l,t)+self.d(l,t)+0.5*self.e(l,t)
+        self.f=FocalLoss(alpha=0.75, gamma=3.0); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
+    def forward(self,l,t): return 0.5*self.f(l,t) + 2.0*self.d(l,t) + 0.5*self.e(l,t)
 
 
 # ================================================================
