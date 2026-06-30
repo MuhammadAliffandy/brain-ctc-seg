@@ -7,8 +7,14 @@ echo "=========================================================="
 echo "🚀 MEMULAI K-FOLD CROSS VALIDATION UNTUK SEMUA MODEL"
 echo "=========================================================="
 
-# Kita set default K=5, dataset=ctc (bisa diubah sesuai kebutuhan)
-DATASET="ctc"
+# Cek argument dataset
+if [ -z "$1" ]; then
+    echo "❌ Error: Harap masukkan dataset (ct atau ctc)!"
+    echo "Penggunaan: ./run_all_kfold.sh ct"
+    exit 1
+fi
+
+DATASET=$1
 FOLDS=5
 
 # Array model yang akan ditraining
