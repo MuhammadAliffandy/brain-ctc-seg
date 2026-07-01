@@ -348,7 +348,11 @@ def evaluate(model, loader, device, name):
             masks=masks.to(device,non_blocking=True)
             with torch.amp.autocast('cuda'):
                 logits=model(imgs)
-            preds=torch.argmax(F.softmax(logits,1),1)
+                probs = F.softmax(logits, dim=1)[:, 1] # Ambil probabilitas kelas pendarahan
+                
+            # Gunakan threshold optimal (0.80) hasil tuning
+            preds = (probs > 0.80).long()
+            
             pf=preds.view(-1); mf=masks.view(-1)
             tp+=((pf==1)&(mf==1)).sum().item()
             fp+=((pf==1)&(mf==0)).sum().item()

@@ -186,8 +186,9 @@ def evaluate():
                 
                 with torch.amp.autocast('cuda'):
                     logits = model(imgs)
+                    probs = F.softmax(logits, dim=1)[:, 1]
                 
-                preds = torch.argmax(F.softmax(logits, dim=1), dim=1)
+                preds = (probs > 0.80).long()
                 
                 pf = preds.view(-1)
                 mf = masks.view(-1)

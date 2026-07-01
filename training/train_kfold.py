@@ -45,7 +45,9 @@ def evaluate_fold(model, val_loader, device):
             
             with torch.amp.autocast('cuda'):
                 logits = model(images)
-            preds = torch.argmax(F.softmax(logits, dim=1), dim=1)
+                probs = F.softmax(logits, dim=1)[:, 1]
+            
+            preds = (probs > 0.80).long()
             
             pf = preds.view(-1)
             mf = masks.view(-1)
