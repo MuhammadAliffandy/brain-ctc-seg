@@ -342,29 +342,13 @@ class CTBrain25DDatasetNoResize(Dataset):
 # ================================================================
 def evaluate(model, loader, device, name):
     model.eval(); tp=fp=fn=tn=0
-    # Lapis 1: Threshold Tuning & Test-Time Augmentation (TTA)
-    THRESHOLD = 0.35
-    USE_TTA = True
-    
     with torch.no_grad():
         for imgs, masks in tqdm(loader, desc=f"  {name}", ncols=80):
             imgs=imgs.to(device,non_blocking=True)
             masks=masks.to(device,non_blocking=True)
             with torch.amp.autocast('cuda'):
                 logits=model(imgs)
-                probs = F.softmax(logits, dim=1)[:, 1] # Prob class 1
-                
-                if USE_TTA:
-                    # Horizontal Flip TTA
-                    imgs_flip = torch.flip(imgs, dims=[3])
-                    logits_flip = model(imgs_flip)
-                    probs_flip = F.softmax(logits_flip, dim=1)[:, 1]
-                    probs_flip = torch.flip(probs_flip, dims=[2])
-                    
-                    # Average probabilities
-                    probs = (probs + probs_flip) / 2.0
-                    
-            preds = (probs > THRESHOLD).long()
+            preds=torch.argmax(F.softmax(logits,1),1)
             pf=preds.view(-1); mf=masks.view(-1)
             tp+=((pf==1)&(mf==1)).sum().item()
             fp+=((pf==1)&(mf==0)).sum().item()
