@@ -1,8 +1,9 @@
 """
 train_comparison_models.py
 ==========================
-Train competitor architectures from scratch using the SAME pipeline as SE2.
-v3: Lowered LR to 3e-5 and increased patience (matching SE2 config for fair comparison).
+Script to train baseline models (HarmonicNet, nnUNet, Standard UNet, Attention UNet, TransUNet).
+v4: Reverted LR to 1e-4. Added CLAHE + Sharpen augmentations for CT dataset only
+    to match SE2 pipeline and improve local contrast on non-contrast CT scans.
 
 Usage:
     python train_comparison_models.py --model harmonic --dataset ct    # CT only
@@ -355,7 +356,7 @@ def train(model_key: str, dataset_key: str = 'all'):
         LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=100; EARLY_STOP_PATIENCE=100  # effectively no early stop
     else:
         # Our proposed pipeline — full improvements
-        LR=3e-5; BATCH=8; ACCUM=4; EPOCHS=150; EARLY_STOP_PATIENCE=25
+        LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=150; EARLY_STOP_PATIENCE=20
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*65}")
@@ -373,11 +374,20 @@ def train(model_key: str, dataset_key: str = 'all'):
     val_df   = df.drop(train_df.index)
     print(f"  Train patients: {len(train_df)} | Val patients: {len(val_df)}")
 
+    # CT-specific augmentations: CLAHE boosts local contrast on grey non-contrast images,
+    # Sharpen helps the model see blurry hemorrhage edges more clearly.
+    # Applied ONLY on CT (not CTC) since CTC already has high contrast from contrast dye.
+    ct_extra_augs = [
+        A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.5),
+        A.Sharpen(alpha=(0.1, 0.3), lightness=(0.8, 1.2), p=0.4),
+    ] if dataset_key == 'ct' else []
+
     aug = A.Compose([
         A.Affine(scale=(0.9,1.1), translate_percent=(-0.06,0.06), rotate=(-15,15), p=0.5),
         A.ElasticTransform(alpha=1, sigma=50, p=0.3),
         A.RandomBrightnessContrast(0.2, 0.2, p=0.5),
         A.GaussNoise(p=0.3), A.HorizontalFlip(p=0.5),
+        *ct_extra_augs,
     ])
 
     train_set = CTBrain25DDataset(train_df, DATA_PATH, transform=aug)
@@ -404,7 +414,7 @@ def train(model_key: str, dataset_key: str = 'all'):
         # Our proposed: class-weighted EdgeBoundaryLoss + CombinedLoss + LR scheduler
         criterion = CombinedLoss(class_weights=class_weights).to(device)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=15, verbose=True, min_lr=1e-7
+            optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
         )
         print(f"  🚀 Using PROPOSED pipeline (class weights + EdgeBoundaryLoss + LR scheduler)")
     scaler    = torch.amp.GradScaler('cuda')

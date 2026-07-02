@@ -2,7 +2,8 @@
 train_se2_by_dataset.py
 =======================
 Exact replica of train.py with --dataset argument for CT/CTC separation.
-v3: Lowered LR to 3e-5 for finer convergence, increased patience for scheduler & early stopping.
+v4: Reverted LR to 1e-4 (stable). Added CLAHE + Sharpen augmentations for CT dataset only
+    to improve local contrast and edge definition on non-contrast CT scans.
 
 Usage:
     python train_se2_by_dataset.py --dataset ct    # Train on CT_* patients only
@@ -264,8 +265,8 @@ def train(dataset_key: str):
     MODEL_SAVE_DIR = os.path.join(PROJECT_ROOT, "saved_models_25D")
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
 
-    LEARNING_RATE = 3e-5; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 150; VAL_SPLIT = 0.15
-    EARLY_STOP_PATIENCE = 25
+    LEARNING_RATE = 1e-4; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 150; VAL_SPLIT = 0.15
+    EARLY_STOP_PATIENCE = 20
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     print(f"\n{'='*65}")
@@ -287,6 +288,14 @@ def train(dataset_key: str):
     val_df   = df.drop(train_df.index)
     print(f"  Train: {len(train_df)} patients | Val: {len(val_df)} patients")
 
+    # CT-specific augmentations: CLAHE boosts local contrast on grey non-contrast images,
+    # Sharpen helps the model see blurry hemorrhage edges more clearly.
+    # These are intentionally applied ONLY on CT (not CTC) since CTC already has high contrast.
+    ct_extra_augs = [
+        A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.5),
+        A.Sharpen(alpha=(0.1, 0.3), lightness=(0.8, 1.2), p=0.4),
+    ] if dataset_key == 'ct' else []
+
     train_transform = A.Compose([
         A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
         A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.3),
@@ -295,6 +304,7 @@ def train(dataset_key: str):
         A.GaussNoise(p=0.3),
         A.GaussianBlur(blur_limit=(3, 7), p=0.2),
         A.HorizontalFlip(p=0.5),
+        *ct_extra_augs,
     ])
 
     train_set = CTBrain25DDataset(train_df, local_root, transform=train_transform)
@@ -314,7 +324,7 @@ def train(dataset_key: str):
     criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=15, verbose=True, min_lr=1e-8
+        optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
     )
     scaler    = torch.amp.GradScaler('cuda')
 
