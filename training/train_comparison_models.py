@@ -2,8 +2,7 @@
 train_comparison_models.py
 ==========================
 Train competitor architectures from scratch using the SAME pipeline as SE2.
-v2: Hyperparameters: 150 epochs | LR 1e-4 | Batch 8 | Split 85/15 | Loss: Focal+Dice+Edge
-    Added: ReduceLROnPlateau, class weighting [1,10], early stopping (patience=20)
+v3: Lowered LR to 3e-5 and increased patience (matching SE2 config for fair comparison).
 
 Usage:
     python train_comparison_models.py --model harmonic --dataset ct    # CT only
@@ -356,7 +355,7 @@ def train(model_key: str, dataset_key: str = 'all'):
         LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=100; EARLY_STOP_PATIENCE=100  # effectively no early stop
     else:
         # Our proposed pipeline — full improvements
-        LR=1e-4; BATCH=8; ACCUM=4; EPOCHS=150; EARLY_STOP_PATIENCE=20
+        LR=3e-5; BATCH=8; ACCUM=4; EPOCHS=150; EARLY_STOP_PATIENCE=25
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*65}")
@@ -405,7 +404,7 @@ def train(model_key: str, dataset_key: str = 'all'):
         # Our proposed: class-weighted EdgeBoundaryLoss + CombinedLoss + LR scheduler
         criterion = CombinedLoss(class_weights=class_weights).to(device)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
+            optimizer, mode='max', factor=0.5, patience=15, verbose=True, min_lr=1e-7
         )
         print(f"  🚀 Using PROPOSED pipeline (class weights + EdgeBoundaryLoss + LR scheduler)")
     scaler    = torch.amp.GradScaler('cuda')
