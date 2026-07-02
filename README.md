@@ -82,11 +82,17 @@ python training/train_comparison_models.py --model transunet --dataset ctc
 **Alternatif Otomatis (Background Execution)**
 Untuk menjalankan semua model di atas secara berurutan dan terhindar dari putusnya koneksi SSH, gunakan *shell scripts* yang sudah disediakan. Skrip-skrip ini sudah otomatis menggunakan `nohup` di dalamnya:
 ```bash
-# Untuk semua eksperimen CT
-cd training && ./run_all_ct_models.sh
+# Untuk semua eksperimen CT (Dijalankan Paralel di GPU 2, 3, dan 7)
+cd training && ./run_all_ct_parallel.sh
 
 # Untuk semua eksperimen CTC
 cd training && ./run_all_ctc_models.sh
+```
+
+**Step 3.5: Plot Learning Curve (Konvergensi)**
+Setelah proses training selesai, gunakan skrip berikut untuk menghasilkan plot perbandingan Loss vs IoU:
+```bash
+python paper_evalute/plot_learning_curve.py --log training/log_nama_model.txt
 ```
 
 **Step 3.5: 5-Fold Cross Validation Training**
