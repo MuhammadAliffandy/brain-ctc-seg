@@ -475,6 +475,16 @@ def train(model_key: str, dataset_key: str = 'all'):
 
 
 # ================================================================
+# LOGGER
+# ================================================================
+class Logger:
+    def __init__(self, filename, stream):
+        self.terminal = stream; self.log = open(filename, "a", encoding="utf-8")
+    def write(self, m): self.terminal.write(m); self.log.write(m); self.log.flush()
+    def flush(self): self.terminal.flush(); self.log.flush()
+
+
+# ================================================================
 # ENTRY POINT
 # ================================================================
 if __name__ == "__main__":
@@ -485,5 +495,15 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', default='all',
                         choices=['ct', 'ctc', 'all'],
                         help="Dataset type: 'ct' (CT_* folders), 'ctc' (CTC_*/CTW_* folders), 'all' (combined)")
+    parser.add_argument('--log_dir', type=str, default='.',
+                        help="Directory to save the internal training log file")
     args = parser.parse_args()
+    
+    os.makedirs(args.log_dir, exist_ok=True)
+    ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log = os.path.join(args.log_dir, f"training_{args.model}_{args.dataset}_{ts}.txt")
+    sys.stdout = Logger(log, sys.stdout)
+    sys.stderr = Logger(log, sys.stderr)
+    print(f"📝 Logging to {log}")
+    
     train(args.model, args.dataset)

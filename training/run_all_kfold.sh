@@ -17,15 +17,18 @@ fi
 DATASET=$1
 FOLDS=5
 
+DATE=$(date +"%Y%m%d_%H%M%S")
+EXP_DIR="logs/kfold_exp_${DATE}"
+mkdir -p "$EXP_DIR"
+
 # Array model yang akan ditraining
 MODELS=("se2" "harmonic" "unet" "nnunet" "attention" "transunet")
 
 for model in "${MODELS[@]}"
 do
     echo "▶️ Memulai 5-Fold untuk Model: $model"
-    # Menjalankan python script, membiarkan output tampil di terminal 
-    # (nanti Anda bisa pipe ke file menggunakan nohup saat menjalankan bash ini)
-    python train_kfold.py --model "$model" --dataset "$DATASET" --folds "$FOLDS"
+    # Menjalankan python script, dan memasukkan output log ke dalam folder experiment
+    nohup python train_kfold.py --model "$model" --dataset "$DATASET" --folds "$FOLDS" > "${EXP_DIR}/log_kfold_${model}_${DATASET}.txt" 2>&1 &
     echo "✅ Selesai K-Fold untuk Model: $model"
     echo "----------------------------------------------------------"
 done

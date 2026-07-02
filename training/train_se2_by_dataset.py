@@ -413,10 +413,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train SE2_CNNET on CT or CTC dataset separately")
     parser.add_argument('--dataset', required=True, choices=['ct', 'ctc', 'all'],
                         help="Dataset type to train on: 'ct' (CT_* folders), 'ctc' (CTC_*/CTW_* folders), 'all' (combined)")
+    parser.add_argument('--log_dir', type=str, default='.',
+                        help="Directory to save the internal training log file")
     args = parser.parse_args()
 
+    os.makedirs(args.log_dir, exist_ok=True)
     ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log = f"training_se2_{args.dataset}_{ts}.txt"
+    log = os.path.join(args.log_dir, f"training_se2_{args.dataset}_{ts}.txt")
     sys.stdout = Logger(log, sys.stdout)
     sys.stderr = Logger(log, sys.stderr)
     print(f"📝 Logging to {log}")
