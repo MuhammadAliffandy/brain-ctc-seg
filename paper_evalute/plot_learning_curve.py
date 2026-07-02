@@ -32,8 +32,7 @@ def parse_log(log_path: str):
     Returns dict of lists: epochs, losses, dices, ious, precs, recs, lrs
     """
     pattern = re.compile(
-        r"Ep\s+(\d+)\s+\[.*?\]\s+"
-        r"Loss\s+([\d.]+)\s*\|\s*"
+        r"Ep\s+(\d+)\s+(?:\[.*?\]\s+|\|\s+)?Loss\s+([\d.]+)\s*\|\s*"
         r"Dice\s+([\d.]+)\s*\|\s*"
         r"IoU\s+([\d.]+)\s*\|\s*"
         r"Prec\s+([\d.]+)\s*\|\s*"
