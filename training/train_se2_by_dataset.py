@@ -2,7 +2,7 @@
 train_se2_by_dataset.py
 =======================
 Exact replica of train.py with --dataset argument for CT/CTC separation.
-v2: Added ReduceLROnPlateau scheduler, class weighting, early stopping, EPOCHS=150.
+v3: Lowered LR to 3e-5 for finer convergence, increased patience for scheduler & early stopping.
 
 Usage:
     python train_se2_by_dataset.py --dataset ct    # Train on CT_* patients only
@@ -264,8 +264,8 @@ def train(dataset_key: str):
     MODEL_SAVE_DIR = os.path.join(PROJECT_ROOT, "saved_models_25D")
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
 
-    LEARNING_RATE = 1e-4; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 150; VAL_SPLIT = 0.15
-    EARLY_STOP_PATIENCE = 20
+    LEARNING_RATE = 3e-5; BATCH_SIZE = 8; ACCUM_STEPS = 4; EPOCHS = 150; VAL_SPLIT = 0.15
+    EARLY_STOP_PATIENCE = 25
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     print(f"\n{'='*65}")
@@ -314,7 +314,7 @@ def train(dataset_key: str):
     criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
+        optimizer, mode='max', factor=0.5, patience=15, verbose=True, min_lr=1e-8
     )
     scaler    = torch.amp.GradScaler('cuda')
 
