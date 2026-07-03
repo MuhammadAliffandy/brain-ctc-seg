@@ -110,6 +110,21 @@ class CTBrain25DDataset(Dataset):
         except Exception:
             return self.__getitem__(random.randint(0, len(self.all_samples) - 1))
 
+    def get_positive_weights(self):
+        """V6: Compute per-sample weights for WeightedRandomSampler.
+        Slices with ANY hemorrhage pixel get weight 5x, empty slices get 1x.
+        This oversamples the rare positive slices to combat class imbalance."""
+        weights = []
+        for patient, slice_idx in self.all_samples:
+            _, mask_path = self.patient_slices[patient][slice_idx]
+            try:
+                m = np.load(mask_path).astype(np.uint8)
+                weights.append(5.0 if m.any() else 1.0)
+            except Exception:
+                weights.append(1.0)
+        return weights
+
+
 
 # ================================================================
 # SE2_CNNET ARCHITECTURE — exact copy from train.py
@@ -331,9 +346,18 @@ def train(dataset_key: str):
     train_set = CTBrain25DDataset(train_df, local_root, transform=train_transform)
     val_set   = CTBrain25DDataset(val_df,   local_root, transform=None)
     nw = min(os.cpu_count() or 4, 16)
-    train_loader = DataLoader(train_set, BATCH_SIZE, shuffle=True,  pin_memory=True, num_workers=nw, persistent_workers=True)
-    val_loader   = DataLoader(val_set,   BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
-    print(f"  Train slices: {len(train_set)} | Val slices: {len(val_set)}\n")
+
+    # V6: Positive Slice Oversampling — hemorrhage slices are rare (~5-10% of all slices).
+    # WeightedRandomSampler ensures each epoch sees 5x more positive slices, greatly
+    # helping the model learn tumor features instead of mostly seeing background.
+    print("  ⚖️  Computing positive slice weights for oversampling...")
+    sample_weights = train_set.get_positive_weights()
+    sampler = torch.utils.data.WeightedRandomSampler(
+        weights=sample_weights, num_samples=len(sample_weights), replacement=True
+    )
+    train_loader = DataLoader(train_set, BATCH_SIZE, sampler=sampler, pin_memory=True, num_workers=nw, persistent_workers=True)
+    val_loader   = DataLoader(val_set,   BATCH_SIZE, shuffle=False,   pin_memory=True, num_workers=nw, persistent_workers=True)
+    print(f"  Train slices: {len(train_set)} | Val slices: {len(val_set)} | Positive weight: 5x\n")
 
     # Class weighting — bobot lebih besar untuk kelas tumor (kelas 1) agar model tidak
     # hanya belajar background, terutama penting untuk CT yang class imbalance-nya ekstrem.
@@ -345,8 +369,11 @@ def train(dataset_key: str):
 
     criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
+    # V6: CosineAnnealingWarmRestarts — periodically "restarts" LR to escape local optima.
+    # T_0=50: first restart after 50 epochs. T_mult=1: same period every restart.
+    # More effective than ReduceLROnPlateau which tends to freeze LR prematurely.
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=50, T_mult=1, eta_min=1e-7
     )
     scaler    = torch.amp.GradScaler('cuda')
 
@@ -365,9 +392,14 @@ def train(dataset_key: str):
                 loss = criterion(model(images), labels) / ACCUM_STEPS
             scaler.scale(loss).backward()
             if (i + 1) % ACCUM_STEPS == 0:
+                # V6: Gradient clipping — prevents gradient explosion from TverskyLoss fluctuation
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer); scaler.update(); optimizer.zero_grad()
             running_loss += loss.item() * ACCUM_STEPS
         if len(train_loader) % ACCUM_STEPS != 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer); scaler.update(); optimizer.zero_grad()
 
         # ── Validate ──
@@ -392,8 +424,8 @@ def train(dataset_key: str):
         current_lr = optimizer.param_groups[0]['lr']
         print(f"\n  Ep {epoch:>3} [{dataset_key.upper()}] Loss {avg_loss:.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f} | LR {current_lr:.2e}")
 
-        # Scheduler step — turunkan LR jika Dice stagnan selama 10 epoch
-        scheduler.step(dice)
+        # V6: CosineAnnealingWarmRestarts steps per epoch (not per metric)
+        scheduler.step(epoch)
 
         if iou > best_iou:
             best_iou = iou
