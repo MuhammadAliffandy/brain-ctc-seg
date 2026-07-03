@@ -216,15 +216,35 @@ class DiceLoss(nn.Module):
         union = probs[:, 1].sum(dim=(1, 2)) + oh[:, 1].sum(dim=(1, 2))
         return 1.0 - ((2. * inter + self.smooth) / (union + self.smooth)).mean()
 
+class TverskyLoss(nn.Module):
+    """Generalization of DiceLoss. alpha penalizes FP, beta penalizes FN.
+    Setting alpha > beta pushes model to have higher Precision (fewer FP).
+    V5: alpha=0.6, beta=0.4 to reduce over-prediction on CT dataset."""
+    def __init__(self, alpha=0.6, beta=0.4, smooth=1e-5):
+        super().__init__()
+        self.alpha = alpha; self.beta = beta; self.smooth = smooth
+    def forward(self, logits, targets):
+        nc    = logits.shape[1]
+        oh    = F.one_hot(targets, nc).permute(0, 3, 1, 2).float()
+        probs = F.softmax(logits, dim=1)[:, 1]
+        tp    = (probs * oh[:, 1]).sum(dim=(1, 2))
+        fp    = (probs * (1 - oh[:, 1])).sum(dim=(1, 2))
+        fn    = ((1 - probs) * oh[:, 1]).sum(dim=(1, 2))
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
+        return 1.0 - tversky.mean()
+
 class AdvancedCombinedLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
-        self.focal = FocalLoss(alpha=0.75, gamma=3.0)
-        self.dice  = DiceLoss()
-        self.edge  = EdgeBoundaryLoss(class_weights=class_weights)
+        # V5: Replaced FocalLoss with TverskyLoss (alpha=0.6) to explicitly
+        # penalize False Positives, reducing over-prediction on CT scans.
+        self.tversky = TverskyLoss(alpha=0.6, beta=0.4)
+        self.dice    = DiceLoss()
+        self.edge    = EdgeBoundaryLoss(class_weights=class_weights)
     def forward(self, logits, targets):
-        # Lapis 2: Heavily weight DiceLoss (2.0) to directly optimize for IoU/Dice
-        return 0.5 * self.focal(logits, targets) + 2.0 * self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
+        # V5: TverskyLoss(1.5) + DiceLoss(1.5) + EdgeLoss(0.5)
+        # Dual optimization: Tversky to suppress FP, Dice to maintain Recall balance.
+        return 1.5 * self.tversky(logits, targets) + 1.5 * self.dice(logits, targets) + 0.5 * self.edge(logits, targets)
 
 
 # ================================================================
@@ -316,8 +336,9 @@ def train(dataset_key: str):
 
     # Class weighting — bobot lebih besar untuk kelas tumor (kelas 1) agar model tidak
     # hanya belajar background, terutama penting untuk CT yang class imbalance-nya ekstrem.
-    # Hitung dari sampel: rasio background:tumor biasanya 99:1 → weight [1, 10]
-    class_weights = torch.tensor([1.0, 10.0], device=device)
+    # V5: Turunkan dari [1.0, 10.0] ke [1.0, 8.0]. Weight 10x terlalu agresif untuk EdgeBoundaryLoss
+    # sehingga mendorong FP di area batas. TverskyLoss sudah menghandel FP secara eksplisit.
+    class_weights = torch.tensor([1.0, 8.0], device=device)
 
     model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32).to(device)
 

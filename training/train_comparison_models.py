@@ -293,6 +293,21 @@ class DiceLoss(nn.Module):
         i=(p[:,1]*oh[:,1]).sum((1,2)); u=p[:,1].sum((1,2))+oh[:,1].sum((1,2))
         return 1-((2*i+self.s)/(u+self.s)).mean()
 
+class TverskyLoss(nn.Module):
+    """Generalization of DiceLoss. alpha penalizes FP, beta penalizes FN.
+    V5: alpha=0.6 to reduce FP/over-prediction on CT scans."""
+    def __init__(self, alpha=0.6, beta=0.4, smooth=1e-5):
+        super().__init__()
+        self.alpha=alpha; self.beta=beta; self.s=smooth
+    def forward(self,l,t):
+        oh=F.one_hot(t,l.shape[1]).permute(0,3,1,2).float()
+        p=F.softmax(l,1)[:,1]
+        tp=(p*oh[:,1]).sum((1,2))
+        fp=(p*(1-oh[:,1])).sum((1,2))
+        fn=((1-p)*oh[:,1]).sum((1,2))
+        tversky=(tp+self.s)/(tp+self.alpha*fp+self.beta*fn+self.s)
+        return 1-tversky.mean()
+
 class EdgeBoundaryLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
@@ -305,8 +320,9 @@ class EdgeBoundaryLoss(nn.Module):
 class CombinedLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
-        self.f=FocalLoss(alpha=0.75, gamma=3.0); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
-    def forward(self,l,t): return 0.5*self.f(l,t) + 2.0*self.d(l,t) + 0.5*self.e(l,t)
+        # V5: Replaced FocalLoss with TverskyLoss (alpha=0.6) to suppress FP
+        self.t=TverskyLoss(alpha=0.6, beta=0.4); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
+    def forward(self,l,t): return 1.5*self.t(l,t) + 1.5*self.d(l,t) + 0.5*self.e(l,t)
 
 
 # ================================================================
@@ -401,8 +417,8 @@ def train(model_key: str, dataset_key: str = 'all'):
     model     = ModelClass(n_channels=3, n_classes=2).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
 
-    # Definisi class weights untuk mengkompensasi imbalance ekstrem di CT (agar Attn U-Net tidak 0.0)
-    class_weights = torch.tensor([1.0, 10.0], device=device)
+    # V5: Turunkan dari [1.0, 10.0] ke [1.0, 8.0] — TverskyLoss sudah handle FP secara eksplisit.
+    class_weights = torch.tensor([1.0, 8.0], device=device)
 
     if use_standard_pipeline:
         # Standard: CrossEntropy with weights (to prevent collapse), no LR scheduler

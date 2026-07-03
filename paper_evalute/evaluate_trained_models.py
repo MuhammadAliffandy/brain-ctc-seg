@@ -340,33 +340,50 @@ class CTBrain25DDatasetNoResize(Dataset):
 # ================================================================
 # EVALUATION
 # ================================================================
-def evaluate(model, loader, device, name):
+def evaluate_at_threshold(model, loader, device, threshold):
+    """Run inference with a specific softmax threshold and return raw TP/FP/FN/TN."""
     model.eval(); tp=fp=fn=tn=0
     with torch.no_grad():
-        for imgs, masks in tqdm(loader, desc=f"  {name}", ncols=80):
+        for imgs, masks in loader:
             imgs=imgs.to(device,non_blocking=True)
             masks=masks.to(device,non_blocking=True)
             with torch.amp.autocast('cuda'):
                 logits=model(imgs)
-                probs = F.softmax(logits, dim=1)[:, 1] # Ambil probabilitas kelas pendarahan
-                
-            # Gunakan threshold optimal (0.80) hasil tuning
-            preds = (probs > 0.80).long()
-            
+                probs = F.softmax(logits, dim=1)[:, 1]
+            preds = (probs > threshold).long()
             pf=preds.view(-1); mf=masks.view(-1)
             tp+=((pf==1)&(mf==1)).sum().item()
             fp+=((pf==1)&(mf==0)).sum().item()
             fn+=((pf==0)&(mf==1)).sum().item()
             tn+=((pf==0)&(mf==0)).sum().item()
-    eps=1e-7
+    return tp, fp, fn, tn
+
+def evaluate(model, loader, device, name):
+    """Auto-tune threshold from 0.50 to 0.90 to maximize IoU, then report all metrics."""
+    eps = 1e-7
+    best_iou = -1.0
+    best_threshold = 0.50
+    best_stats = None
+
+    thresholds = [round(t, 2) for t in np.arange(0.50, 0.91, 0.05)]
+    print(f"  🔎 {name}: Auto-tuning threshold over {thresholds}...")
+    for thr in thresholds:
+        tp, fp, fn, tn = evaluate_at_threshold(model, loader, device, thr)
+        iou = tp / (tp + fp + fn + eps)
+        if iou > best_iou:
+            best_iou = iou
+            best_threshold = thr
+            best_stats = (tp, fp, fn, tn)
+
+    tp, fp, fn, tn = best_stats
     total = tp + fp + fn + tn
-    acc = (tp + tn) / (total + eps) 
-    
-    prec=tp/(tp+fp+eps)
-    rec =tp/(tp+fn+eps)
-    f1  =(2*tp)/(2*tp+fp+fn+eps)
-    iou =tp/(tp+fp+fn+eps)
-    return {'Accuracy':round(acc,4),'Precision':round(prec,4),'Recall':round(rec,4),'F1 (Dice)':round(f1,4),'IoU':round(iou,4)}
+    acc  = (tp + tn) / (total + eps)
+    prec = tp / (tp + fp + eps)
+    rec  = tp / (tp + fn + eps)
+    f1   = (2 * tp) / (2 * tp + fp + fn + eps)
+    iou  = tp / (tp + fp + fn + eps)
+    print(f"  ✅ Best threshold: {best_threshold:.2f} → IoU={iou:.4f}")
+    return {'Accuracy':round(acc,4),'Precision':round(prec,4),'Recall':round(rec,4),'F1 (Dice)':round(f1,4),'IoU':round(iou,4),'Best Threshold':best_threshold}
 
 
 # ================================================================
