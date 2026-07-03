@@ -295,8 +295,8 @@ class DiceLoss(nn.Module):
 
 class TverskyLoss(nn.Module):
     """Generalization of DiceLoss. alpha penalizes FP, beta penalizes FN.
-    V5: alpha=0.6 to reduce FP/over-prediction on CT scans."""
-    def __init__(self, alpha=0.6, beta=0.4, smooth=1e-5):
+    V6: alpha=0.55 (gentle FP penalty). alpha=0.6 was too aggressive."""
+    def __init__(self, alpha=0.55, beta=0.45, smooth=1e-5):
         super().__init__()
         self.alpha=alpha; self.beta=beta; self.s=smooth
     def forward(self,l,t):
@@ -320,9 +320,10 @@ class EdgeBoundaryLoss(nn.Module):
 class CombinedLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
-        # V5: Replaced FocalLoss with TverskyLoss (alpha=0.6) to suppress FP
-        self.t=TverskyLoss(alpha=0.6, beta=0.4); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
-    def forward(self,l,t): return 1.5*self.t(l,t) + 1.5*self.d(l,t) + 0.5*self.e(l,t)
+        # V6: alpha=0.55 (gentler). V5 alpha=0.6 caused Recall to drop 0.83->0.67.
+        # Dice dominates (2.0) to preserve Recall, Tversky adds gentle FP discipline.
+        self.t=TverskyLoss(alpha=0.55, beta=0.45); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
+    def forward(self,l,t): return 1.0*self.t(l,t) + 2.0*self.d(l,t) + 0.5*self.e(l,t)
 
 
 # ================================================================
@@ -417,8 +418,9 @@ def train(model_key: str, dataset_key: str = 'all'):
     model     = ModelClass(n_channels=3, n_classes=2).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
 
-    # V5: Turunkan dari [1.0, 10.0] ke [1.0, 8.0] — TverskyLoss sudah handle FP secara eksplisit.
-    class_weights = torch.tensor([1.0, 8.0], device=device)
+    # V6: Restore ke [1.0, 10.0]. alpha Tversky yang lebih rendah (0.55) butuh
+    # class weight lebih kuat agar Recall tidak anjlok.
+    class_weights = torch.tensor([1.0, 10.0], device=device)
 
     if use_standard_pipeline:
         # Standard: CrossEntropy with weights (to prevent collapse), no LR scheduler
