@@ -276,17 +276,6 @@ class CTBrain25DDataset(Dataset):
         except:
             return self.__getitem__(random.randint(0,len(self.all_samples)-1))
 
-    def get_positive_weights(self):
-        """V6: Per-sample weights for WeightedRandomSampler. Positive slices get 5x weight."""
-        weights = []
-        for p, si in self.all_samples:
-            try:
-                m = np.load(self.patient_slices[p][si][1]).astype(np.uint8)
-                weights.append(5.0 if m.any() else 1.0)
-            except Exception:
-                weights.append(1.0)
-        return weights
-
 
 # ================================================================
 # LOSS (same as train.py)
@@ -331,10 +320,9 @@ class EdgeBoundaryLoss(nn.Module):
 class CombinedLoss(nn.Module):
     def __init__(self, class_weights=None):
         super().__init__()
-        # V6: alpha=0.55 (gentler). V5 alpha=0.6 caused Recall to drop 0.83->0.67.
-        # Dice dominates (2.0) to preserve Recall, Tversky adds gentle FP discipline.
-        self.t=TverskyLoss(alpha=0.55, beta=0.45); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
-    def forward(self,l,t): return 1.0*self.t(l,t) + 2.0*self.d(l,t) + 0.5*self.e(l,t)
+        # V4 (proven best): FocalLoss + DiceLoss(2.0) + EdgeBoundaryLoss
+        self.f=FocalLoss(alpha=0.75, gamma=3.0); self.d=DiceLoss(); self.e=EdgeBoundaryLoss(class_weights=class_weights)
+    def forward(self,l,t): return 0.5*self.f(l,t) + 2.0*self.d(l,t) + 0.5*self.e(l,t)
 
 
 # ================================================================
@@ -421,16 +409,9 @@ def train(model_key: str, dataset_key: str = 'all'):
     train_set = CTBrain25DDataset(train_df, DATA_PATH, transform=aug)
     val_set   = CTBrain25DDataset(val_df,   DATA_PATH)
     nw = min(os.cpu_count() or 4, 16)
-
-    # V6: Positive Slice Oversampling — ensures hemorrhage slices seen 5x more per epoch
-    print("  ⚖️  Computing positive slice weights for oversampling...")
-    sample_weights = train_set.get_positive_weights()
-    sampler = torch.utils.data.WeightedRandomSampler(
-        weights=sample_weights, num_samples=len(sample_weights), replacement=True
-    )
-    train_loader = DataLoader(train_set, BATCH, sampler=sampler, pin_memory=True, num_workers=nw, persistent_workers=True)
-    val_loader   = DataLoader(val_set,   BATCH, shuffle=False,   pin_memory=True, num_workers=nw, persistent_workers=True)
-    print(f"  Train slices : {len(train_set)} | Val slices: {len(val_set)} | Positive weight: 5x\n")
+    train_loader = DataLoader(train_set, BATCH, shuffle=True,  pin_memory=True, num_workers=nw, persistent_workers=True)
+    val_loader   = DataLoader(val_set,   BATCH, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
+    print(f"  Train slices : {len(train_set)} | Val slices: {len(val_set)}\n")
 
     # Loss + optimizer selection based on pipeline
     model     = ModelClass(n_channels=3, n_classes=2).to(device)
@@ -449,11 +430,10 @@ def train(model_key: str, dataset_key: str = 'all'):
     else:
         # Our proposed: class-weighted EdgeBoundaryLoss + CombinedLoss + LR scheduler
         criterion = CombinedLoss(class_weights=class_weights).to(device)
-        # V6: CosineAnnealingWarmRestarts to escape local optima
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=50, T_mult=1, eta_min=1e-7
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
         )
-        print(f"  🚀 Using PROPOSED pipeline (class weights + EdgeBoundaryLoss + Cosine LR scheduler)")
+        print(f"  🚀 Using PROPOSED pipeline (class weights + EdgeBoundaryLoss + LR scheduler)")
     scaler    = torch.amp.GradScaler('cuda')
     best_iou  = 0.0
     early_stop_counter = 0
@@ -467,9 +447,6 @@ def train(model_key: str, dataset_key: str = 'all'):
                 loss=criterion(model(imgs), masks)/ACCUM
             scaler.scale(loss).backward()
             if (i+1)%ACCUM==0:
-                # V6: Gradient clipping for stability
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer); scaler.update(); optimizer.zero_grad()
             train_loss+=loss.item()*ACCUM
 
@@ -493,9 +470,9 @@ def train(model_key: str, dataset_key: str = 'all'):
         current_lr = optimizer.param_groups[0]['lr']
         print(f"  Ep {epoch:>3} | Loss {train_loss/len(train_loader):.4f} | Dice {dice:.4f} | IoU {iou:.4f} | Prec {prec:.4f} | Rec {rec:.4f} | LR {current_lr:.2e}")
 
-        # V6: CosineAnnealingWarmRestarts — step by epoch index
+        # LR Scheduler step — only for proposed pipeline
         if scheduler is not None:
-            scheduler.step(epoch)
+            scheduler.step(dice)
 
         if iou > best_iou:
             best_iou = iou
