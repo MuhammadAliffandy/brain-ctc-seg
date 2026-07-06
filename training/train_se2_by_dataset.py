@@ -339,7 +339,8 @@ def train(dataset_key: str):
     model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32).to(device)
 
     criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
+    # AdamW dengan weight_decay 1e-4 untuk mencegah overfitting dan meningkatkan generalisasi (mendorong IoU)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=10, verbose=True, min_lr=1e-7
     )

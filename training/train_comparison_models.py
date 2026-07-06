@@ -415,7 +415,7 @@ def train(model_key: str, dataset_key: str = 'all'):
 
     # Loss + optimizer selection based on pipeline
     model     = ModelClass(n_channels=3, n_classes=2).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
 
     # V6: Restore ke [1.0, 10.0]. alpha Tversky yang lebih rendah (0.55) butuh
     # class weight lebih kuat agar Recall tidak anjlok.
