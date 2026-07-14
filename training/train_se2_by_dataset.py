@@ -275,7 +275,7 @@ def filter_df_by_dataset(df, dataset_key, patient_col='Patient_Folder'):
 # TRAINING
 # ================================================================
 def train(dataset_key: str):
-    GDRIVE_ROOT   = os.path.expanduser("~/Clara/new_drive")
+    GDRIVE_ROOT   = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive")
     GDRIVE_DATA   = os.path.join(GDRIVE_ROOT, "Dataset_CT_Preprocessed_NPY")
     CSV_REPORT    = os.path.join(GDRIVE_ROOT, "Dataset_CT_Report.csv")
     LOCAL_DATA    = os.path.expanduser("~/Clara/local_ct_workspace_full")
