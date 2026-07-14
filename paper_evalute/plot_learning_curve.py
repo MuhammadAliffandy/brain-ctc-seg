@@ -37,23 +37,25 @@ def parse_log(log_path: str):
         r"\s*[|\s]+Loss\s+([\d.]+)"            # loss
         r"\s*\|\s*Dice\s+([\d.]+)"             # dice
         r"\s*\|\s*IoU\s+([\d.]+)"              # iou
-        r"\s*\|\s*Prec\s+([\d.]+)"             # precision
-        r"\s*\|\s*Rec\s+([\d.]+)"              # recall
+        r"(?:\s*\|\s*Prec\s+([\d.]+))?"        # precision (optional)
+        r"(?:\s*\|\s*Rec\s+([\d.]+))?"         # recall (optional)
         r"(?:\s*\|\s*LR\s+([\d.e+-]+))?"       # lr (optional)
     )
 
     epochs, losses, dices, ious, precs, recs, lrs = [], [], [], [], [], [], []
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
     with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
-            m = pattern.search(line)
+            clean_line = ansi_escape.sub('', line)
+            m = pattern.search(clean_line)
             if m:
                 epochs.append(int(m.group(1)))
                 losses.append(float(m.group(2)))
                 dices.append(float(m.group(3)))
                 ious.append(float(m.group(4)))
-                precs.append(float(m.group(5)))
-                recs.append(float(m.group(6)))
+                precs.append(float(m.group(5)) if m.group(5) else 0.0)
+                recs.append(float(m.group(6)) if m.group(6) else 0.0)
                 lrs.append(float(m.group(7)) if m.group(7) else 0.0)
 
     if not epochs:
