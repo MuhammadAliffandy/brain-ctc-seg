@@ -13,12 +13,12 @@ def main():
         print(f"❌ Direktori log tidak ditemukan: {LOG_DIR}")
         return
         
-    print(f"🔍 Mencari file log bersih (training_*.txt) di: {LOG_DIR}...")
+    print(f"🔍 Mencari semua file log (.txt) di: {LOG_DIR}...")
     
-    all_txts = glob.glob(os.path.join(LOG_DIR, "**", "training_*.txt"), recursive=True)
+    all_txts = glob.glob(os.path.join(LOG_DIR, "**", "*.txt"), recursive=True)
     
     if not all_txts:
-        print("❌ Tidak ada file log (training_*.txt) yang ditemukan.")
+        print("❌ Tidak ada file log (.txt) yang ditemukan.")
         return
         
     print(f"✅ Ditemukan {len(all_txts)} file log. Mulai memplot learning curve...\n")
