@@ -172,13 +172,20 @@ def train_and_eval_model(model_name, ModelClass, is_se2, train_loader, test_load
                 
         eps = 1e-7
         epoch_iou = tp / (tp + fp + fn + eps)
+        epoch_dice = (2 * tp) / (2 * tp + fp + fn + eps)
+        epoch_prec = tp / (tp + fp + eps)
+        epoch_rec = tp / (tp + fn + eps)
+        current_lr = optimizer.param_groups[0]['lr']
+        epoch_loss = running_loss / len(train_loader)
+        
+        print(f"  Ep {epoch+1:>3} | Loss {epoch_loss:.4f} | Dice {epoch_dice:.4f} | IoU {epoch_iou:.4f} | Prec {epoch_prec:.4f} | Rec {epoch_rec:.4f} | LR {current_lr:.2e}")
         
         if epoch_iou > best_iou:
             best_iou = epoch_iou
             torch.save(model.state_dict(), save_path)
             
         if scheduler:
-            scheduler.step(epoch_iou)
+            scheduler.step(epoch_dice)
             
     print(f"✅ Training selesai. Best IoU: {best_iou:.4f} -> {save_path}")
     
@@ -245,11 +252,11 @@ def main():
     
     models_to_train = {
         "Mod-Seg-SE(2)": (SE2_CNNET, True),
-        "HarmonicNet": (HarmonicNet, False),
-        "nnU-Net": (nnUNet, False),
-        "Attention U-Net": (AttentionUNet, False),
-        "TransUNet": (TransUNet, False),
-        "Standard U-Net": (StandardUNet, False),
+        # "HarmonicNet": (HarmonicNet, False),
+        # "nnU-Net": (nnUNet, False),
+        # "Attention U-Net": (AttentionUNet, False),
+        # "TransUNet": (TransUNet, False),
+        # "Standard U-Net": (StandardUNet, False),
     }
     
     results = []
