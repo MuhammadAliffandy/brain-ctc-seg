@@ -10,29 +10,27 @@ echo "🚀 STARTING PARALLEL TRAINING FOR [CTC] DATASET"
 echo "=========================================================="
 echo "Memulai eksekusi di background menggunakan nohup..."
 
-# GPU 1: Mod-Seg-SE(2) [Model Utama]
-echo "[GPU 1] Training Mod-Seg-SE(2) (CTC)..."
-CUDA_VISIBLE_DEVICES=1 nohup python train_se2_by_dataset.py --dataset ctc > "log_se2_ctc_${DATE}.txt" 2>&1 &
+# Kita hanya memiliki 4 GPU yang kosong (2, 3, 4, 5).
+# DGX diset ke Exclusive Process, jadi 1 GPU hanya bisa 1 proses.
+# Solusi: Kita antrekan modelnya!
 
-# GPU 2: HarmonicNet
-echo "[GPU 2] Training HarmonicNet (CTC)..."
-CUDA_VISIBLE_DEVICES=2 nohup python train_comparison_models.py --model harmonic --dataset ctc > "log_harmonic_ctc_${DATE}.txt" 2>&1 &
+echo "[GPU 2] Training Mod-Seg-SE(2) lalu dilanjut Attention U-Net..."
+(
+    CUDA_VISIBLE_DEVICES=2 python train_se2_by_dataset.py --dataset ctc > "log_se2_ctc_${DATE}.txt" 2>&1
+    CUDA_VISIBLE_DEVICES=2 python train_comparison_models.py --model attention --dataset ctc > "log_attention_ctc_${DATE}.txt" 2>&1
+) &
 
-# GPU 3: Standard U-Net
-echo "[GPU 3] Training Standard U-Net (CTC)..."
-CUDA_VISIBLE_DEVICES=3 nohup python train_comparison_models.py --model unet --dataset ctc > "log_unet_ctc_${DATE}.txt" 2>&1 &
+echo "[GPU 3] Training HarmonicNet lalu dilanjut TransUNet..."
+(
+    CUDA_VISIBLE_DEVICES=3 python train_comparison_models.py --model harmonic --dataset ctc > "log_harmonic_ctc_${DATE}.txt" 2>&1
+    CUDA_VISIBLE_DEVICES=3 python train_comparison_models.py --model transunet --dataset ctc > "log_transunet_ctc_${DATE}.txt" 2>&1
+) &
 
-# GPU 4: nnU-Net
-echo "[GPU 4] Training nnU-Net (CTC)..."
-CUDA_VISIBLE_DEVICES=4 nohup python train_comparison_models.py --model nnunet --dataset ctc > "log_nnunet_ctc_${DATE}.txt" 2>&1 &
+echo "[GPU 4] Training Standard U-Net (CTC)..."
+CUDA_VISIBLE_DEVICES=4 nohup python train_comparison_models.py --model unet --dataset ctc > "log_unet_ctc_${DATE}.txt" 2>&1 &
 
-# GPU 0: Attention U-Net
-echo "[GPU 0] Training Attention U-Net (CTC)..."
-CUDA_VISIBLE_DEVICES=0 nohup python train_comparison_models.py --model attention --dataset ctc > "log_attention_ctc_${DATE}.txt" 2>&1 &
-
-# GPU 6: TransUNet
-echo "[GPU 6] Training TransUNet (CTC)..."
-CUDA_VISIBLE_DEVICES=6 nohup python train_comparison_models.py --model transunet --dataset ctc > "log_transunet_ctc_${DATE}.txt" 2>&1 &
+echo "[GPU 5] Training nnU-Net (CTC)..."
+CUDA_VISIBLE_DEVICES=5 nohup python train_comparison_models.py --model nnunet --dataset ctc > "log_nnunet_ctc_${DATE}.txt" 2>&1 &
 
 echo "=========================================================="
 echo "✅ SEMUA PROSES TELAH DIJALANKAN DI BACKGROUND!"
