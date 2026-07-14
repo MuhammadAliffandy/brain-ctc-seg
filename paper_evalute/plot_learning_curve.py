@@ -32,12 +32,14 @@ def parse_log(log_path: str):
     Returns dict of lists: epochs, losses, dices, ious, precs, recs, lrs
     """
     pattern = re.compile(
-        r"Ep\s+(\d+)\s+(?:\[.*?\]\s+|\|\s+)?Loss\s+([\d.]+)\s*\|\s*"
-        r"Dice\s+([\d.]+)\s*\|\s*"
-        r"IoU\s+([\d.]+)\s*\|\s*"
-        r"Prec\s+([\d.]+)\s*\|\s*"
-        r"Rec\s+([\d.]+)\s*\|\s*"
-        r"LR\s+([\d.e+-]+)"
+        r"Ep\s+(\d+)"                          # epoch
+        r"(?:\s+\[.*?\])?"                     # optional [DATASET] tag
+        r"\s*[|\s]+Loss\s+([\d.]+)"            # loss
+        r"\s*\|\s*Dice\s+([\d.]+)"             # dice
+        r"\s*\|\s*IoU\s+([\d.]+)"              # iou
+        r"\s*\|\s*Prec\s+([\d.]+)"             # precision
+        r"\s*\|\s*Rec\s+([\d.]+)"              # recall
+        r"(?:\s*\|\s*LR\s+([\d.e+-]+))?"       # lr (optional)
     )
 
     epochs, losses, dices, ious, precs, recs, lrs = [], [], [], [], [], [], []
@@ -52,7 +54,7 @@ def parse_log(log_path: str):
                 ious.append(float(m.group(4)))
                 precs.append(float(m.group(5)))
                 recs.append(float(m.group(6)))
-                lrs.append(float(m.group(7)))
+                lrs.append(float(m.group(7)) if m.group(7) else 0.0)
 
     if not epochs:
         raise ValueError(
