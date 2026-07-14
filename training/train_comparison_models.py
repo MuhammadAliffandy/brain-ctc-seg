@@ -353,7 +353,7 @@ MODEL_REGISTRY = {
 def train(model_key: str, dataset_key: str = 'all'):
     ModelClass, model_type, save_name = MODEL_REGISTRY[model_key]
 
-    CSV_REPORT  = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
+    CSV_REPORT  = os.path.expanduser("~/Clara/new_drive/Dataset_CT_Report.csv")
     DATA_PATH   = os.path.expanduser("~/Clara/local_ct_workspace_full")
     SAVE_DIR    = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
     os.makedirs(SAVE_DIR, exist_ok=True)
