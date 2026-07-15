@@ -240,7 +240,7 @@ def main():
     
     train_transform = A.Compose([
         A.HorizontalFlip(p=0.5),
-        A.ShiftScaleRotate(shift_limit=0.06, scale_limit=0.1, rotate_limit=15, p=0.5),
+        A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
         A.RandomBrightnessContrast(p=0.2),
     ])
     
@@ -248,8 +248,8 @@ def main():
     test_dataset = IntraHemorrhageDataset(test_samples, transform=None)
     
     nw = 0 # Set ke 0 untuk mencegah deadlock PyTorch Dataloader
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=nw, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=nw, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=nw, pin_memory=False)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=nw, pin_memory=False)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
