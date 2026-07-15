@@ -252,7 +252,7 @@ def main():
     
     train_transform = A.Compose([
         A.HorizontalFlip(p=0.5),
-        A.Affine(scale=(0.9, 1.1), translate_percent=(-0.06, 0.06), rotate=(-15, 15), p=0.5),
+        A.ShiftScaleRotate(shift_limit=0.06, scale_limit=0.1, rotate_limit=15, p=0.5),
         A.RandomBrightnessContrast(p=0.2),
     ])
     
