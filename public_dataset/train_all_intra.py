@@ -12,6 +12,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import cv2
 import albumentations as A
+import kagglehub
 
 plt.switch_backend('agg')
 
@@ -74,7 +75,13 @@ def get_kaggle_splits(root_dir, test_size=0.15, seed=42):
             break
             
     if not external_test_dir:
-        raise ValueError("Folder External_Test Kaggle tidak ditemukan!")
+        # Some kagglehub downloads flatten the structure or just have it directly
+        if os.path.exists(os.path.join(root_dir, "External_Test")):
+            external_test_dir = os.path.join(root_dir, "External_Test")
+        elif os.path.exists(os.path.join(root_dir, "brain-stroke-ct-dataset", "External_Test")):
+            external_test_dir = os.path.join(root_dir, "brain-stroke-ct-dataset", "External_Test")
+        else:
+            raise ValueError("Folder External_Test Kaggle tidak ditemukan!")
         
     png_dir = os.path.join(external_test_dir, "PNG")
     mask_dir = os.path.join(external_test_dir, "MASKS")
@@ -231,7 +238,8 @@ def train_and_eval_model(model_name, ModelClass, is_se2, train_loader, test_load
 # 3. MAIN PIPELINE
 # ==========================================
 def main():
-    root_dir = os.path.join(os.path.dirname(__file__), "data")
+    print("Mendownload / Memuat cache dataset Kaggle Stroke...")
+    root_dir = kagglehub.dataset_download("ozguraslank/brain-stroke-ct-dataset")
     save_dir = os.path.join(os.path.dirname(__file__), "saved_models")
     os.makedirs(save_dir, exist_ok=True)
     
