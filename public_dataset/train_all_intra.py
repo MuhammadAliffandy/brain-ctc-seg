@@ -266,7 +266,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     models_to_train = {
-        "Mod-Seg-SE(2)": (SE2_CNNET, True),
+        # "Mod-Seg-SE(2)": (SE2_CNNET, True), # SUDAH SELESAI, JANGAN DITIMPA!
         "HarmonicNet": (HarmonicNet, False),
         "nnU-Net": (nnUNet, False),
         "Attention U-Net": (AttentionUNet, False),
