@@ -12,6 +12,9 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import cv2
 import albumentations as A
+
+cv2.setNumThreads(0)
+os.environ["OMP_NUM_THREADS"] = "1"
 import kagglehub
 
 plt.switch_backend('agg')
@@ -244,7 +247,7 @@ def main():
     train_dataset = IntraHemorrhageDataset(train_samples, transform=train_transform)
     test_dataset = IntraHemorrhageDataset(test_samples, transform=None)
     
-    nw = min(os.cpu_count() or 4, 8)
+    nw = 0 # Set ke 0 untuk mencegah deadlock PyTorch Dataloader
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=nw, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=nw, pin_memory=True)
     
