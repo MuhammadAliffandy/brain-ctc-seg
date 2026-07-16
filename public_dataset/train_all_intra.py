@@ -1,7 +1,15 @@
 import os
 import sys
-import glob
+import os
 import random
+import signal
+
+# --- ANTI-TERMINATE SHIELD ---
+# Mengabaikan sinyal SIGTERM dari DGX server watchdog
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+# -----------------------------
+
+import glob
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

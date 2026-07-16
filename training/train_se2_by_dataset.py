@@ -16,7 +16,17 @@ Weights saved to:
     saved_models_25D/se2_unet_all_best.pth
 """
 
-import os, sys, re, argparse, datetime, zipfile, shutil, random
+import argparse
+import sys
+import datetime
+import signal
+
+# --- ANTI-TERMINATE SHIELD ---
+# Mengabaikan sinyal SIGTERM dari DGX server watchdog
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+# -----------------------------
+
+import os, re, zipfile, shutil, random
 import numpy as np, pandas as pd
 import torch, torch.nn as nn, torch.optim as optim, torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
