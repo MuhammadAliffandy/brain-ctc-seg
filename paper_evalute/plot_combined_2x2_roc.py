@@ -87,9 +87,10 @@ def main():
         ax = axes[i]
         csv_path = ds['csv']
         
-        if not os.path.exists(csv_path):
-            print(f"⚠️ Warning: File tidak ditemukan -> {csv_path}")
-            ax.text(0.5, 0.5, f"Data CSV tidak ditemukan\\n{os.path.basename(csv_path)}", 
+        if csv_path is None or not os.path.exists(csv_path):
+            missing_name = "Data CSV tidak ditemukan"
+            print(f"⚠️ Warning: File tidak ditemukan untuk {ds['title']}")
+            ax.text(0.5, 0.5, missing_name, 
                     ha='center', va='center', fontsize=12)
             continue
             
