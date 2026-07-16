@@ -31,29 +31,42 @@ def extract_base_perf(row, dataset_type):
         accuracy = row.get('Accuracy', 0.5)
         return (f1_score + accuracy) / 2.0
 
+import glob
+
+def find_file(pattern, root):
+    files = glob.glob(os.path.join(root, '**', pattern), recursive=True)
+    return files[0] if files else None
+
 def main():
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
-    # Path ke 4 file CSV metrik
+    # Cari file CSV secara dinamis di seluruh folder proyek
+    ct_csv = find_file('*ct_summary.csv', PROJECT_ROOT)
+    ctc_csv = find_file('*ctc_summary.csv', PROJECT_ROOT)
+    stroke_csv = find_file('*public_intra_eval_metrics.csv', PROJECT_ROOT)
+    if not stroke_csv: # Coba nama alternatif jika stroke pakai nama berbeda
+        stroke_csv = find_file('*stroke_eval_metrics.csv', PROJECT_ROOT)
+    hemorrhage_csv = find_file('*hemorrhage_eval_metrics.csv', PROJECT_ROOT)
+    
     DATASETS = [
         {
             'title': 'a) NTUH Cohort CT Non Contrast Dataset',
-            'csv': os.path.join(PROJECT_ROOT, 'ct_summary.csv'),
+            'csv': ct_csv,
             'type': 'ct'
         },
         {
             'title': 'b) NTUH Cohort CT with Contrast Dataset',
-            'csv': os.path.join(PROJECT_ROOT, 'ctc_summary.csv'),
+            'csv': ctc_csv,
             'type': 'ct'
         },
         {
             'title': 'c) Kaggle Stroke Dataset',
-            'csv': os.path.join(PROJECT_ROOT, 'public_dataset', 'public_intra_eval_metrics.csv'),
+            'csv': stroke_csv,
             'type': 'public'
         },
         {
             'title': 'd) Kaggle Hemorrhage Dataset',
-            'csv': os.path.join(PROJECT_ROOT, 'public_dataset', 'public_intra_hemorrhage_eval_metrics.csv'),
+            'csv': hemorrhage_csv,
             'type': 'public'
         }
     ]
