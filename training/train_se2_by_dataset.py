@@ -337,9 +337,9 @@ def train(dataset_key: str):
 
     train_set = CTBrain25DDataset(train_df, local_root, transform=train_transform)
     val_set   = CTBrain25DDataset(val_df,   local_root, transform=None)
-    nw = min(os.cpu_count() or 4, 16)
-    train_loader = DataLoader(train_set, BATCH_SIZE, shuffle=True,  pin_memory=True, num_workers=nw, persistent_workers=True)
-    val_loader   = DataLoader(val_set,   BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=nw, persistent_workers=True)
+    nw = 0 # Set ke 0 untuk mencegah deadlock PyTorch Dataloader di DGX
+    train_loader = DataLoader(train_set, BATCH_SIZE, shuffle=True,  pin_memory=False, num_workers=nw, persistent_workers=False)
+    val_loader   = DataLoader(val_set,   BATCH_SIZE, shuffle=False, pin_memory=False, num_workers=nw, persistent_workers=False)
     print(f"  Train slices: {len(train_set)} | Val slices: {len(val_set)}\n")
 
     # Class weights [1.0, 10.0]: memberi bobot 10x untuk kelas tumor agar model tidak
