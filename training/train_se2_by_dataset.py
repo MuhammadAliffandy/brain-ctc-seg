@@ -344,10 +344,15 @@ def train(dataset_key: str):
 
     # Class weights [1.0, 10.0]: memberi bobot 10x untuk kelas tumor agar model tidak
     # hanya belajar background (class imbalance ekstrem pada CT non-kontras).
+    print("  [DEBUG] Mengirim class_weights ke GPU...")
     class_weights = torch.tensor([1.0, 10.0], device=device)
 
-    model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32).to(device)
+    print("  [DEBUG] Membangun arsitektur ESCNN SE(2) (Tunggu 1-3 menit, sedang kalkulasi Clebsch-Gordan cache)...")
+    model     = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32)
+    print("  [DEBUG] Memindahkan ESCNN ke GPU...")
+    model = model.to(device)
 
+    print("  [DEBUG] Inisialisasi Optimizer dan Loss...")
     criterion = AdvancedCombinedLoss(class_weights=class_weights).to(device)
     # AdamW dengan weight_decay 1e-4 untuk mencegah overfitting dan meningkatkan generalisasi (mendorong IoU)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
