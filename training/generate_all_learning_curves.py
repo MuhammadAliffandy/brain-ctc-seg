@@ -4,18 +4,19 @@ import subprocess
 
 def main():
     PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-    LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+    LOG_DIRS = [
+        os.path.join(PROJECT_ROOT, "logs"),
+        os.path.join(PROJECT_ROOT, "..", "public_dataset")
+    ]
     OUT_DIR = os.path.join(PROJECT_ROOT, "learning_curves")
     
     os.makedirs(OUT_DIR, exist_ok=True)
     
-    if not os.path.isdir(LOG_DIR):
-        print(f"❌ Direktori log tidak ditemukan: {LOG_DIR}")
-        return
-        
-    print(f"🔍 Mencari semua file log (.txt) di: {LOG_DIR}...")
-    
-    all_txts = glob.glob(os.path.join(LOG_DIR, "**", "*.txt"), recursive=True)
+    all_txts = []
+    for d in LOG_DIRS:
+        if os.path.isdir(d):
+            print(f"🔍 Mencari file log di: {d}...")
+            all_txts.extend(glob.glob(os.path.join(d, "**", "*.txt"), recursive=True))
     
     if not all_txts:
         print("❌ Tidak ada file log (.txt) yang ditemukan.")
