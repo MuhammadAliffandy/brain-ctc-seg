@@ -164,6 +164,7 @@ class OutConv(nn.Module):
 class SE2_CNNET(nn.Module):
     def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=32):
         super().__init__()
+        print("    -> [ESCNN] Inisialisasi gspaces.rot2dOnR2...")
         self.r2_act = gspaces.rot2dOnR2(N=N)
         c = base_channels
         self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
@@ -172,16 +173,29 @@ class SE2_CNNET(nn.Module):
         self.feat_type_3  = enn.FieldType(self.r2_act, (c*4)  * [self.r2_act.regular_repr])
         self.feat_type_4  = enn.FieldType(self.r2_act, (c*8)  * [self.r2_act.regular_repr])
         self.feat_type_5  = enn.FieldType(self.r2_act, (c*16) * [self.r2_act.regular_repr])
+        
+        print("    -> [ESCNN] Membangun inc (DoubleEquivariantConv)...")
         self.inc   = DoubleEquivariantConv(self.feat_type_in, self.feat_type_1)
+        print("    -> [ESCNN] Membangun down1...")
         self.down1 = Down(self.feat_type_1, self.feat_type_2)
+        print("    -> [ESCNN] Membangun down2...")
         self.down2 = Down(self.feat_type_2, self.feat_type_3)
+        print("    -> [ESCNN] Membangun down3...")
         self.down3 = Down(self.feat_type_3, self.feat_type_4)
+        print("    -> [ESCNN] Membangun down4 (Layer terdalam, butuh waktu paling lama!)...")
         self.down4 = Down(self.feat_type_4, self.feat_type_5)
+        
+        print("    -> [ESCNN] Membangun up1...")
         self.up1   = Up(self.feat_type_5, self.feat_type_4)
+        print("    -> [ESCNN] Membangun up2...")
         self.up2   = Up(self.feat_type_4, self.feat_type_3)
+        print("    -> [ESCNN] Membangun up3...")
         self.up3   = Up(self.feat_type_3, self.feat_type_2)
+        print("    -> [ESCNN] Membangun up4...")
         self.up4   = Up(self.feat_type_2, self.feat_type_1)
+        print("    -> [ESCNN] Membangun outc...")
         self.outc  = OutConv(self.feat_type_1, n_classes)
+        print("    -> [ESCNN] SE2_CNNET selesai dibangun!")
 
     def forward(self, x):
         x_geom = enn.GeometricTensor(x, self.feat_type_in)
