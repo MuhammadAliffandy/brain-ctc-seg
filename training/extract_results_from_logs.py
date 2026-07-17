@@ -130,29 +130,62 @@ def summarize(records: list, last_n: int = 5):
 def find_latest_logs(log_dir: str, dataset_filter: str = None):
     """
     Cari semua file .txt di log_dir (rekursif).
-    Nama file: training_{model}_{dataset}_{timestamp}.txt
     Kembalikan dict: {(model, dataset): path_terbaru}
     """
-    pattern = re.compile(
+    pattern_standard = re.compile(
         r"training_([a-z0-9]+)_([a-z]+)_(\d{8}_\d{6})\.txt$",
+        re.IGNORECASE
+    )
+    pattern_terminal = re.compile(
+        r"terminal_([a-z]+)\.txt$",
+        re.IGNORECASE
+    )
+    pattern_stroke = re.compile(
+        r"log_retrain_([a-z]+)_(\d{8}_\d{6})\.txt$",
         re.IGNORECASE
     )
 
     found = {}  # (model, dataset) -> (timestamp_str, path)
 
-    # Cari rekursif di log_dir
+    # Cari rekursif di log_dir (untuk CT/CTC)
     all_txts = glob.glob(os.path.join(log_dir, "**", "*.txt"), recursive=True)
     all_txts += glob.glob(os.path.join(log_dir, "*.txt"))
+    
+    # Tambahan: Cari juga di public_dataset/ (untuk Stroke/Hemorrhage)
+    public_dir = os.path.join(os.path.dirname(log_dir), "public_dataset")
+    if os.path.exists(public_dir):
+        all_txts += glob.glob(os.path.join(public_dir, "log_retrain_*.txt"))
+        
     all_txts  = list(set(all_txts))
 
     for path in all_txts:
         fname = os.path.basename(path)
-        m = pattern.match(fname)
-        if not m:
-            continue
-        model_key   = m.group(1).lower()
-        dataset_key = m.group(2).lower()
-        timestamp   = m.group(3)
+        
+        # Coba match dengan standard format
+        m = pattern_standard.match(fname)
+        if m:
+            model_key   = m.group(1).lower()
+            dataset_key = m.group(2).lower()
+            timestamp   = m.group(3)
+        else:
+            # Coba match dengan terminal format (se2 retrain)
+            m2 = pattern_terminal.match(fname)
+            if m2:
+                model_key = "se2"
+                dataset_key = m2.group(1).lower()
+                # Ambil timestamp dari nama folder induk (exp_retrain_ct_YYYYMMDD_HHMMSS)
+                parent_dir = os.path.basename(os.path.dirname(path))
+                ts_match = re.search(r"(\d{8}_\d{6})", parent_dir)
+                timestamp = ts_match.group(1) if ts_match else "99999999_999999"
+            else:
+                # Coba match dengan stroke format
+                m3 = pattern_stroke.match(fname)
+                if m3:
+                    model_key = "se2"
+                    dataset_key = m3.group(1).lower()
+                    timestamp = m3.group(2)
+                else:
+                    continue
 
         if dataset_filter and dataset_key != dataset_filter.lower():
             continue
