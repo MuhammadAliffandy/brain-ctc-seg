@@ -1,0 +1,2 @@
+Model,Dataset,Log File,Log Path,Best Dice,Best Dice Epoch,Best IoU,Best IoU Epoch,Best Prec,Best Rec,Final Dice (avg last 5),Final IoU  (avg last 5),Final Prec (avg last 5),Final Rec  (avg last 5),Min Loss,Last Epoch,Total Epochs Parsed
+Mod-Seg-SE(2) [OURS],CTC (CTC + CTW),training_se2_ctc_20260629_203817.txt,/raid/D13K48009/Clara/brain-ctc-seg/training/logs/exp_20260629_archived/training_se2_ctc_20260629_203817.txt,0.973,140,0.9473,140,0.9616,0.9938,0.9693,0.9405,0.9517,0.9876,0.1208,150,150

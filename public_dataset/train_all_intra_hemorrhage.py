@@ -12,6 +12,11 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import cv2
 import albumentations as A
+import signal
+
+# --- ANTI-TERMINATE SHIELD ---
+# Mengabaikan sinyal kill biasa (SIGTERM) dari admin/script robot
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 cv2.setNumThreads(0)
 os.environ["OMP_NUM_THREADS"] = "1"
