@@ -275,11 +275,11 @@ def main():
     
     models_to_train = {
         "Mod-Seg-SE(2)": (SE2_CNNET, True),
-        # "HarmonicNet": (HarmonicNet, False),
-        # "nnU-Net": (nnUNet, False),
-        # "Attention U-Net": (AttentionUNet, False),
-        # "TransUNet": (TransUNet, False),
-        # "Standard U-Net": (StandardUNet, False),
+        "HarmonicNet": (HarmonicNet, False),
+        "nnU-Net": (nnUNet, False),
+        "Attention U-Net": (AttentionUNet, False),
+        "TransUNet": (TransUNet, False),
+        "Standard U-Net": (StandardUNet, False),
     }
     
     results = []
