@@ -9,11 +9,11 @@ DATE=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="log_retrain_stroke_${DATE}.txt"
 
 echo "📂 Log file will be saved as: $LOG_FILE"
-echo "⏳ Training STROKE on GPU 7..."
+echo "⏳ Training STROKE on GPU 5..."
 
 # Kita tidak pakai --log_dir karena script stroke tidak punya argparse
 # Langsung kita arahkan output (stdout) ke file log
-CUDA_VISIBLE_DEVICES=7 nohup python -u train_all_intra.py > "$LOG_FILE" 2>&1 &
+CUDA_VISIBLE_DEVICES=5 nohup python -u train_all_intra.py > "$LOG_FILE" 2>&1 &
 
 echo "✅ Proses training STROKE berjalan di background!"
 echo "Gunakan perintah berikut untuk memantau:"
