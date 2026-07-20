@@ -14,8 +14,8 @@ echo "=========================================================="
 echo "Memulai eksekusi di background menggunakan nohup..."
 
 # ----------------- GPU 2 -----------------
-echo "[GPU 2] Training Mod-Seg-SE(2) (CT)..."
-CUDA_VISIBLE_DEVICES=2 nohup python train_se2_by_dataset.py --dataset ct --log_dir "$EXP_DIR" > "${EXP_DIR}/log_se2_ct.txt" 2>&1 &
+# echo "[GPU 2] Training Mod-Seg-SE(2) (CT)..."
+# CUDA_VISIBLE_DEVICES=2 nohup python train_se2_by_dataset.py --dataset ct --log_dir "$EXP_DIR" > "${EXP_DIR}/log_se2_ct.txt" 2>&1 &
 
 echo "[GPU 2] Training HarmonicNet (CT)..."
 CUDA_VISIBLE_DEVICES=2 nohup python train_comparison_models.py --model harmonic --dataset ct --log_dir "$EXP_DIR" > "${EXP_DIR}/log_harmonic_ct.txt" 2>&1 &

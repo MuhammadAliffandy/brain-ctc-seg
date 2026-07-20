@@ -14,9 +14,9 @@ echo "Memulai eksekusi di background menggunakan nohup..."
 # DGX diset ke Exclusive Process, jadi 1 GPU hanya bisa 1 proses.
 # Solusi: Kita antrekan modelnya!
 
-echo "[GPU 2] Training Mod-Seg-SE(2) lalu dilanjut Attention U-Net..."
+echo "[GPU 2] Training Attention U-Net..."
 (
-    CUDA_VISIBLE_DEVICES=2 python train_se2_by_dataset.py --dataset ctc > "log_se2_ctc_${DATE}.txt" 2>&1
+    # CUDA_VISIBLE_DEVICES=2 python train_se2_by_dataset.py --dataset ctc > "log_se2_ctc_${DATE}.txt" 2>&1
     CUDA_VISIBLE_DEVICES=2 python train_comparison_models.py --model attention --dataset ctc > "log_attention_ctc_${DATE}.txt" 2>&1
 ) &
 
