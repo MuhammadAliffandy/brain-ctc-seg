@@ -10,7 +10,7 @@ if [ "$1" != "bg" ]; then
     
     echo "=========================================================="
     echo "🚀 STARTING COMPARISON MODELS TRAINING FOR [CTC] DATASET"
-    echo "🎯 Target GPU: 3"
+    echo "🎯 Target GPU: 5"
     echo "📂 Folder Log: $EXP_DIR"
     echo "=========================================================="
     echo "Memulai eksekusi di background. Silakan tutup terminal jika perlu."
@@ -25,15 +25,15 @@ fi
 EXP_DIR=$2
 
 echo -e "\n[1/5] Training HarmonicNet (CTC)..."
-CUDA_VISIBLE_DEVICES=3 python train_comparison_models.py --model harmonic --dataset ctc --log_dir "$EXP_DIR" > "${EXP_DIR}/log_harmonic_ctc.txt" 2>&1
+CUDA_VISIBLE_DEVICES=5 python train_comparison_models.py --model harmonic --dataset ctc --log_dir "$EXP_DIR" > "${EXP_DIR}/log_harmonic_ctc.txt" 2>&1
 echo "✅ HarmonicNet CTC done. Log: ${EXP_DIR}/log_harmonic_ctc.txt"
 
 echo -e "\n[2/5] Training Standard UNet (CTC)..."
-CUDA_VISIBLE_DEVICES=3 python train_comparison_models.py --model unet --dataset ctc --log_dir "$EXP_DIR" > "${EXP_DIR}/log_unet_ctc.txt" 2>&1
+CUDA_VISIBLE_DEVICES=5 python train_comparison_models.py --model unet --dataset ctc --log_dir "$EXP_DIR" > "${EXP_DIR}/log_unet_ctc.txt" 2>&1
 echo "✅ Standard UNet CTC done. Log: ${EXP_DIR}/log_unet_ctc.txt"
 
 echo -e "\n[3/5] Training nnUNet (CTC)..."
-CUDA_VISIBLE_DEVICES=3 python train_comparison_models.py --model nnunet --dataset ctc --log_dir "$EXP_DIR" > "${EXP_DIR}/log_nnunet_ctc.txt" 2>&1
+CUDA_VISIBLE_DEVICES=5 python train_comparison_models.py --model nnunet --dataset ctc --log_dir "$EXP_DIR" > "${EXP_DIR}/log_nnunet_ctc.txt" 2>&1
 echo "✅ nnUNet CTC done. Log: ${EXP_DIR}/log_nnunet_ctc.txt"
 
 echo -e "\n[4/5] Training Attention UNet (CTC)..."
