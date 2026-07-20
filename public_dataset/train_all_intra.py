@@ -274,7 +274,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     models_to_train = {
-        "Mod-Seg-SE(2)": (SE2_CNNET, True),
+        # "Mod-Seg-SE(2)": (SE2_CNNET, True), # SUDAH DITRAINING SEBELUMNYA
         "HarmonicNet": (HarmonicNet, False),
         "nnU-Net": (nnUNet, False),
         "Attention U-Net": (AttentionUNet, False),
@@ -283,14 +283,28 @@ def main():
     }
     
     results = []
+    csv_path = os.path.join(os.path.dirname(__file__), "public_intra_eval_metrics.csv")
+    
+    # Load existing results (khususnya Mod-Seg-SE2 yang sudah selesai) agar tidak tertimpa
+    if os.path.exists(csv_path):
+        try:
+            existing_df = pd.read_csv(csv_path)
+            results = existing_df.to_dict('records')
+            print(f"📥 Berhasil memuat {len(results)} hasil model sebelumnya dari CSV.")
+        except:
+            pass
     
     for name, (ModelClass, is_se2) in models_to_train.items():
+        # Cek apakah model sudah ada di CSV, jika iya, skip agar tidak double training
+        if any(r.get("Model") == name for r in results):
+            print(f"⏩ Model {name} sudah ada di CSV. Melewati training.")
+            continue
+            
         res = train_and_eval_model(name, ModelClass, is_se2, train_loader, test_loader, device, save_dir)
         results.append(res)
         
         # Simpan CSV setiap kali satu model selesai (safety)
         df = pd.DataFrame(results)
-        csv_path = os.path.join(os.path.dirname(__file__), "public_intra_eval_metrics.csv")
         df.to_csv(csv_path, index=False)
         
     print("\n" + "="*60)
