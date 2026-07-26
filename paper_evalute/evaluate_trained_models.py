@@ -97,7 +97,7 @@ class SE2_CNNET(nn.Module):
 
 def load_se2_weights(model_class, path, device):
     """Auto-detect base_channels from checkpoint, then build + load the model."""
-    ckpt = torch.load(path, map_location=device, weights_only=True)
+    ckpt = torch.load(path, map_location=device, weights_only=False)
     sample = list(ckpt.keys())[:3]
     print(f"  🔑 Key sample: {sample}")
 
@@ -485,7 +485,7 @@ def main(dataset_key: str = 'all'):
         else:
             model = ModelClass(n_channels=3, n_classes=2).to(device)
             model.load_state_dict(
-                torch.load(weight_path, map_location=device, weights_only=True), strict=False
+                torch.load(weight_path, map_location=device, weights_only=False), strict=False
             )
         print(f"  ✅ Weights loaded\n")
 
