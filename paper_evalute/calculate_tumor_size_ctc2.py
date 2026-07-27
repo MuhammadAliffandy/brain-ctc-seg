@@ -171,26 +171,34 @@ def main():
         # Pisahkan blob ke kiri (cx < mid) dan kanan
         img_w = gt_mask.shape[1]
         mid = img_w // 2
-        left_blobs  = sorted([b for b in gt_blobs if b[1] <  mid], key=lambda b: b[0])
-        right_blobs = sorted([b for b in gt_blobs if b[1] >= mid], key=lambda b: b[0])
 
-        # Tempatkan label di kolom LUAR kiri (x=10) dan LUAR kanan (x=img_w-10)
-        for j, (cy, cx, area_mm2) in enumerate(left_blobs):
-            text_y = 20 + j * 22
-            ax_gt.annotate(f"{area_mm2:.1f} mm²",
-                           xy=(cx, cy), xycoords='data',
-                           xytext=(10, text_y), textcoords='data',
-                           color='black', fontsize=9, ha='center', va='center',
-                           bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.95, edgecolor='none'),
-                           arrowprops=dict(arrowstyle="->", color='lightgray', lw=1.2))
-        for j, (cy, cx, area_mm2) in enumerate(right_blobs):
-            text_y = 20 + j * 22
-            ax_gt.annotate(f"{area_mm2:.1f} mm²",
-                           xy=(cx, cy), xycoords='data',
-                           xytext=(img_w - 10, text_y), textcoords='data',
-                           color='black', fontsize=9, ha='center', va='center',
-                           bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.95, edgecolor='none'),
-                           arrowprops=dict(arrowstyle="->", color='lightgray', lw=1.2))
+        def annotate_blobs(ax, blobs, mid):
+            left_blobs  = sorted([b for b in blobs if b[1] <  mid], key=lambda b: b[0])
+            right_blobs = sorted([b for b in blobs if b[1] >= mid], key=lambda b: b[0])
+
+            # Teks kiri: pojok kiri-atas dalam gambar (fraction 0.05, mulai dari 0.08)
+            for j, (cy, cx, area_mm2) in enumerate(left_blobs):
+                text_frac_y = 0.08 + j * 0.10
+                ax.annotate(f"{area_mm2:.1f} mm²",
+                            xy=(cx, cy), xycoords='data',
+                            xytext=(0.05, text_frac_y), textcoords='axes fraction',
+                            color='black', fontsize=8.5, ha='center', va='center',
+                            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.92, edgecolor='#cccccc', linewidth=0.5),
+                            arrowprops=dict(arrowstyle="-", color='white', lw=1.0,
+                                            connectionstyle="arc3,rad=0.1"))
+
+            # Teks kanan: pojok kanan-atas dalam gambar (fraction 0.95, mulai dari 0.08)
+            for j, (cy, cx, area_mm2) in enumerate(right_blobs):
+                text_frac_y = 0.08 + j * 0.10
+                ax.annotate(f"{area_mm2:.1f} mm²",
+                            xy=(cx, cy), xycoords='data',
+                            xytext=(0.95, text_frac_y), textcoords='axes fraction',
+                            color='black', fontsize=8.5, ha='center', va='center',
+                            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.92, edgecolor='#cccccc', linewidth=0.5),
+                            arrowprops=dict(arrowstyle="-", color='white', lw=1.0,
+                                            connectionstyle="arc3,rad=-0.1"))
+
+        annotate_blobs(ax_gt, gt_blobs, mid)
 
         # Annotate individual tumors for Prediction
         pred_labels, pred_num = scipy.ndimage.label(pred_mask)
@@ -204,25 +212,7 @@ def main():
             cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
             pred_blobs.append((cy, cx, area_mm2))
 
-        left_blobs  = sorted([b for b in pred_blobs if b[1] <  mid], key=lambda b: b[0])
-        right_blobs = sorted([b for b in pred_blobs if b[1] >= mid], key=lambda b: b[0])
-
-        for j, (cy, cx, area_mm2) in enumerate(left_blobs):
-            text_y = 20 + j * 22
-            ax_pred.annotate(f"{area_mm2:.1f} mm²",
-                             xy=(cx, cy), xycoords='data',
-                             xytext=(10, text_y), textcoords='data',
-                             color='black', fontsize=9, ha='center', va='center',
-                             bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.95, edgecolor='none'),
-                             arrowprops=dict(arrowstyle="->", color='lightgray', lw=1.2))
-        for j, (cy, cx, area_mm2) in enumerate(right_blobs):
-            text_y = 20 + j * 22
-            ax_pred.annotate(f"{area_mm2:.1f} mm²",
-                             xy=(cx, cy), xycoords='data',
-                             xytext=(img_w - 10, text_y), textcoords='data',
-                             color='black', fontsize=9, ha='center', va='center',
-                             bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.95, edgecolor='none'),
-                             arrowprops=dict(arrowstyle="->", color='lightgray', lw=1.2))
+        annotate_blobs(ax_pred, pred_blobs, mid)
 
         # Annotations di gambar (Hanya menampilkan slice info, area total bisa dihilangkan atau dipertahankan)
         ax_gt.set_title(f"Slice {z} (Ground Truth)", fontsize=14, fontweight='bold', pad=10, color='darkred')
