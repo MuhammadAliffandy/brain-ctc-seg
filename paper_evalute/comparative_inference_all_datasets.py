@@ -422,18 +422,20 @@ def main():
                 img_gray, tensor, gt_mask = load_npy_sample(sample)
 
         elif ds['source'] == 'kaggle_stroke':
-            dl = kagglehub.dataset_download("ozcangundes/brain-stroke-ct-dataset")
+            # Bypass kagglehub download API to avoid 403 Forbidden
+            dl = os.path.expanduser("~/.cache/kagglehub/datasets/ozcangundes/brain-stroke-ct-dataset/versions/1")
             ip, mp = find_best_kaggle_sample(dl)
             if ip is None:
-                print("  ⚠️ No stroke sample found"); img_gray=tensor=gt_mask=None
+                print("  ⚠️ No stroke sample found in cache"); img_gray=tensor=gt_mask=None
             else:
                 img_gray, tensor, gt_mask = load_kaggle_sample(ip, mp)
 
         elif ds['source'] == 'kaggle_hemo':
-            dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
+            # Bypass kagglehub download API to avoid 403 Forbidden
+            dl = os.path.expanduser("~/.cache/kagglehub/datasets/vbookshelf/computed-tomography-ct-images/versions/1")
             ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
             if ip is None:
-                print("  ⚠️ No hemorrhage sample found"); img_gray=tensor=gt_mask=None
+                print("  ⚠️ No hemorrhage sample found in cache"); img_gray=tensor=gt_mask=None
             else:
                 img_gray, tensor, gt_mask = load_kaggle_sample(ip, mp)
 
