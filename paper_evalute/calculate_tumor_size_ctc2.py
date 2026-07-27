@@ -165,10 +165,12 @@ def main():
             y_idx, x_idx = np.where(blob)
             cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
             
-            # Draw text near centroid, slightly above
-            # ax_gt.text(cx, cy - 10, f"{area_mm2:.1f} mm²", color='white', 
-            #            fontsize=9, fontweight='bold', ha='center', va='center',
-            #            bbox=dict(facecolor='darkred', alpha=0.7, edgecolor='none', pad=1))
+            top_y = np.min(y_idx)
+            
+            # Geser teks ke atas tumor agar tidak menutupi, background dibuat lebih transparan
+            ax_gt.text(cx, top_y - 12, f"{area_mm2:.1f} mm²", color='white', 
+                       fontsize=9, fontweight='bold', ha='center', va='center',
+                       bbox=dict(facecolor='darkred', alpha=0.25, edgecolor='none', pad=2))
 
         # Annotate individual tumors for Prediction
         pred_labels, pred_num = scipy.ndimage.label(pred_mask)
@@ -180,10 +182,12 @@ def main():
             y_idx, x_idx = np.where(blob)
             cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
             
-            # Draw text near centroid, slightly above
-            # ax_pred.text(cx, cy - 10, f"{area_mm2:.1f} mm²", color='white', 
-            #            fontsize=9, fontweight='bold', ha='center', va='center',
-            #            bbox=dict(facecolor='darkgreen', alpha=0.7, edgecolor='none', pad=1))
+            top_y = np.min(y_idx)
+            
+            # Geser teks ke atas tumor agar tidak menutupi, background dibuat lebih transparan
+            ax_pred.text(cx, top_y - 12, f"{area_mm2:.1f} mm²", color='white', 
+                       fontsize=9, fontweight='bold', ha='center', va='center',
+                       bbox=dict(facecolor='darkgreen', alpha=0.25, edgecolor='none', pad=2))
 
         # Annotations di gambar (Hanya menampilkan slice info, area total bisa dihilangkan atau dipertahankan)
         ax_gt.set_title(f"Slice {z} (Ground Truth)", fontsize=14, fontweight='bold', pad=10, color='darkred')
