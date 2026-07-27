@@ -165,12 +165,12 @@ def main():
             y_idx, x_idx = np.where(blob)
             cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
             
-            top_y = np.min(y_idx)
+            # Tentukan offset X agar kotak teks berada di samping tumor (kiri atau kanan)
+            offset_x = -35 if cx < 88 else 35
             
-            # Geser teks ke atas tumor agar tidak menutupi, background dibuat lebih transparan
-            ax_gt.text(cx, top_y - 12, f"{area_mm2:.1f} mm²", color='white', 
-                       fontsize=9, fontweight='bold', ha='center', va='center',
-                       bbox=dict(facecolor='darkred', alpha=0.25, edgecolor='none', pad=2))
+            ax_gt.text(cx + offset_x, cy, f"{area_mm2:.1f} mm²", color='black', 
+                       fontsize=10, fontweight='normal', ha='center', va='center',
+                       bbox=dict(boxstyle="round,pad=0.4", facecolor='white', alpha=0.95, edgecolor='none'))
 
         # Annotate individual tumors for Prediction
         pred_labels, pred_num = scipy.ndimage.label(pred_mask)
@@ -182,12 +182,12 @@ def main():
             y_idx, x_idx = np.where(blob)
             cy, cx = int(np.mean(y_idx)), int(np.mean(x_idx))
             
-            top_y = np.min(y_idx)
+            # Tentukan offset X agar kotak teks berada di samping tumor (kiri atau kanan)
+            offset_x = -35 if cx < 88 else 35
             
-            # Geser teks ke atas tumor agar tidak menutupi, background dibuat lebih transparan
-            ax_pred.text(cx, top_y - 12, f"{area_mm2:.1f} mm²", color='white', 
-                       fontsize=9, fontweight='bold', ha='center', va='center',
-                       bbox=dict(facecolor='darkgreen', alpha=0.25, edgecolor='none', pad=2))
+            ax_pred.text(cx + offset_x, cy, f"{area_mm2:.1f} mm²", color='black', 
+                       fontsize=10, fontweight='normal', ha='center', va='center',
+                       bbox=dict(boxstyle="round,pad=0.4", facecolor='white', alpha=0.95, edgecolor='none'))
 
         # Annotations di gambar (Hanya menampilkan slice info, area total bisa dihilangkan atau dipertahankan)
         ax_gt.set_title(f"Slice {z} (Ground Truth)", fontsize=14, fontweight='bold', pad=10, color='darkred')
