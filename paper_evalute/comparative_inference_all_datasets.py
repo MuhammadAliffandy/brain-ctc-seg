@@ -1,18 +1,11 @@
 """
 comparative_inference_all_datasets.py
 ======================================
-Fig. 5 style figure — 1 representative result from EACH of the 4 datasets.
+IEEE-style Fig. 5 — 4 datasets × 7 columns table:
+  [Dataset] | [Input] | [Ground Truth] | [nnU-Net] | [Attn U-Net] | [TransUNet] | [Standard U-Net] | [Proposed CT-SE(2)]
 
-Layout (5 rows × 4 columns):
-  Col:   CT          CTC         Stroke      Hemorrhage
-  R1:    Input       Input       Input       Input
-  R2:    Ground Truth  GT        GT          GT
-  R3:    Overlay     Overlay     Overlay     Overlay
-  R4:    CT-SE(2)    CT-SE(2)    CT-SE(2)    CT-SE(2)
-  R5:    Standard    Standard    Standard    Standard
-         U-Net       U-Net       U-Net       U-Net
-
-Each panel has a green inset zoom box highlighting the lesion ROI.
+- Ground Truth column: blue background tint
+- Proposed column: green background tint
 
 Usage (on DGX):
     CUDA_VISIBLE_DEVICES=5 python comparative_inference_all_datasets.py
@@ -23,6 +16,7 @@ import numpy as np
 import cv2
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -34,10 +28,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
 from evaluate_trained_models import SE2_CNNET, load_se2_weights
 
 # ─────────────────────────────────────────────────────────────────
-# MODEL ARCHITECTURES (Standard UNet & nnUNet)
+# MODEL ARCHITECTURES
 # ─────────────────────────────────────────────────────────────────
-import torch.nn as nn
-
 class _DC(nn.Module):
     def __init__(self, i, o):
         super().__init__()
@@ -51,16 +43,16 @@ class StandardUNet(nn.Module):
     def __init__(self, n_channels=3, n_classes=2):
         super().__init__()
         self.inc = _DC(n_channels, 64)
-        self.d1 = nn.Sequential(nn.MaxPool2d(2), _DC(64, 128))
+        self.d1 = nn.Sequential(nn.MaxPool2d(2), _DC(64,  128))
         self.d2 = nn.Sequential(nn.MaxPool2d(2), _DC(128, 256))
         self.d3 = nn.Sequential(nn.MaxPool2d(2), _DC(256, 512))
-        self.u1 = nn.ConvTranspose2d(512, 256, 2, stride=2); self.c1 = _DC(512, 256)
-        self.u2 = nn.ConvTranspose2d(256, 128, 2, stride=2); self.c2 = _DC(256, 128)
-        self.u3 = nn.ConvTranspose2d(128, 64,  2, stride=2); self.c3 = _DC(128, 64)
+        self.u1 = nn.ConvTranspose2d(512,256,2,stride=2); self.c1=_DC(512,256)
+        self.u2 = nn.ConvTranspose2d(256,128,2,stride=2); self.c2=_DC(256,128)
+        self.u3 = nn.ConvTranspose2d(128,64, 2,stride=2); self.c3=_DC(128,64)
         self.out = nn.Conv2d(64, n_classes, 1)
     def _pc(self, x, s):
-        dy = s.size(2)-x.size(2); dx = s.size(3)-x.size(3)
-        return torch.cat([s, F.pad(x, [dx//2, dx-dx//2, dy//2, dy-dy//2])], 1)
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s, F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
     def forward(self, x):
         x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3)
         x=self.c1(self._pc(self.u1(x4),x3))
@@ -72,66 +64,154 @@ class _NNC(nn.Module):
     def __init__(self, i, o):
         super().__init__()
         self.seq = nn.Sequential(
-            nn.Conv2d(i, o, 3, padding=1, bias=False), nn.InstanceNorm2d(o), nn.LeakyReLU(0.01, True),
-            nn.Conv2d(o, o, 3, padding=1, bias=False), nn.InstanceNorm2d(o), nn.LeakyReLU(0.01, True),
+            nn.Conv2d(i, o, 3, padding=1, bias=False), nn.InstanceNorm2d(o), nn.LeakyReLU(0.01,True),
+            nn.Conv2d(o, o, 3, padding=1, bias=False), nn.InstanceNorm2d(o), nn.LeakyReLU(0.01,True),
         )
     def forward(self, x): return self.seq(x)
 
 class nnUNet(nn.Module):
     def __init__(self, n_channels=3, n_classes=2):
         super().__init__()
-        ch = [32, 64, 128, 256, 320]
-        self.enc  = nn.ModuleList([_NNC(n_channels if i==0 else ch[i-1], ch[i]) for i in range(5)])
-        self.pool = nn.MaxPool2d(2)
-        self.ups  = nn.ModuleList([nn.ConvTranspose2d(ch[i], ch[i-1], 2, stride=2) for i in range(4, 0, -1)])
-        self.dec  = nn.ModuleList([_NNC(ch[i-1]*2, ch[i-1]) for i in range(4, 0, -1)])
-        self.out  = nn.Conv2d(ch[0], n_classes, 1)
+        ch=[32,64,128,256,320]
+        self.enc=nn.ModuleList([_NNC(n_channels if i==0 else ch[i-1],ch[i]) for i in range(5)])
+        self.pool=nn.MaxPool2d(2)
+        self.ups=nn.ModuleList([nn.ConvTranspose2d(ch[i],ch[i-1],2,stride=2) for i in range(4,0,-1)])
+        self.dec=nn.ModuleList([_NNC(ch[i-1]*2,ch[i-1]) for i in range(4,0,-1)])
+        self.out=nn.Conv2d(ch[0],n_classes,1)
     def forward(self, x):
-        skips = []
-        for i, enc in enumerate(self.enc):
-            x = enc(x)
-            if i < 4: skips.append(x); x = self.pool(x)
-        for up, dec, skip in zip(self.ups, self.dec, reversed(skips)):
-            x = up(x)
-            dy = skip.size(2)-x.size(2); dx = skip.size(3)-x.size(3)
-            x = dec(torch.cat([skip, F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])], 1))
+        skips=[]
+        for i,enc in enumerate(self.enc):
+            x=enc(x)
+            if i<4: skips.append(x); x=self.pool(x)
+        for up,dec,skip in zip(self.ups,self.dec,reversed(skips)):
+            x=up(x)
+            dy=skip.size(2)-x.size(2); dx=skip.size(3)-x.size(3)
+            x=dec(torch.cat([skip,F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1))
+        return self.out(x)
+
+class _AttnGate(nn.Module):
+    def __init__(self, g, x, mid):
+        super().__init__()
+        self.Wg=nn.Conv2d(g,mid,1); self.Wx=nn.Conv2d(x,mid,1)
+        self.psi=nn.Sequential(nn.Conv2d(mid,1,1),nn.Sigmoid())
+    def forward(self, g, x):
+        a=self.psi(F.relu(self.Wg(g)+self.Wx(x),True))
+        return x*F.interpolate(a,size=x.shape[2:],mode='nearest')
+
+class AttentionUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        self.inc=_DC(n_channels,64)
+        self.d1=nn.Sequential(nn.MaxPool2d(2),_DC(64,128))
+        self.d2=nn.Sequential(nn.MaxPool2d(2),_DC(128,256))
+        self.d3=nn.Sequential(nn.MaxPool2d(2),_DC(256,512))
+        self.u1=nn.ConvTranspose2d(512,256,2,stride=2); self.a1=_AttnGate(256,256,128); self.c1=_DC(512,256)
+        self.u2=nn.ConvTranspose2d(256,128,2,stride=2); self.a2=_AttnGate(128,128,64);  self.c2=_DC(256,128)
+        self.u3=nn.ConvTranspose2d(128,64, 2,stride=2); self.a3=_AttnGate(64,64,32);    self.c3=_DC(128,64)
+        self.out=nn.Conv2d(64,n_classes,1)
+    def _pc(self, x, s):
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s,F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
+    def forward(self, x):
+        x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3)
+        u=self.u1(x4); x=self.c1(self._pc(u,self.a1(u,x3)))
+        u=self.u2(x);  x=self.c2(self._pc(u,self.a2(u,x2)))
+        u=self.u3(x);  x=self.c3(self._pc(u,self.a3(u,x1)))
+        return self.out(x)
+
+class _TransBlock(nn.Module):
+    def __init__(self, dim, heads=8):
+        super().__init__()
+        self.n1=nn.LayerNorm(dim); self.attn=nn.MultiheadAttention(dim,heads,batch_first=True)
+        self.n2=nn.LayerNorm(dim); self.mlp=nn.Sequential(nn.Linear(dim,dim*4),nn.GELU(),nn.Linear(dim*4,dim))
+    def forward(self, x):
+        B,C,H,W=x.shape; t=x.flatten(2).transpose(1,2)
+        t=t+self.attn(self.n1(t),self.n1(t),self.n1(t))[0]
+        t=t+self.mlp(self.n2(t))
+        return t.transpose(1,2).reshape(B,C,H,W)
+
+class TransUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        self.inc=_DC(n_channels,64)
+        self.d1=nn.Sequential(nn.MaxPool2d(2),_DC(64,128))
+        self.d2=nn.Sequential(nn.MaxPool2d(2),_DC(128,256))
+        self.d3=nn.Sequential(nn.MaxPool2d(2),_DC(256,512))
+        self.trans=nn.Sequential(_TransBlock(512),_TransBlock(512))
+        self.u1=nn.ConvTranspose2d(512,256,2,stride=2); self.c1=_DC(512,256)
+        self.u2=nn.ConvTranspose2d(256,128,2,stride=2); self.c2=_DC(256,128)
+        self.u3=nn.ConvTranspose2d(128,64, 2,stride=2); self.c3=_DC(128,64)
+        self.out=nn.Conv2d(64,n_classes,1)
+    def _pc(self, x, s):
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s,F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
+    def forward(self, x):
+        x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3)
+        x4=self.trans(x4)
+        x=self.c1(self._pc(self.u1(x4),x3))
+        x=self.c2(self._pc(self.u2(x),x2))
+        x=self.c3(self._pc(self.u3(x),x1))
         return self.out(x)
 
 
 # ─────────────────────────────────────────────────────────────────
-# DATA LOADING HELPERS
+# CONFIG
 # ─────────────────────────────────────────────────────────────────
 SAVE_DIR_NPY   = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
 SAVE_DIR_INTRA = os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/saved_models")
 CROP_MARGIN, ROTATE_K = 40, 3
 
+# Column definitions: (header_label, bg_color, text_color)
+COLUMNS = [
+    ("Input",             None,              'black'),
+    ("Ground Truth",      '#dbeeff',         'black'),   # blue tint
+    ("nnU-Net",           None,              'black'),
+    ("Attention U-Net",   None,              'black'),
+    ("TransUNet",         None,              'black'),
+    ("Standard U-Net",    None,              'black'),
+    ("Proposed\nCT-SE(2)",'#d4f5d4',         '#006600'), # green tint
+]
 
-def load_model(ModelClass, weight_path, device, is_se2=False):
-    if is_se2:
-        return load_se2_weights(ModelClass, weight_path, device)
-    model = ModelClass(n_channels=3, n_classes=2).to(device)
-    ckpt  = torch.load(weight_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt, strict=False)
-    model.eval()
-    return model
-
-
-def infer(model, tensor, device):
-    model.eval()
-    tensor = tensor.to(device)
-    with torch.no_grad():
-        with torch.amp.autocast('cuda'):
-            logits = model(tensor)
-        pred = torch.argmax(F.softmax(logits, dim=1), dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
-    return pred
+DATASET_NAMES = ['CT', 'CTC', 'Stroke', 'Hemorrhage']
 
 
-def find_best_npy_slice(data_dir, prefix, min_px=200, max_px=10000):
-    """Find the NPY slice with the most representative lesion for a given dataset prefix."""
+# ─────────────────────────────────────────────────────────────────
+# DATA LOADING
+# ─────────────────────────────────────────────────────────────────
+def load_model_safe(ModelClass, weight_path, device, is_se2=False):
+    if not os.path.exists(weight_path):
+        print(f"  ⚠️ Missing: {os.path.basename(weight_path)}")
+        return None
+    try:
+        if is_se2:
+            m = load_se2_weights(ModelClass, weight_path, device)
+        else:
+            m = ModelClass(n_channels=3, n_classes=2).to(device)
+            m.load_state_dict(torch.load(weight_path, map_location=device, weights_only=False), strict=False)
+        m.eval()
+        print(f"  ✅ Loaded {os.path.basename(weight_path)}")
+        return m
+    except Exception as e:
+        print(f"  ❌ Error loading {os.path.basename(weight_path)}: {e}")
+        return None
+
+
+def infer_safe(model, tensor, device):
+    if model is None: return None
+    try:
+        with torch.no_grad():
+            with torch.amp.autocast('cuda'):
+                logits = model(tensor.to(device))
+            return torch.argmax(F.softmax(logits,dim=1),dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
+    except Exception as e:
+        print(f"  ❌ Inference error: {e}")
+        return None
+
+
+def find_best_npy_slice(data_dir, prefix, min_px=200, max_px=15000):
     best = None
     for folder in sorted(os.listdir(data_dir)):
-        if not folder.upper().startswith(prefix.upper()):
-            continue
+        if not folder.upper().startswith(prefix.upper()): continue
         fpath = os.path.join(data_dir, folder)
         imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')],
                       key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
@@ -142,169 +222,102 @@ def find_best_npy_slice(data_dir, prefix, min_px=200, max_px=10000):
             n_px = int(np.sum(np.load(mask_path)))
             if min_px < n_px < max_px:
                 if best is None or n_px > best['px']:
-                    i_prev = max(0, i-1); i_next = min(len(imgs)-1, i+1)
-                    best = dict(
-                        px=n_px, folder=folder,
-                        prev=os.path.join(fpath, imgs[i_prev]),
-                        curr=img_path,
-                        next=os.path.join(fpath, imgs[i_next]),
-                        mask=mask_path,
-                    )
+                    i_prev = max(0,i-1); i_next = min(len(imgs)-1,i+1)
+                    best = dict(px=n_px,
+                                prev=os.path.join(fpath,imgs[i_prev]),
+                                curr=img_path,
+                                next=os.path.join(fpath,imgs[i_next]),
+                                mask=mask_path)
     return best
 
 
-def load_npy_sample(sample_info):
-    """Load a 2.5D NPY sample and return (img_gray, img_25d_norm, gt_mask)."""
-    i0 = np.load(sample_info['prev']).astype(np.float32)
-    i1 = np.load(sample_info['curr']).astype(np.float32)
-    i2 = np.load(sample_info['next']).astype(np.float32)
-    mask = np.load(sample_info['mask']).astype(np.uint8)
-
-    img_25d = np.stack([i0, i1, i2], axis=-1)
-    if img_25d.max() > img_25d.min():
-        img_25d_norm = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min())
-    else:
-        img_25d_norm = img_25d
-
-    mid = i1.copy()
-    if mid.max() > mid.min(): mid = (mid - mid.min()) / (mid.max() - mid.min())
-
-    # Crop + rotate to match training view
-    mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K)
-    mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    img_25d_norm_crop = np.rot90(img_25d_norm[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-
-    tensor = torch.from_numpy(img_25d_norm_crop).permute(2, 0, 1).unsqueeze(0)
+def load_npy_sample(s):
+    i0=np.load(s['prev']).astype(np.float32)
+    i1=np.load(s['curr']).astype(np.float32)
+    i2=np.load(s['next']).astype(np.float32)
+    mask=np.load(s['mask']).astype(np.uint8)
+    img_25d=np.stack([i0,i1,i2],axis=-1)
+    if img_25d.max()>img_25d.min():
+        img_25d_n=(img_25d-img_25d.min())/(img_25d.max()-img_25d.min())
+    else: img_25d_n=img_25d
+    mid=i1.copy()
+    if mid.max()>mid.min(): mid=(mid-mid.min())/(mid.max()-mid.min())
+    mid  =np.rot90(mid[CROP_MARGIN:-CROP_MARGIN,CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K)
+    mask =np.rot90(mask[CROP_MARGIN:-CROP_MARGIN,CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
+    inp_c=np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN,CROP_MARGIN:-CROP_MARGIN],k=ROTATE_K)
+    tensor=torch.from_numpy(inp_c).permute(2,0,1).unsqueeze(0)
     return mid, tensor, mask
 
 
-def find_best_kaggle_sample(download_path, mask_keywords=('mask', 'seg'), min_px=50):
-    """Find a good sample from a Kaggle image/mask directory."""
-    all_files = []
-    for root, _, files in os.walk(download_path):
+def find_best_kaggle_sample(root, mask_kw=('mask','seg','hge'), min_px=50):
+    all_files=[]
+    for r,_,files in os.walk(root):
         for f in files:
-            if f.lower().endswith(('.jpg', '.png', '.bmp')):
-                all_files.append(os.path.join(root, f))
-
-    masks  = [f for f in all_files if any(k in f.lower() for k in mask_keywords)]
+            if f.lower().endswith(('.jpg','.png','.bmp')):
+                all_files.append(os.path.join(r,f))
+    masks=[f for f in all_files if any(k in os.path.basename(f).lower() for k in mask_kw)]
     random.seed(42); random.shuffle(masks)
-
-    for mask_path in masks:
-        m_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        if m_img is None: continue
-        if np.sum(m_img > 127) < min_px: continue
-
-        # Try to find matching image
-        parent = os.path.dirname(mask_path)
-        base = os.path.basename(mask_path)
-        clean = base.lower().replace('_hge_seg','').replace('_seg','').replace('_mask','').replace('mask','').split('.')[0]
-        for ext in ['.jpg', '.png', '.bmp']:
-            candidate = os.path.join(parent, clean + ext)
-            if os.path.exists(candidate):
-                return candidate, mask_path
-    return None, None
+    for mp in masks:
+        m=cv2.imread(mp,cv2.IMREAD_GRAYSCALE)
+        if m is None or np.sum(m>127)<min_px: continue
+        parent=os.path.dirname(mp)
+        base=os.path.basename(mp)
+        clean=base.lower()
+        for k in ['_hge_seg','_seg','_mask','mask','seg']:
+            clean=clean.replace(k,'')
+        clean=clean.split('.')[0]
+        for ext in ['.jpg','.png','.bmp']:
+            cand=os.path.join(parent,clean+ext)
+            if os.path.exists(cand): return cand,mp
+    return None,None
 
 
-def load_kaggle_sample(img_path, mask_path):
-    """Load a 2D kaggle image, return (img_gray, tensor_3c, gt_mask)."""
-    img  = cv2.imread(img_path,  cv2.IMREAD_GRAYSCALE)
-    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    img  = cv2.resize(img,  (256, 256)).astype(np.float32)
-    mask = cv2.resize(mask, (256, 256), interpolation=cv2.INTER_NEAREST)
-    mask = (mask > 127).astype(np.uint8)
-
-    if img.max() > img.min(): img = (img - img.min()) / (img.max() - img.min())
-    img_3c = np.stack([img, img, img], axis=0)  # [3,H,W]
-    tensor = torch.from_numpy(img_3c).unsqueeze(0)  # [1,3,H,W]
-    return img, tensor, mask
+def load_kaggle_sample(ip,mp):
+    img =cv2.imread(ip, cv2.IMREAD_GRAYSCALE)
+    mask=cv2.imread(mp, cv2.IMREAD_GRAYSCALE)
+    img =cv2.resize(img, (256,256)).astype(np.float32)
+    mask=cv2.resize(mask,(256,256),interpolation=cv2.INTER_NEAREST)
+    mask=(mask>127).astype(np.uint8)
+    if img.max()>img.min(): img=(img-img.min())/(img.max()-img.min())
+    t=torch.from_numpy(np.stack([img,img,img],axis=0)).unsqueeze(0)
+    return img,t,mask
 
 
 # ─────────────────────────────────────────────────────────────────
-# FIGURE DRAWING HELPERS
+# DRAWING
 # ─────────────────────────────────────────────────────────────────
-MODEL_COLORS = {
-    'se2':      'red',
-    'standard': 'gold',
-    'nn':       'dodgerblue',
-}
-
-ROW_LABELS = ['Input', 'Ground Truth', 'Overlay', 'CT-SE(2)', 'Standard U-Net']
-
-
-def find_lesion_roi(mask, pad=15):
-    """Return (y0,y1,x0,x1) bounding box around all positive pixels."""
-    ys, xs = np.where(mask > 0)
-    if len(ys) == 0:
-        H, W = mask.shape
-        return 0, H, 0, W
-    y0 = max(0, ys.min()-pad); y1 = min(mask.shape[0], ys.max()+pad)
-    x0 = max(0, xs.min()-pad); x1 = min(mask.shape[1], xs.max()+pad)
-    return y0, y1, x0, x1
-
-
-def draw_panel(ax, img_gray, gt_mask=None, pred_mask=None,
-               pred_color=None, mode='input', show_inset=True):
-    """
-    Draw one panel on ax.
-    mode: 'input' | 'gt' | 'overlay' | 'pred'
-    """
-    ax.imshow(img_gray, cmap='gray', vmin=0, vmax=1)
-    ax.set_xticks([]); ax.set_yticks([])
-    for sp in ax.spines.values(): sp.set_visible(False)
-
+def draw_image_panel(ax, img_gray, pred_mask=None, is_gt=False, bg_color=None):
+    """Render one panel: grayscale CT + optional segmentation overlay."""
     H, W = img_gray.shape
 
-    if mode == 'gt' and gt_mask is not None:
-        overlay = np.zeros((H, W, 4))
-        overlay[gt_mask > 0] = [1, 1, 1, 0.85]
-        ax.imshow(overlay)
+    if bg_color:
+        ax.set_facecolor(bg_color)
 
-    elif mode == 'overlay' and gt_mask is not None and pred_mask is not None:
-        # GT = yellow dashed contour, Pred = cyan dotted contour
-        ax.contour(gt_mask,   levels=[0.5], colors=['yellow'], linewidths=1.5, linestyles='dashed')
-        ax.contour(pred_mask, levels=[0.5], colors=['cyan'],   linewidths=1.5, linestyles='dotted')
+    ax.imshow(img_gray, cmap='gray', vmin=0, vmax=1)
+    ax.set_xticks([]); ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_edgecolor('#aaaaaa'); sp.set_linewidth(0.8)
 
-    elif mode == 'pred' and pred_mask is not None and pred_color is not None:
-        overlay = np.zeros((H, W, 4))
-        color_map = {'red':[1,0,0], 'gold':[1,0.85,0], 'dodgerblue':[0.12,0.56,1]}
-        rgb = color_map.get(pred_color, [1,0,0])
-        overlay[pred_mask > 0] = rgb + [0.75]
-        ax.imshow(overlay)
+    if is_gt and pred_mask is not None:
+        # White filled overlay for GT
+        ov = np.zeros((H, W, 4))
+        ov[pred_mask > 0] = [1, 1, 1, 0.90]
+        ax.imshow(ov)
 
-    # ── Green inset zoom box ──
-    if show_inset:
-        ref_mask = gt_mask if gt_mask is not None else pred_mask
-        if ref_mask is not None and ref_mask.sum() > 0:
-            y0, y1, x0, x1 = find_lesion_roi(ref_mask, pad=12)
-            bw = x1 - x0; bh = y1 - y0
-            rect = patches.Rectangle((x0, y0), bw, bh,
-                                      linewidth=1.5, edgecolor='lime', facecolor='none')
-            ax.add_patch(rect)
+    elif pred_mask is not None:
+        # Colored filled overlay for predictions
+        ov = np.zeros((H, W, 4))
+        ov[pred_mask > 0] = [1, 0.2, 0.2, 0.75]   # red for all model predictions
+        ax.imshow(ov)
 
-            # Inset axes in top-right corner
-            inset_size = 0.35
-            axin = ax.inset_axes([1.0 - inset_size - 0.02, 1.0 - inset_size - 0.02,
-                                   inset_size, inset_size])
-            axin.imshow(img_gray[y0:y1, x0:x1], cmap='gray', vmin=0, vmax=1)
-            if mode == 'gt' and gt_mask is not None:
-                sub_ov = np.zeros((y1-y0, x1-x0, 4))
-                sub_ov[gt_mask[y0:y1, x0:x1] > 0] = [1,1,1,0.85]
-                axin.imshow(sub_ov)
-            elif mode == 'overlay':
-                if gt_mask is not None:
-                    axin.contour(gt_mask[y0:y1,x0:x1],   levels=[0.5], colors=['yellow'], linewidths=1.5, linestyles='dashed')
-                if pred_mask is not None:
-                    axin.contour(pred_mask[y0:y1,x0:x1], levels=[0.5], colors=['cyan'],   linewidths=1.5, linestyles='dotted')
-            elif mode == 'pred' and pred_mask is not None and pred_color:
-                color_map = {'red':[1,0,0], 'gold':[1,0.85,0], 'dodgerblue':[0.12,0.56,1]}
-                rgb = color_map.get(pred_color, [1,0,0])
-                sub_ov = np.zeros((y1-y0, x1-x0, 4))
-                sub_ov[pred_mask[y0:y1,x0:x1] > 0] = rgb + [0.75]
-                axin.imshow(sub_ov)
 
-            axin.set_xticks([]); axin.set_yticks([])
-            for sp in axin.spines.values():
-                sp.set_edgecolor('lime'); sp.set_linewidth(1.5)
+def draw_empty_panel(ax, text, bg_color=None):
+    ax.set_xticks([]); ax.set_yticks([])
+    if bg_color: ax.set_facecolor(bg_color)
+    for sp in ax.spines.values():
+        sp.set_edgecolor('#aaaaaa'); sp.set_linewidth(0.8)
+    ax.text(0.5, 0.5, text, transform=ax.transAxes,
+            ha='center', va='center', fontsize=9, color='#888888', style='italic')
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -316,125 +329,172 @@ def main():
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🚀 Comparative All Datasets Figure (Device: {device})")
+    print(f"🚀 IEEE Fig. 5 Generator (Device: {device})")
 
     # ── Dataset configs ──
     datasets = [
-        dict(name='CT',          prefix='CT_',  source='npy',
-             se2_w=os.path.join(SAVE_DIR_NPY,   'se2_unet_ct_best.pth'),
-             std_w=os.path.join(SAVE_DIR_NPY,   'standard_unet_ct_best.pth')),
-        dict(name='CTC',         prefix='CTC_', source='npy',
-             se2_w=os.path.join(SAVE_DIR_NPY,   'se2_unet_ctc_best.pth'),
-             std_w=os.path.join(SAVE_DIR_NPY,   'standard_unet_ctc_best.pth')),
-        dict(name='Stroke',      prefix=None,   source='kaggle_stroke',
-             se2_w=os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_best.pth'),
-             std_w=os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_best.pth')),
-        dict(name='Hemorrhage',  prefix=None,   source='kaggle_hemo',
-             se2_w=os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_hemorrhage_best.pth'),
-             std_w=os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_hemorrhage_best.pth')),
+        dict(name='CT',         source='npy',           prefix='CT_',
+             weights=dict(
+                 nn    =os.path.join(SAVE_DIR_NPY,   'nn_unet_ct_best.pth'),
+                 attn  =os.path.join(SAVE_DIR_NPY,   'attention_unet_ct_best.pth'),
+                 trans =os.path.join(SAVE_DIR_NPY,   'trans_unet_ct_best.pth'),
+                 std   =os.path.join(SAVE_DIR_NPY,   'standard_unet_ct_best.pth'),
+                 se2   =os.path.join(SAVE_DIR_NPY,   'se2_unet_ct_best.pth'),
+             )),
+        dict(name='CTC',        source='npy',           prefix='CTC_',
+             weights=dict(
+                 nn    =os.path.join(SAVE_DIR_NPY,   'nn_unet_ctc_best.pth'),
+                 attn  =os.path.join(SAVE_DIR_NPY,   'attention_unet_ctc_best.pth'),
+                 trans =os.path.join(SAVE_DIR_NPY,   'trans_unet_ctc_best.pth'),
+                 std   =os.path.join(SAVE_DIR_NPY,   'standard_unet_ctc_best.pth'),
+                 se2   =os.path.join(SAVE_DIR_NPY,   'se2_unet_ctc_best.pth'),
+             )),
+        dict(name='Stroke',     source='kaggle_stroke', prefix=None,
+             weights=dict(
+                 nn    =os.path.join(SAVE_DIR_INTRA, 'nnU-Net_kaggle_best.pth'),
+                 attn  =os.path.join(SAVE_DIR_INTRA, 'Attention_U-Net_kaggle_best.pth'),
+                 trans =os.path.join(SAVE_DIR_INTRA, 'TransUNet_kaggle_best.pth'),
+                 std   =os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_best.pth'),
+                 se2   =os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_best.pth'),
+             )),
+        dict(name='Hemorrhage', source='kaggle_hemo',   prefix=None,
+             weights=dict(
+                 nn    =os.path.join(SAVE_DIR_INTRA, 'nnU-Net_kaggle_hemorrhage_best.pth'),
+                 attn  =os.path.join(SAVE_DIR_INTRA, 'Attention_U-Net_kaggle_hemorrhage_best.pth'),
+                 trans =os.path.join(SAVE_DIR_INTRA, 'TransUNet_kaggle_hemorrhage_best.pth'),
+                 std   =os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_hemorrhage_best.pth'),
+                 se2   =os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_hemorrhage_best.pth'),
+             )),
     ]
 
-    # ── Collect data for each dataset ──
-    dataset_data = []
-    for ds in datasets:
-        print(f"\n📂 Loading {ds['name']}...")
-        entry = dict(name=ds['name'])
+    # ── Figure Layout ──
+    n_rows = len(datasets)
+    # 8 axes cols: [dataset_label, input, gt, nn, attn, trans, std, se2]
+    n_img_cols = 7
+    fig_w = 2.6 * n_img_cols + 1.4  # +1.4 for label column
+    fig_h = 3.0 * n_rows + 0.8      # +0.8 for header
 
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor='white')
+
+    # Outer grid: header row + data rows
+    outer_gs = gridspec.GridSpec(
+        n_rows + 1, n_img_cols + 1,  # +1 row for header, +1 col for label
+        figure=fig,
+        width_ratios=[1.2] + [2.6]*n_img_cols,
+        height_ratios=[0.5] + [3.0]*n_rows,
+        hspace=0.04, wspace=0.03,
+        left=0.04, right=0.99, top=0.98, bottom=0.02
+    )
+
+    # ── Column headers (row 0) ──
+    ax_corner = fig.add_subplot(outer_gs[0, 0])
+    ax_corner.axis('off')
+    ax_corner.text(0.5, 0.5, 'Dataset', transform=ax_corner.transAxes,
+                   ha='center', va='center', fontsize=11, fontweight='bold')
+
+    col_keys = ['nn', 'attn', 'trans', 'std', 'se2']
+    for ci, (col_label, bg, fg) in enumerate(COLUMNS):
+        ax_hdr = fig.add_subplot(outer_gs[0, ci + 1])
+        ax_hdr.axis('off')
+        if bg:
+            ax_hdr.set_facecolor(bg)
+            ax_hdr.set_axis_on()
+            ax_hdr.set_xticks([]); ax_hdr.set_yticks([])
+            for sp in ax_hdr.spines.values():
+                sp.set_visible(False)
+        ax_hdr.text(0.5, 0.5, col_label, transform=ax_hdr.transAxes,
+                    ha='center', va='center', fontsize=10, fontweight='bold', color=fg,
+                    linespacing=1.3)
+
+    # ── Process each dataset row ──
+    for row_idx, ds in enumerate(datasets):
+        print(f"\n{'='*55}")
+        print(f"  📂 Dataset: {ds['name']}")
+        print(f"{'='*55}")
+
+        # ── Load sample ──
         if ds['source'] == 'npy':
             sample = find_best_npy_slice(DATA_DIR, ds['prefix'])
             if sample is None:
-                print(f"  ⚠️ No slice found for {ds['name']}, skipping"); continue
-            img_gray, tensor, gt_mask = load_npy_sample(sample)
+                print(f"  ⚠️ No valid slice found for {ds['name']}")
+                img_gray = tensor = gt_mask = None
+            else:
+                img_gray, tensor, gt_mask = load_npy_sample(sample)
 
         elif ds['source'] == 'kaggle_stroke':
-            dl_path = kagglehub.dataset_download("ozcangundes/brain-stroke-ct-dataset")
-            img_path, mask_path = find_best_kaggle_sample(dl_path)
-            if img_path is None:
-                print(f"  ⚠️ No stroke sample found, skipping"); continue
-            img_gray, tensor, gt_mask = load_kaggle_sample(img_path, mask_path)
+            dl = kagglehub.dataset_download("ozcangundes/brain-stroke-ct-dataset")
+            ip, mp = find_best_kaggle_sample(dl)
+            if ip is None:
+                print("  ⚠️ No stroke sample found"); img_gray=tensor=gt_mask=None
+            else:
+                img_gray, tensor, gt_mask = load_kaggle_sample(ip, mp)
 
         elif ds['source'] == 'kaggle_hemo':
-            dl_path = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
-            img_path, mask_path = find_best_kaggle_sample(dl_path, mask_keywords=('mask','hge_seg','seg'))
-            if img_path is None:
-                print(f"  ⚠️ No hemorrhage sample found, skipping"); continue
-            img_gray, tensor, gt_mask = load_kaggle_sample(img_path, mask_path)
+            dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
+            ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
+            if ip is None:
+                print("  ⚠️ No hemorrhage sample found"); img_gray=tensor=gt_mask=None
+            else:
+                img_gray, tensor, gt_mask = load_kaggle_sample(ip, mp)
 
-        # ── Load models & infer ──
-        pred_se2 = pred_std = None
+        # ── Dataset label axis ──
+        ax_lbl = fig.add_subplot(outer_gs[row_idx + 1, 0])
+        ax_lbl.axis('off')
+        ax_lbl.text(0.5, 0.5, ds['name'], transform=ax_lbl.transAxes,
+                    ha='center', va='center', fontsize=12, fontweight='bold', rotation=0)
 
-        if os.path.exists(ds['se2_w']):
-            try:
-                m = load_model(SE2_CNNET, ds['se2_w'], device, is_se2=True)
-                pred_se2 = infer(m, tensor, device)
-                del m; torch.cuda.empty_cache()
-                print(f"  ✅ SE2 inference done")
-            except Exception as e:
-                print(f"  ⚠️ SE2 error: {e}")
-        else:
-            print(f"  ⚠️ SE2 weights not found: {ds['se2_w']}")
+        # ── Infer all models ──
+        preds = {}
+        if img_gray is not None:
+            model_map = [
+                ('nn',   nnUNet,        False),
+                ('attn', AttentionUNet, False),
+                ('trans',TransUNet,     False),
+                ('std',  StandardUNet,  False),
+                ('se2',  SE2_CNNET,     True),
+            ]
+            for key, ModelClass, is_se2 in model_map:
+                m = load_model_safe(ModelClass, ds['weights'][key], device, is_se2)
+                preds[key] = infer_safe(m, tensor, device)
+                if m is not None: del m; torch.cuda.empty_cache()
 
-        if os.path.exists(ds['std_w']):
-            try:
-                m = load_model(StandardUNet, ds['std_w'], device)
-                pred_std = infer(m, tensor, device)
-                del m; torch.cuda.empty_cache()
-                print(f"  ✅ Standard UNet inference done")
-            except Exception as e:
-                print(f"  ⚠️ Standard UNet error: {e}")
-        else:
-            print(f"  ⚠️ Standard UNet weights not found: {ds['std_w']}")
-
-        entry.update(dict(img=img_gray, gt=gt_mask, se2=pred_se2, std=pred_std))
-        dataset_data.append(entry)
-
-    if not dataset_data:
-        print("❌ No dataset loaded successfully."); return
-
-    n_cols = len(dataset_data)
-    n_rows = 5  # Input, GT, Overlay, SE2, Standard
-
-    # ── Build Figure ──
-    fig = plt.figure(figsize=(4.5 * n_cols, 4.5 * n_rows), facecolor='white')
-    gs  = gridspec.GridSpec(n_rows, n_cols,
-                             wspace=0.05, hspace=0.08,
-                             left=0.06, right=0.99, top=0.96, bottom=0.02)
-
-    for col_idx, entry in enumerate(dataset_data):
-        img   = entry['img']
-        gt    = entry['gt']
-        se2   = entry.get('se2')
-        std   = entry.get('std')
-
-        panels = [
-            dict(mode='input',   gt_mask=gt,  pred_mask=None, pred_color=None),
-            dict(mode='gt',      gt_mask=gt,  pred_mask=None, pred_color=None),
-            dict(mode='overlay', gt_mask=gt,  pred_mask=se2,  pred_color=None),
-            dict(mode='pred',    gt_mask=gt,  pred_mask=se2,  pred_color='red'),
-            dict(mode='pred',    gt_mask=gt,  pred_mask=std,  pred_color='gold'),
+        # ── Draw panels ──
+        panel_specs = [
+            # (col_idx_in_figure, data_key_or_special, is_gt, bg_color)
+            (1, 'input',  False, None),
+            (2, 'gt',     True,  '#dbeeff'),
+            (3, 'nn',     False, None),
+            (4, 'attn',   False, None),
+            (5, 'trans',  False, None),
+            (6, 'std',    False, None),
+            (7, 'se2',    False, '#d4f5d4'),
         ]
 
-        for row_idx, panel in enumerate(panels):
-            ax = fig.add_subplot(gs[row_idx, col_idx])
-            draw_panel(ax, img, **panel)
+        for (ci, key, is_gt, bg) in panel_specs:
+            ax = fig.add_subplot(outer_gs[row_idx + 1, ci])
 
-            # Column header (dataset name) on top row only
-            if row_idx == 0:
-                ax.set_title(entry['name'], fontsize=14, fontweight='bold', pad=5)
+            if img_gray is None:
+                draw_empty_panel(ax, 'N/A', bg_color=bg or 'white')
+                continue
 
-            # Row labels on leftmost column only
-            if col_idx == 0:
-                ax.set_ylabel(ROW_LABELS[row_idx], fontsize=11, rotation=90,
-                              labelpad=5, va='center')
+            if key == 'input':
+                draw_image_panel(ax, img_gray, bg_color=bg)
+            elif key == 'gt':
+                draw_image_panel(ax, img_gray, pred_mask=gt_mask, is_gt=True, bg_color=bg)
+            else:
+                pred = preds.get(key)
+                if pred is None:
+                    draw_empty_panel(ax, 'N/A', bg_color=bg or 'white')
+                else:
+                    draw_image_panel(ax, img_gray, pred_mask=pred, is_gt=False, bg_color=bg)
 
-            # Panel letter label
-            letter = chr(ord('a') + row_idx * n_cols + col_idx)
-            ax.text(0.04, 0.04, f"({letter})", transform=ax.transAxes,
-                    color='white', fontsize=9, fontweight='bold',
-                    bbox=dict(facecolor='black', alpha=0.45, edgecolor='none', pad=1.5))
+            # Add border highlight for SE2 column
+            if ci == 7:
+                for sp in ax.spines.values():
+                    sp.set_edgecolor('#228B22'); sp.set_linewidth(1.8)
 
     plt.savefig(OUT_PATH, dpi=250, bbox_inches='tight', facecolor='white')
-    print(f"\n✅ Fig. 5 saved → {OUT_PATH}")
+    print(f"\n✅ Saved → {OUT_PATH}")
 
 
 if __name__ == "__main__":
