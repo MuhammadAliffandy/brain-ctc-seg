@@ -242,10 +242,10 @@ def load_npy_sample(s):
     else: img_25d_n=img_25d
     mid=i1.copy()
     if mid.max()>mid.min(): mid=(mid-mid.min())/(mid.max()-mid.min())
-    mid  =np.rot90(mid[CROP_MARGIN:-CROP_MARGIN,CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K)
-    mask =np.rot90(mask[CROP_MARGIN:-CROP_MARGIN,CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K)
-    inp_c=np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN,CROP_MARGIN:-CROP_MARGIN],k=ROTATE_K)
-    tensor=torch.from_numpy(inp_c).permute(2,0,1).unsqueeze(0)
+    mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
+    mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
+    inp_c= np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()
+    tensor = torch.from_numpy(inp_c).permute(2, 0, 1).unsqueeze(0)
     return mid, tensor, mask
 
 
