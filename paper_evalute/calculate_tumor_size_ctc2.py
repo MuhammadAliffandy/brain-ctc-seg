@@ -176,23 +176,23 @@ def main():
             left_blobs  = sorted([b for b in blobs if b[1] <  mid], key=lambda b: b[0])
             right_blobs = sorted([b for b in blobs if b[1] >= mid], key=lambda b: b[0])
 
-            # Teks kiri: pojok kiri-atas dalam gambar (fraction 0.05, mulai dari 0.08)
+            # Kiri: 13% dari kiri, ada jarak dari tepi
             for j, (cy, cx, area_mm2) in enumerate(left_blobs):
                 text_frac_y = 0.08 + j * 0.10
                 ax.annotate(f"{area_mm2:.1f} mm²",
                             xy=(cx, cy), xycoords='data',
-                            xytext=(0.05, text_frac_y), textcoords='axes fraction',
+                            xytext=(0.13, text_frac_y), textcoords='axes fraction',
                             color='black', fontsize=8.5, ha='center', va='center',
                             bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.92, edgecolor='#cccccc', linewidth=0.5),
                             arrowprops=dict(arrowstyle="-", color='white', lw=1.0,
                                             connectionstyle="arc3,rad=0.1"))
 
-            # Teks kanan: pojok kanan-atas dalam gambar (fraction 0.95, mulai dari 0.08)
+            # Kanan: 87% dari kiri, ada jarak dari tepi
             for j, (cy, cx, area_mm2) in enumerate(right_blobs):
                 text_frac_y = 0.08 + j * 0.10
                 ax.annotate(f"{area_mm2:.1f} mm²",
                             xy=(cx, cy), xycoords='data',
-                            xytext=(0.95, text_frac_y), textcoords='axes fraction',
+                            xytext=(0.87, text_frac_y), textcoords='axes fraction',
                             color='black', fontsize=8.5, ha='center', va='center',
                             bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.92, edgecolor='#cccccc', linewidth=0.5),
                             arrowprops=dict(arrowstyle="-", color='white', lw=1.0,
