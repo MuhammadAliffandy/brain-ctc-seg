@@ -423,7 +423,7 @@ def main():
 
         elif ds['source'] == 'kaggle_stroke':
             # Bypass kagglehub download API to avoid 403 Forbidden
-            dl = os.path.expanduser("~/.cache/kagglehub/datasets/ozcangundes/brain-stroke-ct-dataset/versions/1")
+            dl = os.path.expanduser("~/.cache/kagglehub/datasets/ozcangundes/brain-stroke-ct-dataset")
             ip, mp = find_best_kaggle_sample(dl)
             if ip is None:
                 print("  ⚠️ No stroke sample found in cache"); img_gray=tensor=gt_mask=None
@@ -432,7 +432,7 @@ def main():
 
         elif ds['source'] == 'kaggle_hemo':
             # Bypass kagglehub download API to avoid 403 Forbidden
-            dl = os.path.expanduser("~/.cache/kagglehub/datasets/vbookshelf/computed-tomography-ct-images/versions/1")
+            dl = os.path.expanduser("~/.cache/kagglehub/datasets/vbookshelf/computed-tomography-ct-images")
             ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
             if ip is None:
                 print("  ⚠️ No hemorrhage sample found in cache"); img_gray=tensor=gt_mask=None
