@@ -288,7 +288,42 @@ def find_best_kaggle_sample(root, mask_kw=('mask','seg','hge'), min_px=50):
     return None, None
 
 
-def load_kaggle_sample(ip,mp):
+def find_stroke_sample_like_training(root_dir, min_px=50):
+    """Exact copy of the dataset discovery logic from train_all_intra.py"""
+    external_test_dir = None
+    for r, d, f in os.walk(root_dir):
+        if "External_Test" in d:
+            external_test_dir = os.path.join(r, "External_Test")
+            break
+            
+    if not external_test_dir:
+        return None, None
+        
+    png_dir = os.path.join(external_test_dir, "PNG")
+    mask_dir = os.path.join(external_test_dir, "MASKS")
+    
+    if not os.path.exists(png_dir) or not os.path.exists(mask_dir):
+        return None, None
+        
+    inputs = sorted(glob.glob(os.path.join(png_dir, "*.png")))
+    random.seed(42); random.shuffle(inputs)
+    
+    for img_path in inputs:
+        base_name = os.path.basename(img_path)
+        mask_path = os.path.join(mask_dir, base_name)
+        if not os.path.exists(mask_path):
+            name_without_ext = os.path.splitext(base_name)[0]
+            possible_masks = glob.glob(os.path.join(mask_dir, f"*{name_without_ext}*.png"))
+            if possible_masks:
+                mask_path = possible_masks[0]
+            else:
+                continue
+                
+        m = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if m is not None and np.sum(m > 127) >= min_px:
+            return img_path, mask_path
+            
+    return None, None
     img =cv2.imread(ip, cv2.IMREAD_GRAYSCALE)
     mask=cv2.imread(mp, cv2.IMREAD_GRAYSCALE)
     img =cv2.resize(img, (256,256)).astype(np.float32)
@@ -446,13 +481,13 @@ def main():
             ip, mp = None, None
             for dl in dl_paths:
                 if os.path.exists(dl):
-                    ip, mp = find_best_kaggle_sample(dl)
+                    ip, mp = find_stroke_sample_like_training(dl)
                     if ip is not None: break
                     
             if ip is None:
                 try:
                     dl = kagglehub.dataset_download("ozcangundes/brain-stroke-ct-dataset")
-                    ip, mp = find_best_kaggle_sample(dl)
+                    ip, mp = find_stroke_sample_like_training(dl)
                 except Exception as e:
                     print(f"  ⚠️ kagglehub error: {e}")
             if ip is None:
