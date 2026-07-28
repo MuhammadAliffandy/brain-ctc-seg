@@ -181,12 +181,14 @@ def main():
             MIN_GAP = 0.09
 
             def spread(blist):
-                fracs = [cy / img_h for (cy, cx, _) in blist]
+                # Invert Y coordinate: numpy uses 0 for top, but ax.transAxes uses 0 for bottom
+                fracs = [1.0 - (cy / img_h) for (cy, cx, _) in blist]
                 for _ in range(50):  # iterative nudge
                     changed = False
                     for k in range(1, len(fracs)):
-                        if fracs[k] - fracs[k-1] < MIN_GAP:
-                            fracs[k] = fracs[k-1] + MIN_GAP
+                        # If the labels are too close, push the lower one down (which means smaller fraction)
+                        if fracs[k-1] - fracs[k] < MIN_GAP:
+                            fracs[k] = fracs[k-1] - MIN_GAP
                             changed = True
                     if not changed:
                         break
