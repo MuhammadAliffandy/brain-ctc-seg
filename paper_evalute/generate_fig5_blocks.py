@@ -129,26 +129,46 @@ def load_std_model(ModelClass, path, device):
 # ─────────────────────────────────────────────────────────────────
 # DATA LOADING HELPERS
 # ─────────────────────────────────────────────────────────────────
-def load_npy_sample(npy_path):
-    data = np.load(npy_path, allow_pickle=True).item()
-    img_25d = data['image_25d']
-    mid = img_25d[..., 1]
-    mask = data['mask']
-    
-    img_25d_n = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min() + 1e-8)
-    
-    mid = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()
-    mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()
-    inp_c = np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN, :], k=ROTATE_K).copy()
-    
-    mid = cv2.resize(mid, (256, 256))
-    mask = cv2.resize(mask, (256, 256), interpolation=cv2.INTER_NEAREST)
-    inp_c = cv2.resize(inp_c, (256, 256))
-    
-    mask = (mask > 0).astype(np.uint8)
+import re
+
+def find_best_npy_slice(data_dir, prefix, min_px=200, max_px=15000):
+    best = None
+    for folder in sorted(os.listdir(data_dir)):
+        if not folder.upper().startswith(prefix.upper()): continue
+        fpath = os.path.join(data_dir, folder)
+        if not os.path.isdir(fpath): continue
+        imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')],
+                      key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+        for i, fname in enumerate(imgs):
+            img_path  = os.path.join(fpath, fname)
+            mask_path = img_path.replace('_img.npy', '_mask.npy')
+            if not os.path.exists(mask_path): continue
+            n_px = int(np.sum(np.load(mask_path)))
+            if min_px < n_px < max_px:
+                if best is None or n_px > best['px']:
+                    i_prev = max(0,i-1); i_next = min(len(imgs)-1,i+1)
+                    best = dict(px=n_px,
+                                prev=os.path.join(fpath,imgs[i_prev]),
+                                curr=img_path,
+                                next=os.path.join(fpath,imgs[i_next]),
+                                mask=mask_path)
+    return best
+
+def load_npy_sample(s):
+    i0=np.load(s['prev']).astype(np.float32)
+    i1=np.load(s['curr']).astype(np.float32)
+    i2=np.load(s['next']).astype(np.float32)
+    mask=np.load(s['mask']).astype(np.uint8)
+    img_25d=np.stack([i0,i1,i2],axis=-1)
+    if img_25d.max()>img_25d.min():
+        img_25d_n=(img_25d-img_25d.min())/(img_25d.max()-img_25d.min())
+    else: img_25d_n=img_25d
+    mid=i1.copy()
+    if mid.max()>mid.min(): mid=(mid-mid.min())/(mid.max()-mid.min())
+    mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
+    mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
+    inp_c= np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()
     tensor = torch.from_numpy(inp_c).permute(2, 0, 1).unsqueeze(0)
-    
-    # Normalize gray for visualization
     mid_gray = (mid * 255).astype(np.uint8)
     return mid_gray, tensor, mask
 
@@ -303,23 +323,11 @@ def main():
         
         # 1. LOAD DATA
         if ds['source'] in ['local_ct', 'local_ctc']:
-            prefix = ds['prefix']
-            samples = glob.glob(os.path.join(DATA_DIR_LOCAL, f"{prefix}*.npy"))
-            if not samples:
-                print(f"  ⚠️ No local samples found in {DATA_DIR_LOCAL} with prefix {prefix}")
+            sample = find_best_npy_slice(DATA_DIR_LOCAL, ds['prefix'])
+            if sample is None:
+                print(f"  ⚠️ No valid slice found for {ds['name']}")
                 continue
-            random.seed(42); random.shuffle(samples)
-            sample_path = None
-            # Find one with a decent sized lesion
-            for s in samples:
-                try:
-                    mg, t, gm = load_npy_sample(s)
-                    if np.sum(gm) > 100:
-                        sample_path = s
-                        img_gray, tensor, gt_mask = mg, t, gm
-                        break
-                except Exception:
-                    continue
+            img_gray, tensor, gt_mask = load_npy_sample(sample)
                     
         elif ds['source'] == 'kaggle_stroke':
             dl_paths = [
