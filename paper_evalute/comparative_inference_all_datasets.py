@@ -324,6 +324,9 @@ def find_stroke_sample_like_training(root_dir, min_px=50):
             return img_path, mask_path
             
     return None, None
+
+
+def load_kaggle_sample(ip,mp):
     img =cv2.imread(ip, cv2.IMREAD_GRAYSCALE)
     mask=cv2.imread(mp, cv2.IMREAD_GRAYSCALE)
     img =cv2.resize(img, (256,256)).astype(np.float32)
