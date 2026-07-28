@@ -255,21 +255,37 @@ def find_best_kaggle_sample(root, mask_kw=('mask','seg','hge'), min_px=50):
         for f in files:
             if f.lower().endswith(('.jpg','.png','.bmp')):
                 all_files.append(os.path.join(r,f))
-    masks=[f for f in all_files if any(k in os.path.basename(f).lower() for k in mask_kw)]
+    masks=[f for f in all_files if any(k in f.lower() for k in mask_kw)]
     random.seed(42); random.shuffle(masks)
+    
     for mp in masks:
         m=cv2.imread(mp,cv2.IMREAD_GRAYSCALE)
         if m is None or np.sum(m>127)<min_px: continue
-        parent=os.path.dirname(mp)
-        base=os.path.basename(mp)
-        clean=base.lower()
+        
+        parent = os.path.dirname(mp)
+        grandparent = os.path.dirname(parent)
+        base = os.path.basename(mp)
+        clean = base.lower()
         for k in ['_hge_seg','_seg','_mask','mask','seg']:
-            clean=clean.replace(k,'')
-        clean=clean.split('.')[0]
+            clean = clean.replace(k,'')
+        clean = clean.split('.')[0]
+        
+        # Possible image paths:
+        # 1. Same folder as mask (Hemorrhage)
+        # 2. Sibling folder named "images" or "PNG" (Stroke)
+        candidates = []
         for ext in ['.jpg','.png','.bmp']:
-            cand=os.path.join(parent,clean+ext)
-            if os.path.exists(cand): return cand,mp
-    return None,None
+            candidates.append(os.path.join(parent, clean+ext))
+            candidates.append(os.path.join(parent, base)) # Sometimes name is identical
+            for sibling in ['PNG', 'images', 'Image', 'Images']:
+                candidates.append(os.path.join(grandparent, sibling, clean+ext))
+                candidates.append(os.path.join(grandparent, sibling, base))
+        
+        for cand in candidates:
+            if cand != mp and os.path.exists(cand):
+                return cand, mp
+                
+    return None, None
 
 
 def load_kaggle_sample(ip,mp):
