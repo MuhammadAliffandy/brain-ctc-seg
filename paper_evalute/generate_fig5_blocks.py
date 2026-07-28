@@ -26,14 +26,19 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 CROP_MARGIN = 20
 ROTATE_K = 3
 
+# local CT/CTC .npy workspace
+DATA_DIR_LOCAL = os.path.expanduser("~/Clara/local_ct_workspace_full")
+
 DATASETS = [
-    {'name': 'CT', 'source': 'local_ct', 'path': '../data/test'},
-    {'name': 'CTC', 'source': 'local_ctc', 'path': '../data_ctc/test'},
-    {'name': 'Stroke', 'source': 'kaggle_stroke', 'path': ''},
-    {'name': 'Hemorrhage', 'source': 'kaggle_hemo', 'path': ''}
+    {'name': 'CT',          'source': 'local_ct',     'prefix': 'CT_'},
+    {'name': 'CTC',         'source': 'local_ctc',    'prefix': 'CTC_'},
+    {'name': 'Stroke',      'source': 'kaggle_stroke','prefix': None},
+    {'name': 'Hemorrhage',  'source': 'kaggle_hemo',  'prefix': None}
 ]
 
-MODELS_DIR = "/raid/D13K48009/Clara/brain-ctc-seg/training/Best_Models"
+# Model weight directories (same as comparative_inference_all_datasets.py)
+SAVE_DIR_NPY   = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
+SAVE_DIR_INTRA = os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/saved_models")
 SAVE_DIR = "/raid/D13K48009/Clara/brain-ctc-seg/training/Journal_Figures"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -298,20 +303,23 @@ def main():
         
         # 1. LOAD DATA
         if ds['source'] in ['local_ct', 'local_ctc']:
-            base_dir = os.path.expanduser(f"~/Clara/brain-ctc-seg/{ds['path']}")
-            samples = glob.glob(os.path.join(base_dir, "*.npy"))
+            prefix = ds['prefix']
+            samples = glob.glob(os.path.join(DATA_DIR_LOCAL, f"{prefix}*.npy"))
             if not samples:
-                print(f"  ⚠️ No local samples found in {base_dir}")
+                print(f"  ⚠️ No local samples found in {DATA_DIR_LOCAL} with prefix {prefix}")
                 continue
             random.seed(42); random.shuffle(samples)
             sample_path = None
             # Find one with a decent sized lesion
             for s in samples:
-                mg, t, gm = load_npy_sample(s)
-                if np.sum(gm) > 100:
-                    sample_path = s
-                    img_gray, tensor, gt_mask = mg, t, gm
-                    break
+                try:
+                    mg, t, gm = load_npy_sample(s)
+                    if np.sum(gm) > 100:
+                        sample_path = s
+                        img_gray, tensor, gt_mask = mg, t, gm
+                        break
+                except Exception:
+                    continue
                     
         elif ds['source'] == 'kaggle_stroke':
             dl_paths = [
@@ -355,14 +363,26 @@ def main():
             
         tensor = tensor.to(DEVICE)
         
-        # 2. LOAD MODELS
-        prefix = 'ct' if ds['name']=='CT' else 'ctc' if ds['name']=='CTC' else 'kaggle_stroke' if ds['name']=='Stroke' else 'kaggle_hemo'
+        # 2. LOAD MODELS — use exact same paths as comparative_inference_all_datasets.py
+        if ds['source'] in ['local_ct', 'local_ctc']:
+            key = 'ct' if ds['name']=='CT' else 'ctc'
+            se2_path   = os.path.join(SAVE_DIR_NPY, f"se2_unet_{key}_best.pth")
+            unet_path  = os.path.join(SAVE_DIR_NPY, f"standard_unet_{key}_best.pth")
+            nn_path    = os.path.join(SAVE_DIR_NPY, f"nn_unet_{key}_best.pth")
+        elif ds['source'] == 'kaggle_stroke':
+            se2_path   = os.path.join(SAVE_DIR_INTRA, "Mod-Seg-SE2_kaggle_best.pth")
+            unet_path  = os.path.join(SAVE_DIR_INTRA, "Standard_U-Net_kaggle_best.pth")
+            nn_path    = os.path.join(SAVE_DIR_INTRA, "nnU-Net_kaggle_best.pth")
+        else:  # hemorrhage
+            se2_path   = os.path.join(SAVE_DIR_INTRA, "Mod-Seg-SE2_kaggle_hemorrhage_best.pth")
+            unet_path  = os.path.join(SAVE_DIR_INTRA, "Standard_U-Net_kaggle_hemorrhage_best.pth")
+            nn_path    = os.path.join(SAVE_DIR_INTRA, "nnU-Net_kaggle_hemorrhage_best.pth")
         
-        m_se2 = load_se2_weights(SE2_CNNET, os.path.join(MODELS_DIR, f"se2_unet_{prefix}_best.pth"), DEVICE)
+        m_se2 = load_se2_weights(SE2_CNNET, se2_path, DEVICE)
         if m_se2: m_se2.eval()
         
-        m_unet = load_std_model(StandardUNet, os.path.join(MODELS_DIR, f"standard_unet_{prefix}_best.pth"), DEVICE)
-        m_nnunet = load_std_model(nnUNet, os.path.join(MODELS_DIR, f"nnUNet_{prefix}_best.pth"), DEVICE)
+        m_unet   = load_std_model(StandardUNet, unet_path, DEVICE)
+        m_nnunet = load_std_model(nnUNet, nn_path, DEVICE)
         
         if m_se2 is None:
             print(f"  ⚠️ Proposed model not found for {ds['name']}. Skipping.")
