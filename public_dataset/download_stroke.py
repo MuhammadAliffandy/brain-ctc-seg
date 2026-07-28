@@ -26,7 +26,7 @@ def main():
         # Menjalankan perintah CLI resmi Kaggle
         cmd = [
             "kaggle", "datasets", "download", 
-            "-d", "ozcangundes/brain-stroke-ct-dataset", 
+            "-d", "ozguraslank/brain-stroke-ct-dataset", 
             "-p", target_dir, 
             "--unzip"
         ]

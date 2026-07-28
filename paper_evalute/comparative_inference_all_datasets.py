@@ -474,7 +474,7 @@ def main():
 
         elif ds['source'] == 'kaggle_stroke':
             dl_paths = [
-                os.path.expanduser("~/.cache/kagglehub/datasets/ozcangundes/brain-stroke-ct-dataset"),
+                os.path.expanduser("~/.cache/kagglehub/datasets/ozguraslank/brain-stroke-ct-dataset"),
                 os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/brain-stroke-ct-dataset"),
                 os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/data/brain-stroke-ct-dataset")
             ]
@@ -486,7 +486,7 @@ def main():
                     
             if ip is None:
                 try:
-                    dl = kagglehub.dataset_download("ozcangundes/brain-stroke-ct-dataset")
+                    dl = kagglehub.dataset_download("ozguraslank/brain-stroke-ct-dataset")
                     ip, mp = find_stroke_sample_like_training(dl)
                 except Exception as e:
                     print(f"  ⚠️ kagglehub error: {e}")
