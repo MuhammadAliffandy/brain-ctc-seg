@@ -173,30 +173,45 @@ def main():
         mid = img_w // 2
 
         def annotate_blobs(ax, blobs, mid):
+            img_h = gt_mask.shape[0]
             left_blobs  = sorted([b for b in blobs if b[1] <  mid], key=lambda b: b[0])
             right_blobs = sorted([b for b in blobs if b[1] >= mid], key=lambda b: b[0])
 
-            # Kiri: 13% dari kiri, ada jarak dari tepi
-            for j, (cy, cx, area_mm2) in enumerate(left_blobs):
-                text_frac_y = 0.08 + j * 0.10
-                ax.annotate(f"{area_mm2:.1f} mm²",
-                            xy=(cx, cy), xycoords='data',
-                            xytext=(0.13, text_frac_y), textcoords='axes fraction',
-                            color='black', fontsize=8.5, ha='center', va='center',
-                            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.92, edgecolor='#cccccc', linewidth=0.5),
-                            arrowprops=dict(arrowstyle="-", color='white', lw=1.0,
-                                            connectionstyle="arc3,rad=0.1"))
+            # Separate labels vertically if too close (min 0.09 axes fraction gap)
+            MIN_GAP = 0.09
 
-            # Kanan: 87% dari kiri, ada jarak dari tepi
+            def spread(blist):
+                fracs = [cy / img_h for (cy, cx, _) in blist]
+                for _ in range(50):  # iterative nudge
+                    changed = False
+                    for k in range(1, len(fracs)):
+                        if fracs[k] - fracs[k-1] < MIN_GAP:
+                            fracs[k] = fracs[k-1] + MIN_GAP
+                            changed = True
+                    if not changed:
+                        break
+                return fracs
+
+            left_fracs  = spread(left_blobs)
+            right_fracs = spread(right_blobs)
+
+            # Kiri: 13% dari kiri, aligned ke centroid Y (no arrow)
+            for j, (cy, cx, area_mm2) in enumerate(left_blobs):
+                ax.text(0.13, left_fracs[j],
+                        f"{area_mm2:.1f} mm²",
+                        transform=ax.transAxes,
+                        color='black', fontsize=8.5, ha='center', va='center',
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor='white',
+                                  alpha=0.92, edgecolor='#cccccc', linewidth=0.5))
+
+            # Kanan: 87% dari kiri, aligned ke centroid Y (no arrow)
             for j, (cy, cx, area_mm2) in enumerate(right_blobs):
-                text_frac_y = 0.08 + j * 0.10
-                ax.annotate(f"{area_mm2:.1f} mm²",
-                            xy=(cx, cy), xycoords='data',
-                            xytext=(0.87, text_frac_y), textcoords='axes fraction',
-                            color='black', fontsize=8.5, ha='center', va='center',
-                            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.92, edgecolor='#cccccc', linewidth=0.5),
-                            arrowprops=dict(arrowstyle="-", color='white', lw=1.0,
-                                            connectionstyle="arc3,rad=-0.1"))
+                ax.text(0.87, right_fracs[j],
+                        f"{area_mm2:.1f} mm²",
+                        transform=ax.transAxes,
+                        color='black', fontsize=8.5, ha='center', va='center',
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor='white',
+                                  alpha=0.92, edgecolor='#cccccc', linewidth=0.5))
 
         annotate_blobs(ax_gt, gt_blobs, mid)
 
