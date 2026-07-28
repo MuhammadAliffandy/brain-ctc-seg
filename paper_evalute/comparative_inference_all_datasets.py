@@ -438,20 +438,48 @@ def main():
                 img_gray, tensor, gt_mask = load_npy_sample(sample)
 
         elif ds['source'] == 'kaggle_stroke':
-            # Bypass kagglehub download API to avoid 403 Forbidden
-            dl = os.path.expanduser("~/.cache/kagglehub/datasets/ozcangundes/brain-stroke-ct-dataset")
-            ip, mp = find_best_kaggle_sample(dl)
+            dl_paths = [
+                os.path.expanduser("~/.cache/kagglehub/datasets/ozcangundes/brain-stroke-ct-dataset"),
+                os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/brain-stroke-ct-dataset"),
+                os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/data/brain-stroke-ct-dataset")
+            ]
+            ip, mp = None, None
+            for dl in dl_paths:
+                if os.path.exists(dl):
+                    ip, mp = find_best_kaggle_sample(dl)
+                    if ip is not None: break
+                    
             if ip is None:
-                print("  ⚠️ No stroke sample found in cache"); img_gray=tensor=gt_mask=None
+                try:
+                    dl = kagglehub.dataset_download("ozcangundes/brain-stroke-ct-dataset")
+                    ip, mp = find_best_kaggle_sample(dl)
+                except Exception as e:
+                    print(f"  ⚠️ kagglehub error: {e}")
+            if ip is None:
+                print("  ⚠️ No stroke sample found"); img_gray=tensor=gt_mask=None
             else:
                 img_gray, tensor, gt_mask = load_kaggle_sample(ip, mp)
 
         elif ds['source'] == 'kaggle_hemo':
-            # Bypass kagglehub download API to avoid 403 Forbidden
-            dl = os.path.expanduser("~/.cache/kagglehub/datasets/vbookshelf/computed-tomography-ct-images")
-            ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
+            dl_paths = [
+                os.path.expanduser("~/.cache/kagglehub/datasets/vbookshelf/computed-tomography-ct-images"),
+                os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/computed-tomography-ct-images"),
+                os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/data/computed-tomography-ct-images")
+            ]
+            ip, mp = None, None
+            for dl in dl_paths:
+                if os.path.exists(dl):
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
+                    if ip is not None: break
+                    
             if ip is None:
-                print("  ⚠️ No hemorrhage sample found in cache"); img_gray=tensor=gt_mask=None
+                try:
+                    dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
+                except Exception as e:
+                    print(f"  ⚠️ kagglehub error: {e}")
+            if ip is None:
+                print("  ⚠️ No hemorrhage sample found"); img_gray=tensor=gt_mask=None
             else:
                 img_gray, tensor, gt_mask = load_kaggle_sample(ip, mp)
 
