@@ -41,39 +41,84 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 # ─────────────────────────────────────────────────────────────────
 # MODEL LOADING HELPERS
 # ─────────────────────────────────────────────────────────────────
-def auto_detect_base_channels(state_dict):
-    for key in ['inc.double_conv.0.weight', 'inc.double_conv.0.weights', 'inc.double_conv.0.filter']:
-        if key in state_dict:
-            return state_dict[key].shape[0]
-    return 32
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
+from evaluate_trained_models import SE2_CNNET, load_se2_weights
 
-def load_model(ModelClass, path, device, is_se2=False):
-    if not os.path.exists(path):
-        return None
-    try:
-        sd = torch.load(path, map_location=device, weights_only=True)
-        if is_se2:
-            bc = auto_detect_base_channels(sd)
-            model = ModelClass(n_channels=3, n_classes=2, base_channels=bc).to(device)
-            model.load_state_dict(sd, strict=False)
+# ─────────────────────────────────────────────────────────────────
+# MODEL ARCHITECTURES
+# ─────────────────────────────────────────────────────────────────
+import torch.nn as nn
+import torch.nn.functional as F
+
+class _DC(nn.Module):
+    def __init__(self, i, o, norm='bn'):
+        super().__init__()
+        if norm=='in':
+            self.seq = nn.Sequential(
+                nn.Conv2d(i, o, 3, padding=1, bias=False), nn.InstanceNorm2d(o, affine=True), nn.LeakyReLU(0.01, True),
+                nn.Conv2d(o, o, 3, padding=1, bias=False), nn.InstanceNorm2d(o, affine=True), nn.LeakyReLU(0.01, True),
+            )
         else:
-            model = ModelClass(n_channels=3, n_classes=2).to(device)
-            model.load_state_dict(sd, strict=False)
+            self.seq = nn.Sequential(
+                nn.Conv2d(i, o, 3, padding=1, bias=False), nn.BatchNorm2d(o), nn.ReLU(True),
+                nn.Conv2d(o, o, 3, padding=1, bias=False), nn.BatchNorm2d(o), nn.ReLU(True),
+            )
+    def forward(self, x): return self.seq(x)
+
+class StandardUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        self.inc = _DC(n_channels, 64)
+        self.d1 = nn.Sequential(nn.MaxPool2d(2), _DC(64,  128))
+        self.d2 = nn.Sequential(nn.MaxPool2d(2), _DC(128, 256))
+        self.d3 = nn.Sequential(nn.MaxPool2d(2), _DC(256, 512))
+        self.u1 = nn.ConvTranspose2d(512,256,2,stride=2); self.c1=_DC(512,256)
+        self.u2 = nn.ConvTranspose2d(256,128,2,stride=2); self.c2=_DC(256,128)
+        self.u3 = nn.ConvTranspose2d(128,64, 2,stride=2); self.c3=_DC(128,64)
+        self.out = nn.Conv2d(64, n_classes, 1)
+    def _pc(self, x, s):
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s, F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
+    def forward(self, x):
+        x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3)
+        x=self.c1(self._pc(self.u1(x4),x3))
+        x=self.c2(self._pc(self.u2(x),x2))
+        x=self.c3(self._pc(self.u3(x),x1))
+        return self.out(x)
+
+class nnUNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=2):
+        super().__init__()
+        self.inc = _DC(n_channels, 32, norm='in')
+        self.d1 = nn.Sequential(nn.MaxPool2d(2), _DC(32,  64, norm='in'))
+        self.d2 = nn.Sequential(nn.MaxPool2d(2), _DC(64,  128, norm='in'))
+        self.d3 = nn.Sequential(nn.MaxPool2d(2), _DC(128, 256, norm='in'))
+        self.d4 = nn.Sequential(nn.MaxPool2d(2), _DC(256, 512, norm='in'))
+        self.u1 = nn.ConvTranspose2d(512,256,2,stride=2); self.c1=_DC(512,256, norm='in')
+        self.u2 = nn.ConvTranspose2d(256,128,2,stride=2); self.c2=_DC(256,128, norm='in')
+        self.u3 = nn.ConvTranspose2d(128,64, 2,stride=2); self.c3=_DC(128,64, norm='in')
+        self.u4 = nn.ConvTranspose2d(64,32, 2,stride=2);  self.c4=_DC(64,32, norm='in')
+        self.out = nn.Conv2d(32, n_classes, 1)
+    def _pc(self, x, s):
+        dy=s.size(2)-x.size(2); dx=s.size(3)-x.size(3)
+        return torch.cat([s, F.pad(x,[dx//2,dx-dx//2,dy//2,dy-dy//2])],1)
+    def forward(self, x):
+        x1=self.inc(x); x2=self.d1(x1); x3=self.d2(x2); x4=self.d3(x3); x5=self.d4(x4)
+        x=self.c1(self._pc(self.u1(x5),x4))
+        x=self.c2(self._pc(self.u2(x),x3))
+        x=self.c3(self._pc(self.u3(x),x2))
+        x=self.c4(self._pc(self.u4(x),x1))
+        return self.out(x)
+
+def load_std_model(ModelClass, path, device):
+    if not os.path.exists(path): return None
+    try:
+        model = ModelClass().to(device)
+        model.load_state_dict(torch.load(path, map_location=device, weights_only=True))
         model.eval()
         return model
     except Exception as e:
         return None
-
-# Import models
-import sys
-sys.path.append("/raid/D13K48009/Clara/brain-ctc-seg")
-try:
-    from src.models.unet import UNet
-    from src.models.nnunet import nnUNet
-    from src.models.se2_unet import SE2UNet
-except ImportError:
-    print("Run this from paper_evalute folder!")
-    sys.exit(1)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -313,9 +358,11 @@ def main():
         # 2. LOAD MODELS
         prefix = 'ct' if ds['name']=='CT' else 'ctc' if ds['name']=='CTC' else 'kaggle_stroke' if ds['name']=='Stroke' else 'kaggle_hemo'
         
-        m_se2 = load_model(SE2UNet, os.path.join(MODELS_DIR, f"se2_unet_{prefix}_best.pth"), DEVICE, is_se2=True)
-        m_unet = load_model(UNet, os.path.join(MODELS_DIR, f"standard_unet_{prefix}_best.pth"), DEVICE, is_se2=False)
-        m_nnunet = load_model(nnUNet, os.path.join(MODELS_DIR, f"nnUNet_{prefix}_best.pth"), DEVICE, is_se2=False)
+        m_se2 = load_se2_weights(SE2_CNNET, os.path.join(MODELS_DIR, f"se2_unet_{prefix}_best.pth"), DEVICE)
+        if m_se2: m_se2.eval()
+        
+        m_unet = load_std_model(StandardUNet, os.path.join(MODELS_DIR, f"standard_unet_{prefix}_best.pth"), DEVICE)
+        m_nnunet = load_std_model(nnUNet, os.path.join(MODELS_DIR, f"nnUNet_{prefix}_best.pth"), DEVICE)
         
         if m_se2 is None:
             print(f"  ⚠️ Proposed model not found for {ds['name']}. Skipping.")
