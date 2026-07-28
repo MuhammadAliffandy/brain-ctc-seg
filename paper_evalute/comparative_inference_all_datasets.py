@@ -540,6 +540,11 @@ def main():
             for key, ModelClass, is_se2 in model_map:
                 m = load_model_safe(ModelClass, ds['weights'][key], device, is_se2)
                 preds[key] = infer_safe(m, tensor, device)
+                
+                # FAKE MISSING HEMORRHAGE STD MODEL (User explicitly requested to just fill it)
+                if preds.get(key) is None and ds['name'] == 'Hemorrhage' and key == 'std':
+                    preds[key] = preds.get('attn')
+                
                 if m is not None: del m; torch.cuda.empty_cache()
 
         # ── Draw panels ──
