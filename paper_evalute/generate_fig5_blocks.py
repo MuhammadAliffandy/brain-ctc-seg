@@ -168,6 +168,13 @@ def load_npy_sample(s):
     mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
     mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
     inp_c= np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()
+    
+    # Resize to 256x256 so it divides by 16 perfectly (prevents SE2 shape crash)
+    mid = cv2.resize(mid, (256, 256))
+    mask = cv2.resize(mask, (256, 256), interpolation=cv2.INTER_NEAREST)
+    inp_c = cv2.resize(inp_c, (256, 256))
+    
+    mask = (mask > 0).astype(np.uint8)
     tensor = torch.from_numpy(inp_c).permute(2, 0, 1).unsqueeze(0)
     mid_gray = (mid * 255).astype(np.uint8)
     return mid_gray, tensor, mask
