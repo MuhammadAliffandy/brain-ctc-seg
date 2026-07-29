@@ -354,9 +354,9 @@ def draw_image_panel(ax, img_gray, pred_mask=None, is_gt=False, bg_color=None):
         sp.set_edgecolor('#aaaaaa'); sp.set_linewidth(0.8)
 
     if is_gt and pred_mask is not None:
-        # White filled overlay for GT
+        # Green filled overlay for GT (so it doesn't blend with the white skull)
         ov = np.zeros((H, W, 4))
-        ov[pred_mask > 0] = [1, 1, 1, 0.90]
+        ov[pred_mask > 0] = [0.1, 0.8, 0.1, 0.75]
         ax.imshow(ov)
 
     elif pred_mask is not None:
