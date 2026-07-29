@@ -241,7 +241,7 @@ def load_npy_sample(s):
         img_25d_n=(img_25d-img_25d.min())/(img_25d.max()-img_25d.min())
     else: img_25d_n=img_25d
     mid=i1.copy()
-    if mid.max()>mid.min(): mid=(mid-mid.min())/(mid.max()-mid.min())
+    # Removed per-slice min-max stretching for mid to keep cosmetics consistent (gray biasa)
     mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
     mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
     inp_c= np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()
@@ -249,14 +249,14 @@ def load_npy_sample(s):
     return mid, tensor, mask
 
 
-def find_best_kaggle_sample(root, mask_kw=('mask','seg','hge'), min_px=50):
+def find_best_kaggle_sample(root, mask_kw=('mask','seg','hge'), min_px=50, seed=42):
     all_files=[]
     for r,_,files in os.walk(root):
         for f in files:
             if f.lower().endswith(('.jpg','.png','.bmp')):
                 all_files.append(os.path.join(r,f))
     masks=[f for f in all_files if any(k in f.lower() for k in mask_kw)]
-    random.seed(42); random.shuffle(masks)
+    random.seed(seed); random.shuffle(masks)
     
     for mp in masks:
         m=cv2.imread(mp,cv2.IMREAD_GRAYSCALE)
@@ -332,7 +332,8 @@ def load_kaggle_sample(ip,mp):
     img =cv2.resize(img, (256,256)).astype(np.float32)
     mask=cv2.resize(mask,(256,256),interpolation=cv2.INTER_NEAREST)
     mask=(mask>127).astype(np.uint8)
-    if img.max()>img.min(): img=(img-img.min())/(img.max()-img.min())
+    # Use fixed 0-255 to 0-1 mapping to preserve natural contrast instead of stretching
+    img = img / 255.0
     t=torch.from_numpy(np.stack([img,img,img],axis=0)).unsqueeze(0)
     return img,t,mask
 
@@ -507,13 +508,13 @@ def main():
             ip, mp = None, None
             for dl in dl_paths:
                 if os.path.exists(dl):
-                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
                     if ip is not None: break
                     
             if ip is None:
                 try:
                     dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
-                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'))
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
                 except Exception as e:
                     print(f"  ⚠️ kagglehub error: {e}")
             if ip is None:
