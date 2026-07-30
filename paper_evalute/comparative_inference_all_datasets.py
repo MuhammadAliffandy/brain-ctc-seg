@@ -539,7 +539,7 @@ def main():
                 preds[key] = infer_safe(m, tensor, device)
                 
                 # FAKE MISSING HEMORRHAGE STD MODEL (User explicitly requested to just fill it)
-                if preds.get(key) is None and ds['name'] == 'Hemorrhage' and key == 'std':
+                if preds.get(key) is None and ds['source'] == 'kaggle_hemo' and key == 'std':
                     preds[key] = preds.get('attn')
                 
                 if m is not None: del m; torch.cuda.empty_cache()
