@@ -71,7 +71,7 @@ def find_best_kaggle_sample(root, mask_kw=('mask','seg','hge'), min_px=50, seed=
         grandparent = os.path.dirname(parent)
         
         clean = base.lower()
-        for k in mask_kw:
+        for k in ['_hge_seg','_seg','_mask','mask','seg']:
             clean = clean.replace(k,'')
         clean = clean.split('.')[0]
         
@@ -97,12 +97,12 @@ def find_stroke_sample_like_training(root_dir, min_px=50):
     if not external_test_dir:
         return None, None
     
-    mask_dir = os.path.join(external_test_dir, "Masks")
-    input_dir = os.path.join(external_test_dir, "Inputs")
-    if not os.path.exists(mask_dir) or not os.path.exists(input_dir):
+    png_dir = os.path.join(external_test_dir, "PNG")
+    mask_dir = os.path.join(external_test_dir, "MASKS")
+    if not os.path.exists(png_dir) or not os.path.exists(mask_dir):
         return None, None
         
-    inputs = glob.glob(os.path.join(input_dir, "*.png"))
+    inputs = sorted(glob.glob(os.path.join(png_dir, "*.png")))
     random.seed(42); random.shuffle(inputs)
     
     for img_path in inputs:
@@ -187,6 +187,8 @@ def main():
     for ci, ds in enumerate(datasets):
         if ds['source'] == 'npy':
             sample = find_best_npy_slice(DATA_DIR, ds['prefix'])
+            if sample:
+                print(f"  ✅ {ds['name']}: found npy slice with {sample['px']}px tumor")
             img_gray, gt_mask = load_npy_sample(sample) if sample else (None, None)
         elif ds['source'] == 'kaggle_stroke':
             dl_paths = [
@@ -196,14 +198,20 @@ def main():
             ]
             ip, mp = None, None
             for dl in dl_paths:
+                print(f"  🔍 Checking stroke path: {dl} -> exists={os.path.exists(dl)}")
                 if os.path.exists(dl):
                     ip, mp = find_stroke_sample_like_training(dl)
-                    if ip is not None: break
+                    if ip is not None:
+                        print(f"  ✅ Stroke sample found: {ip}")
+                        break
             if ip is None:
                 try:
                     dl = kagglehub.dataset_download("ozguraslank/brain-stroke-ct-dataset")
                     ip, mp = find_stroke_sample_like_training(dl)
-                except Exception: pass
+                except Exception as e:
+                    print(f"  ⚠️ kagglehub stroke error: {e}")
+            if ip is None:
+                print(f"  ❌ No stroke sample found!")
             img_gray, gt_mask = load_kaggle_sample(ip, mp) if ip else (None, None)
         elif ds['source'] == 'kaggle_hemo':
             dl_paths = [
@@ -213,17 +221,25 @@ def main():
             ]
             ip, mp = None, None
             for dl in dl_paths:
+                print(f"  🔍 Checking hemo path: {dl} -> exists={os.path.exists(dl)}")
                 if os.path.exists(dl):
                     ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
-                    if ip is not None: break
+                    if ip is not None:
+                        print(f"  ✅ Hemorrhage sample found: {ip}")
+                        break
             if ip is None:
                 try:
                     dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
                     ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
-                except Exception: pass
+                except Exception as e:
+                    print(f"  ⚠️ kagglehub hemo error: {e}")
+            if ip is None:
+                print(f"  ❌ No hemorrhage sample found!")
             img_gray, gt_mask = load_kaggle_sample(ip, mp) if ip else (None, None)
 
-        if img_gray is None: continue
+        if img_gray is None:
+            print(f"  ⚠️ Skipping {ds['name']}: no data loaded")
+            continue
 
         # Draw Input (row 1)
         ax_in = fig.add_subplot(outer_gs[1, ci + 1])
