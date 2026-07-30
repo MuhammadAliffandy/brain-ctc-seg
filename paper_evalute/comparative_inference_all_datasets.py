@@ -240,7 +240,9 @@ def load_npy_sample(s):
         img_25d_n=(img_25d-img_25d.min())/(img_25d.max()-img_25d.min())
     else: img_25d_n=img_25d
     mid=i1.copy()
-    # Removed per-slice min-max stretching for mid to keep cosmetics consistent (gray biasa)
+    if mid.max() > 2.0:
+        mid = mid / 255.0 # Fixed global scaling to [0, 1] for uniform contrast
+        
     mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
     mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
     inp_c= np.rot90(img_25d_n[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN], k=ROTATE_K).copy()

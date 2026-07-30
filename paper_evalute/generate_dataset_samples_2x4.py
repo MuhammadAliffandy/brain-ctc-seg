@@ -48,6 +48,9 @@ def load_npy_sample(s):
     mask=np.load(s['mask']).astype(np.uint8)
     
     mid=i1.copy()
+    if mid.max() > 2.0:
+        mid = mid / 255.0 # Fixed global scaling to [0, 1] for uniform contrast
+        
     mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
     mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
     
