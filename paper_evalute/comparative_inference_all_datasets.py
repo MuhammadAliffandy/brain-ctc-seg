@@ -161,15 +161,14 @@ SAVE_DIR_NPY   = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models
 SAVE_DIR_INTRA = os.path.expanduser("~/Clara/brain-ctc-seg/public_dataset/saved_models")
 CROP_MARGIN, ROTATE_K = 40, 3
 
-# Column definitions: (header_label, bg_color, text_color)
 COLUMNS = [
-    ("Input",             None,              'black'),
-    ("Ground Truth",      '#dbeeff',         'black'),   # blue tint
-    ("nnU-Net",           None,              'black'),
-    ("Attention U-Net",   None,              'black'),
-    ("TransUNet",         None,              'black'),
-    ("Standard U-Net",    None,              'black'),
-    ("Proposed\nCT-SE(2)",'#d4f5d4',         '#006600'), # green tint
+    ("Input",             None, 'black'),
+    ("Groundtruth",       None, 'black'),
+    ("NN U-Net",          None, 'black'),
+    ("Attention U-Net",   None, 'black'),
+    ("Trans U-Net",       None, 'black'),
+    ("U-Net",             None, 'black'),
+    ("CT-SE(2)",          None, 'black'),
 ]
 
 DATASET_NAMES = ['CT', 'CTC', 'Stroke', 'Hemorrhage']
@@ -348,29 +347,28 @@ def draw_image_panel(ax, img_gray, pred_mask=None, is_gt=False, bg_color=None):
     if bg_color:
         ax.set_facecolor(bg_color)
 
-    ax.imshow(img_gray, cmap='gray', vmin=0, vmax=1)
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
-        sp.set_edgecolor('#aaaaaa'); sp.set_linewidth(0.8)
+        sp.set_visible(False)
 
     if is_gt and pred_mask is not None:
-        # Green filled overlay for GT (so it doesn't blend with the white skull)
-        ov = np.zeros((H, W, 4))
-        ov[pred_mask > 0] = [0.1, 0.8, 0.1, 0.75]
-        ax.imshow(ov)
-
-    elif pred_mask is not None:
-        # Colored filled overlay for predictions
-        ov = np.zeros((H, W, 4))
-        ov[pred_mask > 0] = [1, 0.2, 0.2, 0.75]   # red for all model predictions
-        ax.imshow(ov)
+        # User requested Groundtruth to be purely the binary mask (White on Black)
+        ax.imshow(pred_mask, cmap='gray', vmin=0, vmax=1)
+    else:
+        # Render the normal raw grayscale image
+        ax.imshow(img_gray, cmap='gray', vmin=0, vmax=1)
+        if pred_mask is not None:
+            # Colored filled overlay for predictions
+            ov = np.zeros((H, W, 4))
+            ov[pred_mask > 0] = [1, 0.2, 0.2, 0.75]   # red for all model predictions
+            ax.imshow(ov)
 
 
 def draw_empty_panel(ax, text, bg_color=None):
     ax.set_xticks([]); ax.set_yticks([])
     if bg_color: ax.set_facecolor(bg_color)
     for sp in ax.spines.values():
-        sp.set_edgecolor('#aaaaaa'); sp.set_linewidth(0.8)
+        sp.set_visible(False)
     ax.text(0.5, 0.5, text, transform=ax.transAxes,
             ha='center', va='center', fontsize=9, color='#888888', style='italic')
 
@@ -388,7 +386,7 @@ def main():
 
     # ── Dataset configs ──
     datasets = [
-        dict(name='CT',         source='npy',           prefix='CT_',
+        dict(name='NCCT (NTUH)',         source='npy',           prefix='CT_',
              weights=dict(
                  nn    =os.path.join(SAVE_DIR_NPY,   'nn_unet_ct_best.pth'),
                  attn  =os.path.join(SAVE_DIR_NPY,   'attention_unet_ct_best.pth'),
@@ -396,7 +394,7 @@ def main():
                  std   =os.path.join(SAVE_DIR_NPY,   'standard_unet_ct_best.pth'),
                  se2   =os.path.join(SAVE_DIR_NPY,   'se2_unet_ct_best.pth'),
              )),
-        dict(name='CTC',        source='npy',           prefix='CTC_',
+        dict(name='CECT (NTUH)',        source='npy',           prefix='CTC_',
              weights=dict(
                  nn    =os.path.join(SAVE_DIR_NPY,   'nn_unet_ctc_best.pth'),
                  attn  =os.path.join(SAVE_DIR_NPY,   'attention_unet_ctc_best.pth'),
@@ -404,7 +402,7 @@ def main():
                  std   =os.path.join(SAVE_DIR_NPY,   'standard_unet_ctc_best.pth'),
                  se2   =os.path.join(SAVE_DIR_NPY,   'se2_unet_ctc_best.pth'),
              )),
-        dict(name='Stroke',     source='kaggle_stroke', prefix=None,
+        dict(name='Stroke\n(Kaggle)',     source='kaggle_stroke', prefix=None,
              weights=dict(
                  nn    =os.path.join(SAVE_DIR_INTRA, 'nnU-Net_kaggle_best.pth'),
                  attn  =os.path.join(SAVE_DIR_INTRA, 'Attention_U-Net_kaggle_best.pth'),
@@ -412,7 +410,7 @@ def main():
                  std   =os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_best.pth'),
                  se2   =os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_best.pth'),
              )),
-        dict(name='Hemorrhage', source='kaggle_hemo',   prefix=None,
+        dict(name='Hemorrhaghe\n(Kaggle)', source='kaggle_hemo',   prefix=None,
              weights=dict(
                  nn    =os.path.join(SAVE_DIR_INTRA, 'nnU-Net_kaggle_hemorrhage_best.pth'),
                  attn  =os.path.join(SAVE_DIR_INTRA, 'Attention_U-Net_kaggle_hemorrhage_best.pth'),
@@ -444,8 +442,6 @@ def main():
     # ── Column headers (row 0) ──
     ax_corner = fig.add_subplot(outer_gs[0, 0])
     ax_corner.axis('off')
-    ax_corner.text(0.5, 0.5, 'Dataset', transform=ax_corner.transAxes,
-                   ha='center', va='center', fontsize=11, fontweight='bold')
 
     col_keys = ['nn', 'attn', 'trans', 'std', 'se2']
     for ci, (col_label, bg, fg) in enumerate(COLUMNS):
@@ -526,7 +522,7 @@ def main():
         ax_lbl = fig.add_subplot(outer_gs[row_idx + 1, 0])
         ax_lbl.axis('off')
         ax_lbl.text(0.5, 0.5, ds['name'], transform=ax_lbl.transAxes,
-                    ha='center', va='center', fontsize=12, fontweight='bold', rotation=0)
+                    ha='center', va='center', fontsize=12, fontweight='bold', rotation=90)
 
         # ── Infer all models ──
         preds = {}
