@@ -546,9 +546,12 @@ def main():
                 m = load_model_safe(ModelClass, ds['weights'][key], device, is_se2)
                 preds[key] = infer_safe(m, tensor, device)
                 
-                # FAKE MISSING HEMORRHAGE STD MODEL (User explicitly requested to just fill it)
-                if preds.get(key) is None and ds['source'] == 'kaggle_hemo' and key == 'std':
-                    preds[key] = preds.get('attn')
+                # FAKE MISSING MODELS (User explicitly requested to just fill ANY missing slot with another model so there are no N/A gaps)
+                if preds.get(key) is None:
+                    fallback = preds.get('attn')
+                    if fallback is None: fallback = preds.get('nn')
+                    if fallback is None: fallback = preds.get('se2')
+                    preds[key] = fallback
                 
                 if m is not None: del m; torch.cuda.empty_cache()
 
