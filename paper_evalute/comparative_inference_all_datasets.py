@@ -25,7 +25,7 @@ import matplotlib.patches as patches
 import kagglehub
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
-from evaluate_trained_models import SE2_CNNET, load_se2_weights
+from evaluate_trained_models import SE2_CNNET, load_se2_weights, HarmonicNet
 
 # ─────────────────────────────────────────────────────────────────
 # MODEL ARCHITECTURES
@@ -168,6 +168,7 @@ COLUMNS = [
     ("Attention U-Net",   None, 'black'),
     ("Trans U-Net",       None, 'black'),
     ("U-Net",             None, 'black'),
+    ("HarmonicNet (C4)",  None, 'black'),
     ("CT-SE(2)",          None, 'black'),
 ]
 
@@ -394,6 +395,7 @@ def main():
                  attn  =os.path.join(SAVE_DIR_NPY,   'attention_unet_ct_best.pth'),
                  trans =os.path.join(SAVE_DIR_NPY,   'trans_unet_ct_best.pth'),
                  std   =os.path.join(SAVE_DIR_NPY,   'standard_unet_ct_best.pth'),
+                 harmonic=os.path.join(SAVE_DIR_NPY, 'harmonic_net_ct_best.pth'),
                  se2   =os.path.join(SAVE_DIR_NPY,   'se2_unet_ct_best.pth'),
              )),
         dict(name='CECT (NTUH)',        source='npy',           prefix='CTC_',
@@ -402,6 +404,7 @@ def main():
                  attn  =os.path.join(SAVE_DIR_NPY,   'attention_unet_ctc_best.pth'),
                  trans =os.path.join(SAVE_DIR_NPY,   'trans_unet_ctc_best.pth'),
                  std   =os.path.join(SAVE_DIR_NPY,   'standard_unet_ctc_best.pth'),
+                 harmonic=os.path.join(SAVE_DIR_NPY, 'harmonic_net_ctc_best.pth'),
                  se2   =os.path.join(SAVE_DIR_NPY,   'se2_unet_ctc_best.pth'),
              )),
         dict(name='Stroke\n(Kaggle)',     source='kaggle_stroke', prefix=None,
@@ -410,6 +413,7 @@ def main():
                  attn  =os.path.join(SAVE_DIR_INTRA, 'Attention_U-Net_kaggle_best.pth'),
                  trans =os.path.join(SAVE_DIR_INTRA, 'TransUNet_kaggle_best.pth'),
                  std   =os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_best.pth'),
+                 harmonic=os.path.join(SAVE_DIR_INTRA, 'harmonic_net_kaggle_best.pth'),
                  se2   =os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_best.pth'),
              )),
         dict(name='Hemorrhaghe\n(Kaggle)', source='kaggle_hemo',   prefix=None,
@@ -418,14 +422,15 @@ def main():
                  attn  =os.path.join(SAVE_DIR_INTRA, 'Attention_U-Net_kaggle_hemorrhage_best.pth'),
                  trans =os.path.join(SAVE_DIR_INTRA, 'TransUNet_kaggle_hemorrhage_best.pth'),
                  std   =os.path.join(SAVE_DIR_INTRA, 'Standard_U-Net_kaggle_hemorrhage_best.pth'),
+                 harmonic=os.path.join(SAVE_DIR_INTRA, 'harmonic_net_kaggle_hemorrhage_best.pth'),
                  se2   =os.path.join(SAVE_DIR_INTRA, 'Mod-Seg-SE2_kaggle_hemorrhage_best.pth'),
              )),
     ]
 
     # ── Figure Layout ──
     n_rows = len(datasets)
-    # 8 axes cols: [dataset_label, input, gt, nn, attn, trans, std, se2]
-    n_img_cols = 7
+    # 8 axes cols: [dataset_label, input, gt, nn, attn, trans, std, harmonic, se2]
+    n_img_cols = 8
     fig_w = 2.6 * n_img_cols + 1.4  # +1.4 for label column
     fig_h = 3.0 * n_rows + 0.8      # +0.8 for header
 
@@ -534,6 +539,7 @@ def main():
                 ('attn', AttentionUNet, False),
                 ('trans',TransUNet,     False),
                 ('std',  StandardUNet,  False),
+                ('harmonic', HarmonicNet, False),
                 ('se2',  SE2_CNNET,     True),
             ]
             for key, ModelClass, is_se2 in model_map:
@@ -555,7 +561,8 @@ def main():
             (4, 'attn',   False, None),
             (5, 'trans',  False, None),
             (6, 'std',    False, None),
-            (7, 'se2',    False, '#d4f5d4'),
+            (7, 'harmonic', False, None),
+            (8, 'se2',    False, '#d4f5d4'),
         ]
 
         for (ci, key, is_gt, bg) in panel_specs:
