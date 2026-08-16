@@ -48,11 +48,15 @@ def load_npy_sample(s):
     mask=np.load(s['mask']).astype(np.uint8)
     
     mid=i1.copy()
+    # 1. Guarantee 0-1 scale
     if mid.max() > 2.0:
-        if 'CTC_' in s['curr']:
-            mid = np.clip(mid / 350.0, 0, 1) # Lower brightness for CECT so tumor is visible
-        else:
-            mid = np.clip(mid / 255.0, 0, 1) # Fixed global scaling to [0, 1] for uniform contrast
+        mid = mid / 255.0
+        
+    # 2. Lower brightness for CECT so tumor is visible and matches NCCT contrast
+    if 'CTC_' in s['curr']:
+        mid = np.clip(mid * 0.65, 0, 1) # Darken CECT by 35%
+    else:
+        mid = np.clip(mid, 0, 1)
         
     mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
     mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
