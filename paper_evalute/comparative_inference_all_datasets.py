@@ -518,13 +518,13 @@ def main():
             ip, mp = None, None
             for dl in dl_paths:
                 if os.path.exists(dl):
-                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), min_px=2500, seed=99)
                     if ip is not None: break
                     
             if ip is None:
                 try:
                     dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
-                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), min_px=2500, seed=99)
                 except Exception as e:
                     print(f"  ⚠️ kagglehub error: {e}")
             if ip is None:

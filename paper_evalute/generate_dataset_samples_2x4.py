@@ -231,21 +231,21 @@ def main():
             ]
             ip, mp = None, None
             for dl in dl_paths:
-                print(f"  🔍 Checking hemo path: {dl} -> exists={os.path.exists(dl)}")
                 if os.path.exists(dl):
-                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
-                    if ip is not None:
-                        print(f"  ✅ Hemorrhage sample found: {ip}")
-                        break
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=['_hge_seg', 'seg'], min_px=2500, seed=99)
+                    if ip is not None: break
+                    
             if ip is None:
                 try:
                     dl = kagglehub.dataset_download("vbookshelf/computed-tomography-ct-images")
-                    ip, mp = find_best_kaggle_sample(dl, mask_kw=('mask','hge_seg','seg'), seed=99)
+                    ip, mp = find_best_kaggle_sample(dl, mask_kw=['_hge_seg', 'seg'], min_px=2500, seed=99)
                 except Exception as e:
-                    print(f"  ⚠️ kagglehub hemo error: {e}")
+                    print(f"  ⚠️ kagglehub error: {e}")
             if ip is None:
-                print(f"  ❌ No hemorrhage sample found!")
-            img_gray, gt_mask = load_kaggle_sample(ip, mp) if ip else (None, None)
+                print("  ⚠️ No hemorrhage sample found")
+                img_gray, gt_mask = None, None
+            else:
+                img_gray, gt_mask = load_kaggle_sample(ip, mp)
 
         if img_gray is None:
             print(f"  ⚠️ Skipping {ds['name']}: no data loaded")
