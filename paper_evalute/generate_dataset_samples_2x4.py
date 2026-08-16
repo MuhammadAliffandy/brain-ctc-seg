@@ -49,7 +49,10 @@ def load_npy_sample(s):
     
     mid=i1.copy()
     if mid.max() > 2.0:
-        mid = mid / 255.0 # Fixed global scaling to [0, 1] for uniform contrast
+        if 'CTC_' in s['curr']:
+            mid = np.clip(mid / 350.0, 0, 1) # Lower brightness for CECT so tumor is visible
+        else:
+            mid = np.clip(mid / 255.0, 0, 1) # Fixed global scaling to [0, 1] for uniform contrast
         
     mid  = np.rot90(mid[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],   k=ROTATE_K).copy()
     mask = np.rot90(mask[CROP_MARGIN:-CROP_MARGIN, CROP_MARGIN:-CROP_MARGIN],  k=ROTATE_K).copy()
