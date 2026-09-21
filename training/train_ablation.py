@@ -142,6 +142,27 @@ if __name__ == '__main__':
     parser.add_argument('--resume', action='store_true', help='Resume from latest checkpoint if available')
     args = parser.parse_args()
 
+    class Logger:
+        def __init__(self, filename, stream):
+            self.terminal = stream
+            self.log = open(filename, "a", encoding="utf-8")
+        def write(self, m):
+            self.terminal.write(m)
+            self.log.write(m)
+            self.log.flush()
+        def flush(self):
+            self.terminal.flush()
+            self.log.flush()
+
+    import datetime
+    LOG_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/logs_ablation")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(LOG_DIR, f"{args.variant}_{args.dataset}_{ts}.txt")
+    sys.stdout = Logger(log_file, sys.stdout)
+    sys.stderr = Logger(log_file, sys.stderr)
+    print(f"📝 Logging this variant to {log_file}")
+
     set_seed(42)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
