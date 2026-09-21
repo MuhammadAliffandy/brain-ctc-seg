@@ -84,13 +84,10 @@ class CTBrainAblationDataset(Dataset):
         sl = self.patient_slices[p]
         
         if self.n_slices == 1:
-            indices = [si, si, si] # Duplicate to keep 3 channels for standard RGB-like models
+            indices = [si] # Strictly 1 channel for 1-slice ablations
         elif self.n_slices == 3:
             indices = [max(0, si-1), si, min(len(sl)-1, si+1)]
         elif self.n_slices == 5:
-            # If model strictly expects 3 channels, 5 slices will crash unless we change model input channels.
-            # Wait, SE2_CNNET and StandardUNet are initialized with n_channels! 
-            # We must return exactly self.n_slices channels.
             indices = [max(0, si-2), max(0, si-1), si, min(len(sl)-1, si+1), min(len(sl)-1, si+2)]
             
         try:
@@ -199,7 +196,7 @@ if __name__ == '__main__':
     train_transform = A.Compose([
         A.Rotate(limit=25, p=0.8),
         A.HorizontalFlip(p=0.5),
-        A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.2),
+        A.ElasticTransform(alpha=1, sigma=50, p=0.2),
         A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=0.5) if args.dataset == 'ct' else A.NoOp(),
     ])
     val_transform = A.Compose([
