@@ -192,13 +192,8 @@ if __name__ == '__main__':
     train_df = df.sample(frac=0.85, random_state=42)
     val_df   = df.drop(train_df.index)
 
-    # Calculate class weights for boundary loss
-    neg_px = train_df['0s'].sum()
-    pos_px = train_df['1s'].sum()
-    total_px = neg_px + pos_px
-    weight_0 = total_px / (2 * neg_px)
-    weight_1 = total_px / (2 * pos_px)
-    class_weights = torch.tensor([weight_0, weight_1], dtype=torch.float32).to(device)
+    # Use the same hardcoded class weights as train_comparison_models.py for consistency
+    class_weights = torch.tensor([1.0, 10.0], dtype=torch.float32).to(device)
 
     # Transforms (same as proposed model)
     train_transform = A.Compose([
