@@ -155,7 +155,22 @@ if __name__ == '__main__':
             self.log.flush()
 
     import datetime
-    LOG_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/logs_ablation")
+    def get_valid_path(rel_path):
+        candidates = [
+            os.path.expanduser(f"~/Clara/{rel_path}"),
+            f"/raid/D13K48009/Clara/{rel_path}",
+            os.path.expanduser(f"~/raid/Clara/{rel_path}")
+        ]
+        for c in candidates:
+            if os.path.exists(c) or os.path.exists(os.path.dirname(c)):
+                return c
+        return candidates[0]
+
+    CSV_REPORT = get_valid_path("new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
+    DATA_PATH  = get_valid_path("local_ct_workspace_full")
+    SAVE_DIR   = get_valid_path("brain-ctc-seg/training/saved_models_ablation")
+    LOG_DIR    = get_valid_path("brain-ctc-seg/training/logs_ablation")
+
     os.makedirs(LOG_DIR, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(LOG_DIR, f"{args.variant}_{args.dataset}_{ts}.txt")
@@ -166,9 +181,6 @@ if __name__ == '__main__':
     set_seed(42)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    CSV_REPORT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
-    DATA_PATH  = os.path.expanduser("~/Clara/local_ct_workspace_full")
-    SAVE_DIR   = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_ablation")
     os.makedirs(SAVE_DIR, exist_ok=True)
     SAVE_PATH  = os.path.join(SAVE_DIR, f"{args.variant}_{args.dataset}_best.pth")
     CKPT_PATH  = os.path.join(SAVE_DIR, f"{args.variant}_{args.dataset}_latest.pth")

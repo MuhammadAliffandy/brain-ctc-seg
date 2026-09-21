@@ -64,8 +64,8 @@ def evaluate_model(model_path, dataset_key, is_se2, n_slices):
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    CSV_REPORT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
-    DATA_PATH  = os.path.expanduser("~/Clara/local_ct_workspace_full")
+    CSV_REPORT = get_valid_path("new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
+    DATA_PATH  = get_valid_path("local_ct_workspace_full")
 
     df = pd.read_csv(CSV_REPORT)
     pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
@@ -156,7 +156,7 @@ if __name__ == '__main__':
         {"variant": "Context_5D", "se2": 1, "slices": 5},
     ]
 
-    SAVE_DIR = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_ablation")
+    SAVE_DIR = get_valid_path("brain-ctc-seg/training/saved_models_ablation")
     dataset = 'ct'
     
     results = []
