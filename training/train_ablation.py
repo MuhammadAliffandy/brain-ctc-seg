@@ -139,6 +139,7 @@ if __name__ == '__main__':
     parser.add_argument('--slices', type=int, default=3, help='Number of input slices (1, 3, 5)')
     parser.add_argument('--loss', type=str, default='focal_dice_boundary', 
                         choices=['dice', 'focal_dice', 'dice_boundary', 'focal_dice_boundary'])
+    parser.add_argument('--resume', action='store_true', help='Resume from latest checkpoint if available')
     args = parser.parse_args()
 
     set_seed(42)
@@ -149,6 +150,7 @@ if __name__ == '__main__':
     SAVE_DIR   = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_ablation")
     os.makedirs(SAVE_DIR, exist_ok=True)
     SAVE_PATH  = os.path.join(SAVE_DIR, f"{args.variant}_{args.dataset}_best.pth")
+    CKPT_PATH  = os.path.join(SAVE_DIR, f"{args.variant}_{args.dataset}_latest.pth")
 
     df = pd.read_csv(CSV_REPORT)
     pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
@@ -197,15 +199,27 @@ if __name__ == '__main__':
     
     EPOCHS = 150
     ACCUM = 4
+    start_epoch = 1
     best_iou = 0.0
     early_stop_counter = 0
+
+    if args.resume and os.path.exists(CKPT_PATH):
+        print(f"  🔄 Resuming from {CKPT_PATH}")
+        checkpoint = torch.load(CKPT_PATH, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_iou = checkpoint['best_iou']
+        early_stop_counter = checkpoint['early_stop_counter']
+        print(f"  🔄 Resumed at epoch {start_epoch} with Best IoU {best_iou:.4f}")
 
     print(f"\\n{'='*65}")
     print(f"  Training Variant: {args.variant} | SE2: {bool(args.se2)} | Slices: {args.slices} | Loss: {args.loss}")
     print(f"  Dataset: {args.dataset.upper()} | Device: {device}")
     print(f"{'='*65}\\n")
 
-    for epoch in range(1, EPOCHS+1):
+    for epoch in range(start_epoch, EPOCHS+1):
         model.train(); optimizer.zero_grad(); train_loss=0.0
         for i, (imgs, masks) in enumerate(tqdm(train_loader, desc=f"Ep {epoch}/{EPOCHS} [Train]", ncols=80)):
             imgs = imgs.to(device, non_blocking=True); masks = masks.to(device, non_blocking=True)
@@ -246,3 +260,13 @@ if __name__ == '__main__':
         if early_stop_counter >= 20:
             print(f"  🛑 Early stopping triggered at epoch {epoch}")
             break
+            
+        # Save latest checkpoint for resuming
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'best_iou': best_iou,
+            'early_stop_counter': early_stop_counter
+        }, CKPT_PATH)
