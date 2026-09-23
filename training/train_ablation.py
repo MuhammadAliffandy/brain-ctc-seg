@@ -206,7 +206,8 @@ if __name__ == '__main__':
     train_set = CTBrainAblationDataset(train_df, DATA_PATH, n_slices=args.slices, transform=train_transform)
     val_set   = CTBrainAblationDataset(val_df,   DATA_PATH, n_slices=args.slices, transform=val_transform)
 
-    nw = 4 if torch.cuda.is_available() else 0
+    # Reduce num_workers to 2 to prevent 'killed by signal: Terminated' OOM errors on DGX
+    nw = 2 if torch.cuda.is_available() else 0
     BATCH = 8
     train_loader = DataLoader(train_set, BATCH, shuffle=True,  pin_memory=True, num_workers=nw)
     val_loader   = DataLoader(val_set,   BATCH, shuffle=False, pin_memory=True, num_workers=nw)
