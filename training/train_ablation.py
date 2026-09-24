@@ -193,14 +193,16 @@ if __name__ == '__main__':
     class_weights = torch.tensor([1.0, 10.0], dtype=torch.float32).to(device)
 
     # Transforms (same as proposed model)
+    # Note: Albumentations CLAHE strictly expects 1 or 3 channels. We disable it for 5-channel context ablations.
+    use_clahe = (args.dataset == 'ct' and args.slices in [1, 3])
     train_transform = A.Compose([
         A.Rotate(limit=25, p=0.8),
         A.HorizontalFlip(p=0.5),
         A.ElasticTransform(alpha=1, sigma=50, p=0.2),
-        A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=0.5) if args.dataset == 'ct' else A.NoOp(),
+        A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=0.5) if use_clahe else A.NoOp(),
     ])
     val_transform = A.Compose([
-        A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=1.0) if args.dataset == 'ct' else A.NoOp(),
+        A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=1.0) if use_clahe else A.NoOp(),
     ])
 
     train_set = CTBrainAblationDataset(train_df, DATA_PATH, n_slices=args.slices, transform=train_transform)
