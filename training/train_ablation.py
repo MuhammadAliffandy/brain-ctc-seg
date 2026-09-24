@@ -108,7 +108,7 @@ class CTBrainAblationDataset(Dataset):
             return torch.from_numpy(img).permute(2, 0, 1), torch.from_numpy(m).long()
         except Exception as e:
             print(f"Error loading {p} slice {si}: {e}")
-            return self.__getitem__(random.randint(0, len(self.all_samples)-1))
+            raise RuntimeError(f"Data loading failed, likely due to Rclone mount dropping. Error: {e}")
 
 
 def filter_df_by_dataset(df, dataset_key, patient_col='Patient_Folder'):
@@ -159,7 +159,7 @@ if __name__ == '__main__':
             os.path.expanduser(f"~/raid/Clara/{rel_path}")
         ]
         for c in candidates:
-            if os.path.exists(c) or os.path.exists(os.path.dirname(c)):
+            if os.path.exists(c):
                 return c
         return candidates[0]
 

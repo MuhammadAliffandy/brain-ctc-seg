@@ -53,6 +53,18 @@ def surface_dice_np(p, g, tolerance_mm=2.0, spacing=(1.,1.)):
     return float(good/(den+1e-7))
 
 
+def get_valid_path(rel_path):
+    candidates = [
+        os.path.expanduser(f"~/Clara/{rel_path}"),
+        f"/raid/D13K48009/Clara/{rel_path}",
+        os.path.expanduser(f"~/raid/Clara/{rel_path}")
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return candidates[0]
+
+
 def evaluate_model(model_path, dataset_key, is_se2, n_slices):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     

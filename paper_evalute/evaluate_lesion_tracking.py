@@ -185,11 +185,22 @@ def evaluate_tracking(model_name, ModelClass, weights_path, is_se2, n_slices, df
     }
 
 
+def get_valid_path(rel_path):
+    candidates = [
+        os.path.expanduser(f"~/Clara/{rel_path}"),
+        f"/raid/D13K48009/Clara/{rel_path}",
+        os.path.expanduser(f"~/raid/Clara/{rel_path}")
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return candidates[0]
+
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    CSV_REPORT = os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
-    DATA_PATH  = os.path.expanduser("~/Clara/local_ct_workspace_full")
-    SAVE_DIR   = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D")
+    CSV_REPORT = get_valid_path("new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
+    DATA_PATH  = get_valid_path("local_ct_workspace_full")
+    SAVE_DIR   = get_valid_path("brain-ctc-seg/training/saved_models_ablation")
     
     df = pd.read_csv(CSV_REPORT)
     # Use standard test set (CT only for lesion tracking)
