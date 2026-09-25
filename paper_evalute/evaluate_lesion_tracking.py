@@ -203,8 +203,9 @@ if __name__ == '__main__':
     SAVE_DIR   = get_valid_path("brain-ctc-seg/training/saved_models_ablation")
     
     df = pd.read_csv(CSV_REPORT)
+    pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
     # Use standard test set (CT only for lesion tracking)
-    df = filter_df_by_dataset(df, 'ct')
+    df = filter_df_by_dataset(df, 'ct', pc)
     train_df = df.sample(frac=0.85, random_state=42)
     val_df   = df.drop(train_df.index)
     
