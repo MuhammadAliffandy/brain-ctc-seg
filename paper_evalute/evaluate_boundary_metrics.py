@@ -171,14 +171,26 @@ if __name__ == '__main__':
     SAVE_DIR = get_valid_path("brain-ctc-seg/training/saved_models_ablation")
     dataset = 'ct'
     
-    results = []
+    csv_out = os.path.join(os.path.dirname(__file__), "ablation_metrics.csv")
+    done_variants = []
     
+    if os.path.exists(csv_out):
+        df_existing = pd.read_csv(csv_out)
+        if 'Variant' in df_existing.columns:
+            done_variants = df_existing['Variant'].tolist()
+            print(f"🔄 Found existing results for: {done_variants}")
+
     for exp in experiments:
+        if exp['variant'] in done_variants:
+            print(f"⏭️ Skipping {exp['variant']}, already evaluated.")
+            continue
+            
         model_path = os.path.join(SAVE_DIR, f"{exp['variant']}_{dataset}_best.pth")
         if not os.path.exists(model_path):
             print(f"⚠️ Model not found: {model_path} (Skipping)")
             continue
             
+        print(f"⏳ Evaluating {exp['variant']}...")
         metrics = evaluate_model(model_path, dataset, exp['se2'] == 1, exp['slices'])
         
         res = {
@@ -189,13 +201,10 @@ if __name__ == '__main__':
             'ASSD': round(metrics['ASSD'], 4),
             'Surface Dice': round(metrics['Surface Dice'], 4)
         }
-        results.append(res)
-        print(f"✅ {exp['variant']}: Dice={res['Dice']}, HD95={res['HD95']}, ASSD={res['ASSD']}, Surface Dice={res['Surface Dice']}")
+        
+        df_res = pd.DataFrame([res])
+        # Append to CSV (write header only if file does not exist)
+        df_res.to_csv(csv_out, mode='a', header=not os.path.exists(csv_out), index=False)
+        print(f"✅ Saved {exp['variant']} to {csv_out}")
 
-    if results:
-        df_results = pd.DataFrame(results)
-        csv_out = os.path.join(os.path.dirname(__file__), "ablation_metrics.csv")
-        df_results.to_csv(csv_out, index=False)
-        print(f"\\n🎉 Saved all metrics to {csv_out}")
-    else:
-        print("No models evaluated. Run the training script first!")
+    print(f"\n🎉 All available models evaluated. Results at {csv_out}")

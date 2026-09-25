@@ -216,8 +216,20 @@ if __name__ == '__main__':
         ("5 Slices (Extended) [Context_5D]", SE2_CNNET, "Context_5D_ct_best.pth", True, 5),
     ]
     
-    results = []
+    out_path = os.path.join(os.path.dirname(__file__), "lesion_tracking_metrics.csv")
+    done_models = []
+    
+    if os.path.exists(out_path):
+        df_existing = pd.read_csv(out_path)
+        if 'Model' in df_existing.columns:
+            done_models = df_existing['Model'].tolist()
+            print(f"🔄 Found existing results for: {done_models}")
+    
     for name, ModelClass, weight_name, is_se2, n_slices in MODELS:
+        if name in done_models:
+            print(f"⏭️ Skipping {name}, already evaluated.")
+            continue
+            
         weight_path = os.path.join(SAVE_DIR, weight_name)
         if not os.path.exists(weight_path):
             print(f"⚠️ Missing {weight_path}, skipping...")
@@ -225,11 +237,8 @@ if __name__ == '__main__':
             
         res = evaluate_tracking(name, ModelClass, weight_path, is_se2, n_slices, val_df, DATA_PATH, device)
         if res:
-            results.append(res)
-            print(f"✅ {name}: Sens={res['Lesion Sensitivity']}, FP/Scan={res['FP Lesions / Scan']}, Fragmentation={res['Fragmentation Events']}")
+            df_res = pd.DataFrame([res])
+            df_res.to_csv(out_path, mode='a', header=not os.path.exists(out_path), index=False)
+            print(f"✅ Saved {name} to {out_path}")
             
-    if results:
-        df_res = pd.DataFrame(results)
-        out_path = os.path.join(os.path.dirname(__file__), "lesion_tracking_metrics.csv")
-        df_res.to_csv(out_path, index=False)
-        print(f"\\n🎉 Saved tracking metrics to {out_path}")
+    print(f"\n🎉 All available models evaluated. Results at {out_path}")
