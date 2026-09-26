@@ -87,8 +87,9 @@ def evaluate_model(model_path, dataset_key, is_se2, n_slices):
     train_df = df.sample(frac=0.85, random_state=42)
     val_df   = df.drop(train_df.index)
 
+    use_clahe = (dataset_key == 'ct' and n_slices in [1, 3])
     val_transform = A.Compose([
-        A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=1.0) if dataset_key == 'ct' else A.NoOp(),
+        A.CLAHE(clip_limit=4.0, tile_grid_size=(8,8), p=1.0) if use_clahe else A.NoOp(),
     ])
 
     val_set = CTBrainAblationDataset(val_df, DATA_PATH, n_slices=n_slices, transform=val_transform)

@@ -138,7 +138,7 @@ def evaluate_tracking(model_name, ModelClass, weights_path, is_se2, n_slices, df
                 if not os.path.exists(mp): continue
                 
                 if n_slices == 1:
-                    indices = [i, i, i] # Same duplication strategy as training
+                    indices = [i] # Strictly 1 channel for 1-slice ablations
                 elif n_slices == 3:
                     indices = [max(0, i-1), i, min(len(imgs)-1, i+1)]
                 elif n_slices == 5:
