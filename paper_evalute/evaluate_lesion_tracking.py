@@ -116,7 +116,8 @@ def evaluate_tracking(model_name, ModelClass, weights_path, is_se2, n_slices, df
         'total_scans': 0
     }
     
-    patients = df['Patient_Folder'].unique()
+    pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
+    patients = df[pc].unique()
     
     for p in tqdm(patients, desc=f"Eval {model_name}", ncols=80):
         pd_dir = os.path.join(DATA_PATH, p)
