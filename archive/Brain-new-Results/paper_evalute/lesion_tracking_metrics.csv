@@ -1,0 +1,4 @@
+Model,Lesion Sensitivity,FP Lesions / Scan,Fragmentation Events,Merging Events,Total Scans
+1 Slice (2D) [A6],0.8324,6.6667,6,0,3
+3 Slices (2.5D) [A8],0.8757,9.3333,5,1,3
+5 Slices (Extended) [Context_5D],0.8973,5.0,5,0,3

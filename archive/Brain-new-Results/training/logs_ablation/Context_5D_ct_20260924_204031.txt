@@ -1,0 +1,62 @@
+📝 Logging this variant to /home/D13K48009/Clara/brain-ctc-seg/training/logs_ablation/Context_5D_ct_20260924_204031.txt
+    -> [ESCNN] Inisialisasi gspaces.rot2dOnR2...
+    -> [ESCNN] Membangun inc (DoubleEquivariantConv)...
+    -> [ESCNN] Membangun down1...
+    -> [ESCNN] Membangun down2...
+    -> [ESCNN] Membangun down3...
+    -> [ESCNN] Membangun down4 (Layer terdalam, butuh waktu paling lama!)...
+    -> [ESCNN] Membangun up1...
+    -> [ESCNN] Membangun up2...
+    -> [ESCNN] Membangun up3...
+    -> [ESCNN] Membangun up4...
+    -> [ESCNN] Membangun outc...
+    -> [ESCNN] SE2_CNNET selesai dibangun!
+/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/optim/lr_scheduler.py:62: UserWarning: The verbose parameter is deprecated. Please use get_last_lr() to access the learning rate.
+  warnings.warn(
+\n=================================================================
+  Training Variant: Context_5D | SE2: True | Slices: 5 | Loss: focal_dice_boundary
+  Dataset: CT | Device: cuda
+=================================================================\n
+Ep 1/150 [Train]:   0%|                                  | 0/71 [00:00<?, ?it/s]Error loading CT_ slice 113: CLAHE transformation expects 1-channel or 3-channel images.
+Ep 1/150 [Train]:   0%|                                  | 0/71 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_ablation.py", line 250, in <module>
+    for i, (imgs, masks) in enumerate(tqdm(train_loader, desc=f"Ep {epoch}/{EPOCHS} [Train]", ncols=80)):
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/tqdm/std.py", line 1181, in __iter__
+    for obj in iterable:
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 701, in __next__
+    data = self._next_data()
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 1465, in _next_data
+    return self._process_data(data)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/utils/data/dataloader.py", line 1491, in _process_data
+    data.reraise()
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/_utils.py", line 715, in reraise
+    raise exception
+RuntimeError: Caught RuntimeError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_ablation.py", line 104, in __getitem__
+    aug = self.transform(image=img, mask=m)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/albumentations/core/composition.py", line 610, in __call__
+    data = t(**data)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/albumentations/core/transforms_interface.py", line 273, in __call__
+    return self.apply_with_params(params, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/albumentations/core/transforms_interface.py", line 310, in apply_with_params
+    target_function(ensure_contiguous_output(arg), **params),
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/albumentations/augmentations/pixel/transforms.py", line 2854, in apply
+    raise TypeError(msg)
+TypeError: CLAHE transformation expects 1-channel or 3-channel images.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/utils/data/_utils/worker.py", line 351, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_ablation.py", line 111, in __getitem__
+    raise RuntimeError(f"Data loading failed, likely due to Rclone mount dropping. Error: {e}")
+RuntimeError: Data loading failed, likely due to Rclone mount dropping. Error: CLAHE transformation expects 1-channel or 3-channel images.
+
+Error loading CT_2 slice 102: CLAHE transformation expects 1-channel or 3-channel images.

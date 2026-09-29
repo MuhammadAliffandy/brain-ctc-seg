@@ -1,0 +1,98 @@
+📝 Logging this variant to /home/D13K48009/Clara/brain-ctc-seg/training/logs_ablation/Context_5D_ct_20260923_204327.txt
+    -> [ESCNN] Inisialisasi gspaces.rot2dOnR2...
+    -> [ESCNN] Membangun inc (DoubleEquivariantConv)...
+    -> [ESCNN] Membangun down1...
+    -> [ESCNN] Membangun down2...
+    -> [ESCNN] Membangun down3...
+    -> [ESCNN] Membangun down4 (Layer terdalam, butuh waktu paling lama!)...
+    -> [ESCNN] Membangun up1...
+    -> [ESCNN] Membangun up2...
+    -> [ESCNN] Membangun up3...
+    -> [ESCNN] Membangun up4...
+    -> [ESCNN] Membangun outc...
+    -> [ESCNN] SE2_CNNET selesai dibangun!
+/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/optim/lr_scheduler.py:62: UserWarning: The verbose parameter is deprecated. Please use get_last_lr() to access the learning rate.
+  warnings.warn(
+\n=================================================================
+  Training Variant: Context_5D | SE2: True | Slices: 5 | Loss: focal_dice_boundary
+  Dataset: CT | Device: cuda
+=================================================================\n
+Ep 1/150 [Train]:   0%|                                  | 0/71 [00:00<?, ?it/s]Error loading CT_2 slice 56: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 44: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 43: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 230: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 132: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 149: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 69: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 13: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 113: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 102: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 53: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 12: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 130: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 83: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 132: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 8: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 43: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 126: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 185: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 165: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 87: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 91: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 57: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 45: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 98: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 34: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 148: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 65: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 47: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 79: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 109: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 14: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_2 slice 76: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 120: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_ slice 150: CLAHE transformation expects 1-channel or 3-channel images.
+Error loading CT_3 slice 77: CLAHE transformation expects 1-channel or 3-channel images.
+Ep 1/150 [Train]:   0%|                                  | 0/71 [00:03<?, ?it/s]
+Traceback (most recent call last):
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_ablation.py", line 253, in <module>
+    loss = criterion(model(imgs), masks) / ACCUM
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_se2_by_dataset.py", line 206, in forward
+    x  = self.up3(x, x2);  x = self.up4(x, x1)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_se2_by_dataset.py", line 154, in forward
+    return self.conv(x)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_se2_by_dataset.py", line 137, in forward
+    def forward(self, x): return self.double_conv(x)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/escnn/nn/modules/sequential_module.py", line 88, in forward
+    x = m(x)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/escnn/nn/modules/batchnormalization/inner.py", line 157, in forward
+    output[:, indices[0]:indices[1], ...] = batchnorm(
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/modules/batchnorm.py", line 193, in forward
+    return F.batch_norm(
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/nn/functional.py", line 2812, in batch_norm
+    return torch.batch_norm(
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1024.00 MiB. GPU 0 has a total capacity of 79.10 GiB of which 936.31 MiB is free. Process 186619 has 41.82 GiB memory in use. Including non-PyTorch memory, this process has 36.35 GiB memory in use. Of the allocated memory 34.42 GiB is allocated by PyTorch, and 1.27 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

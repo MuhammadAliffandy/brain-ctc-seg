@@ -1,0 +1,15 @@
+📝 Logging this variant to /home/D13K48009/Clara/brain-ctc-seg/training/logs_ablation/Context_5D_ct_20260923_101325.txt
+Traceback (most recent call last):
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_ablation.py", line 185, in <module>
+    df = pd.read_csv(CSV_REPORT)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1026, in read_csv
+    return _read(filepath_or_buffer, kwds)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 620, in _read
+    parser = TextFileReader(filepath_or_buffer, **kwds)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1620, in __init__
+    self._engine = self._make_engine(f, self.engine)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/io/parsers/readers.py", line 1880, in _make_engine
+    self.handles = get_handle(
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/io/common.py", line 873, in get_handle
+    handle = open(
+FileNotFoundError: [Errno 2] No such file or directory: '/home/D13K48009/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv'

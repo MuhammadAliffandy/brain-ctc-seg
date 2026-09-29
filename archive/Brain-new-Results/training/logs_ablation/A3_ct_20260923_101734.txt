@@ -1,0 +1,9 @@
+📝 Logging this variant to /home/D13K48009/Clara/brain-ctc-seg/training/logs_ablation/A3_ct_20260923_101734.txt
+/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/torch/optim/lr_scheduler.py:62: UserWarning: The verbose parameter is deprecated. Please use get_last_lr() to access the learning rate.
+  warnings.warn(
+  🔄 Resuming from /home/D13K48009/Clara/brain-ctc-seg/training/saved_models_ablation/A3_ct_latest.pth
+  🔄 Resumed at epoch 151 with Best IoU 0.4308
+\n=================================================================
+  Training Variant: A3 | SE2: False | Slices: 3 | Loss: focal_dice
+  Dataset: CT | Device: cuda
+=================================================================\n

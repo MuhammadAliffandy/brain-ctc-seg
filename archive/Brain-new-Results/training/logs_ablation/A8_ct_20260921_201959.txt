@@ -1,0 +1,20 @@
+📝 Logging this variant to /home/D13K48009/Clara/brain-ctc-seg/training/logs_ablation/A8_ct_20260921_201959.txt
+Traceback (most recent call last):
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/core/indexes/base.py", line 3812, in get_loc
+    return self._engine.get_loc(casted_key)
+  File "pandas/_libs/index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7088, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7096, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: '0s'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/D13K48009/Clara/brain-ctc-seg/training/train_ablation.py", line 196, in <module>
+    neg_px = train_df['0s'].sum()
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/core/frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "/home/D13K48009/miniconda3/envs/brain_env/lib/python3.10/site-packages/pandas/core/indexes/base.py", line 3819, in get_loc
+    raise KeyError(key) from err
+KeyError: '0s'
