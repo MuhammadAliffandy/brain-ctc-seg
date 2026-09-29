@@ -149,14 +149,18 @@ def _load_model() -> SE2_CNNET:
     if _model_cache is not None:
         return _model_cache
 
-    weight_path = os.path.join(MODELS_DIR, "se2_unet_epoch_100.pth")
+    weight_path = os.path.join(MODELS_DIR, "saved_models_ablation", "A8_ctc_best.pth")
+    if not os.path.exists(weight_path):
+        # Fallback if CTC is missing (for local testing)
+        weight_path = os.path.join(MODELS_DIR, "saved_models_ablation", "A8_ct_best.pth")
+        
     if not os.path.exists(weight_path):
         raise FileNotFoundError(f"State-of-the-art model weights not found at: {weight_path}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # Initialize the new SE2_CNNET architecture
-    model = SE2_CNNET(n_channels=1, n_classes=2, N=8, base_channels=24)
+    # Initialize the new Mod-Seg-SE(2) architecture (A8 uses 3 slices, base 32)
+    model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32)
     
     # Load state dict correctly mapping to device
     state_dict = torch.load(weight_path, map_location=device, weights_only=True)
@@ -191,6 +195,11 @@ def predict_segmentation(image_file, modality: str, **kwargs):
 
     # Reshaped to [1, 1, 256, 256] (Batch, Channel, Height, Width)
     img_tensor = torch.from_numpy(img_array).unsqueeze(0).unsqueeze(0).to(device)
+    
+    # The A8 architecture (2.5D) expects 3 channels. 
+    # Since the web app only accepts a single 2D image, we duplicate the image 3 times 
+    # to simulate the adjacent slices, identical to our tracking evaluation fallback.
+    img_tensor = img_tensor.repeat(1, 3, 1, 1)
 
     # 2. Load Model
     model = _load_model()
