@@ -83,8 +83,7 @@ def run_table11():
     model.load_state_dict(torch.load(WEIGHT_PATH, map_location=device, weights_only=True))
     model.eval()
 
-    img_25d_norm = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min()) if img_25d.max() > img_25d.min() else img_25d
-    tensor = torch.from_numpy(img_25d_norm).permute(2, 0, 1).unsqueeze(0).to(device)
+    tensor = torch.from_numpy(img_25d).permute(2, 0, 1).unsqueeze(0).to(device)
     
     with torch.no_grad():
         with torch.amp.autocast('cuda'):
