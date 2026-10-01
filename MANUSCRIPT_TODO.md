@@ -6,13 +6,13 @@ This document tracks all the missing quantitative values (`XXXX`) in the manuscr
 **Issue:** The previous evaluation scripts used a `surface_distances` algorithm that failed (maxing out at `486.001 mm`) when encountering empty mask slices (slices without tumors). 
 **Action Required:** Rewrite the HD95 evaluation logic to safely ignore or penalize empty slices without breaking the mean calculation, then recalculate for **ALL** datasets and models.
 
-- [ ] **Table 3 (NCCT NTUH):** HD95 for CT-SE(2), HarmonicNet, Mod-SE(2), nnU-Net, U-Net, Att U-Net, TransUNet.
+- [x] **Table 3 (NCCT NTUH):** HD95 for CT-SE(2), HarmonicNet, Mod-SE(2), nnU-Net, U-Net, Att U-Net, TransUNet.
 - [ ] **Table 4 (CECT NTUH):** HD95 for all evaluated models.
 - [ ] **Table 5 (Kaggle Stroke):** HD95 for all evaluated models. *(Requires Public Dataset Path)*
 - [ ] **Table 6 (Kaggle Hemorrhage):** HD95 for all evaluated models. *(Requires Public Dataset Path)*
-- [ ] **Table 7 (Component Ablation):** HD95 for models A1 through A8.
-- [ ] **Table 8 (Loss Ablation):** HD95 for Dice, Focal+Dice, Dice+Bound, CT-SE(2).
-- [ ] **Table 9 (Context Ablation):** HD95 for 1-slice, 3-slices, 5-slices.
+- [x] **Table 7 (Component Ablation):** HD95 for models A1 through A8.
+- [x] **Table 8 (Loss Ablation):** HD95 for Dice, Focal+Dice, Dice+Bound, CT-SE(2).
+- [x] **Table 9 (Context Ablation):** HD95 for 1-slice, 3-slices, 5-slices.
 - [x] **Table 11 (Fig 8 Lesion-wise):** HD95 specifically for Lesions 1, 2, 3, 4, and Total.
 
 ## 🟡 2. Mod-SE(2) Missing Basic Metrics (Table 3)
