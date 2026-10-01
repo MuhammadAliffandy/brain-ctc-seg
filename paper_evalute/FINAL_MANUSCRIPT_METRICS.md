@@ -68,6 +68,18 @@ This document contains all the extracted metrics from the server logs to be copi
 
 ---
 
+## 🟢 Table 3: Baseline Models (NCCT NTUH Dataset)
+*(Values extracted from `baseline_hd95.log`)*
+
+- **Mod-Seg-SE(2):** `0.64 mm`
+- **HarmonicNet:** `2.62 mm`
+- **nnU-Net:** `95.73 mm`
+- **Standard U-Net:** `54.25 mm`
+- **Attention U-Net:** `55.09 mm`
+- **TransUNet:** `97.67 mm`
+
+---
+
 ## 🟢 Table 4: Baseline Models (CECT NTUH Dataset)
 *(Values extracted from `remaining_hd95_v2.log`)*
 
@@ -89,6 +101,17 @@ This document contains all the extracted metrics from the server logs to be copi
 - **Standard U-Net:** `1.52 mm`
 - **Attention U-Net:** `1.35 mm`
 - **TransUNet:** `1.41 mm`
+
+---
+
+## 🟢 Table 6: Baseline Models (Kaggle Hemorrhage Dataset)
+*(Values extracted from `remaining_hd95_v3.log`)*
+
+- **Mod-Seg-SE(2):** `0.45 mm`
+- **nnU-Net:** `0.64 mm`
+- **Attention U-Net:** `0.64 mm`
+- **TransUNet:** `1.27 mm`
+- *(HarmonicNet and Standard U-Net were not evaluated)*
 
 ---
 
@@ -127,4 +150,4 @@ This document contains all the extracted metrics from the server logs to be copi
 
 ---
 
-*Note: Waiting for the remaining screenshots (**Table 3 NCCT Baseline**, and **Table 6 Kaggle Hemorrhage**).*
+**🎉 ALL METRICS EXTRACTED SUCCESSFULLY 🎉**
