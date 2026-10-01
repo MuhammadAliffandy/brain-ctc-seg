@@ -83,7 +83,7 @@ def surface_distances_3d(result, reference, voxelspacing=(2.5, 0.45, 0.45)):
 # For Table 3, all models are on the CT dataset.
 BASELINE_MODELS = [
     ("Mod-Seg-SE(2)", "A8_ct_best.pth", SE2_CNNET, True, 3), # Boundary, 3-slice
-    ("HarmonicNet", "harmonic_net_ct_best.pth", HarmonicNet, False, 3),
+    ("HarmonicNet", "harmonic_net_ct_best.pth", HarmonicNet, True, 3), # True because it's equivariant (fully conv)
     ("nnU-Net", "nn_unet_ct_best.pth", nnUNet, False, 3),
     ("Standard U-Net", "standard_unet_ct_best.pth", StandardUNet, False, 3),
     ("Attention U-Net", "attention_unet_ct_best.pth", AttentionUNet, False, 3),
@@ -123,7 +123,7 @@ def run_baseline_hd95():
             continue
 
         if is_se2:
-            model = ModelClass(n_channels=n_slices, n_classes=2, N=8, base_channels=32).to(device)
+            model = ModelClass(n_channels=n_slices, n_classes=2, N=8, base_channels=32).to(device) if name != "HarmonicNet" else ModelClass(n_channels=n_slices, n_classes=2, N=4, base_channels=32).to(device)
         elif name == "nnU-Net":
             model = ModelClass(n_channels=n_slices, n_classes=2).to(device)
         else:
@@ -143,7 +143,9 @@ def run_baseline_hd95():
                 vol_masks = []
                 for imgs, masks in loader:
                     imgs = imgs.to(device)
-                    # Resize to 256x256 for non-SE2 models to prevent shape errors
+                    orig_h, orig_w = masks.shape[-2:]
+                    
+                    # Resize to 256x256 for non-SE2 models to prevent shape errors (e.g. TransUNet ViT sequence length)
                     if not is_se2:
                         imgs = F.interpolate(imgs, size=(256, 256), mode='bilinear', align_corners=False)
                     
@@ -151,7 +153,7 @@ def run_baseline_hd95():
                     preds = torch.argmax(F.softmax(logits, 1), 1)
                     
                     if not is_se2:
-                        preds = F.interpolate(preds.unsqueeze(1).float(), size=(344, 344), mode='nearest').squeeze(1).long()
+                        preds = F.interpolate(preds.unsqueeze(1).float(), size=(orig_h, orig_w), mode='nearest').squeeze(1).long()
                         
                     vol_preds.append(preds.cpu().numpy())
                     vol_masks.append(masks.squeeze(1).cpu().numpy())
