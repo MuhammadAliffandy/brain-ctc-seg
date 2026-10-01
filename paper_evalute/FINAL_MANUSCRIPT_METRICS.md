@@ -92,4 +92,39 @@ This document contains all the extracted metrics from the server logs to be copi
 
 ---
 
-*Note: Please provide the remaining screenshots for **Table 3 (NCCT Baseline)**, **Table 6 (Kaggle Hemorrhage)**, and **Table 7-9 (Ablations)** whenever they are ready!*
+## 🟢 Table 7: Component Ablation (Models A1 - A8)
+*(Values extracted from `ablation_hd95.log`)*
+
+| Model | Configuration | HD95 (mm) |
+|---|---|---|
+| **A1** | Baseline, 2D, No Boundary | 4.02 |
+| **A2** | SE(2), 2D, No Boundary | 0.64 |
+| **A3** | Baseline, 2.5D, No Boundary | 4.15 |
+| **A4** | Baseline, 2D, Boundary | 2.58 |
+| **A5** | SE(2), 2.5D, No Boundary | 0.90 |
+| **A6** | SE(2), 2D, Boundary | 0.64 |
+| **A7** | Baseline, 2.5D, Boundary | 2.54 |
+| **A8** | CT-SE(2), 2.5D, Boundary | 0.64 |
+
+---
+
+## 🟢 Table 8: Loss Function Ablation
+*(Values extracted from `ablation_hd95.log`)*
+
+- **Dice Only:** 95.63 mm
+- **Focal + Dice:** 1.35 mm
+- **Dice + Boundary:** 0.45 mm
+- **Proposed (Dice + Focal + Boundary / A8):** 0.64 mm
+
+---
+
+## 🟢 Table 9: Spatial Context Ablation
+*(Values extracted from `ablation_hd95.log`)*
+
+- **1 Slice (2D - Model A6):** 0.64 mm
+- **3 Slices (2.5D - Model A8):** 0.64 mm
+- **5 Slices (2.5D Extended):** 0.45 mm
+
+---
+
+*Note: Waiting for the remaining screenshots (**Table 3 NCCT Baseline**, and **Table 6 Kaggle Hemorrhage**).*
