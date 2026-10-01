@@ -234,10 +234,13 @@ def run_evaluation(table_name, dataset_key, weight_suffix, is_kaggle=False):
         print(f"Downloading Kaggle dataset for {table_name}...")
         kaggle_id = "vbookshelf/computed-tomography-ct-images" if weight_suffix == "kaggle_hemorrhage" else "ozguraslank/brain-stroke-ct-dataset"
         try:
-            path = kagglehub.dataset_download(kaggle_id)
             if weight_suffix == "kaggle_hemorrhage":
-                test_loader = DataLoader(PublicHemorrhageDataset(path), batch_size=8, shuffle=False)
+                sys.path.append(os.path.join(os.path.dirname(__file__), "..", "public_dataset"))
+                from train_all_intra_hemorrhage import get_kaggle_hemorrhage_splits, IntraHemorrhageDataset
+                _, test_samples = get_kaggle_hemorrhage_splits(test_size=0.15, seed=42)
+                test_loader = DataLoader(IntraHemorrhageDataset(test_samples), batch_size=8, shuffle=False)
             else:
+                path = kagglehub.dataset_download(kaggle_id)
                 test_loader = DataLoader(PublicKaggleDataset(path), batch_size=8, shuffle=False)
         except Exception as e:
             print(f"Kaggle download failed: {e}")
