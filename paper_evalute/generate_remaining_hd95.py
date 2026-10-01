@@ -115,6 +115,47 @@ class PublicKaggleDataset(Dataset):
 
         return torch.from_numpy(image_25d).float(), torch.from_numpy(mask).unsqueeze(0).float()
 
+class PublicHemorrhageDataset(Dataset):
+    def __init__(self, root_dir):
+        all_files = []
+        for root, dirs, files in os.walk(root_dir):
+            for f in files:
+                if f.lower().endswith(('.jpg', '.png', '.bmp', '.tif')):
+                    all_files.append(os.path.join(root, f))
+                    
+        masks = [f for f in all_files if 'mask' in f.lower() or 'seg' in f.lower()]
+        images = [f for f in all_files if f not in masks]
+        
+        self.samples = []
+        for mask_path in masks:
+            mask_name = os.path.basename(mask_path).lower()
+            clean_name = mask_name.replace('_hge_seg', '').replace('_seg', '').replace('_mask', '').replace('mask', '').split('.')[0]
+            parent_dir = os.path.dirname(mask_path)
+            expected_img_path = os.path.join(parent_dir, f"{clean_name}.jpg")
+            if not os.path.exists(expected_img_path):
+                 expected_img_path = os.path.join(parent_dir, f"{clean_name}.png")
+            
+            if os.path.exists(expected_img_path):
+                self.samples.append((expected_img_path, mask_path))
+
+    def __len__(self): return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, mask_path = self.samples[idx]
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if img is None or mask is None:
+            img, mask = np.zeros((256, 256), dtype=np.uint8), np.zeros((256, 256), dtype=np.uint8)
+
+        img = cv2.resize(img, (256, 256))
+        mask = cv2.resize(mask, (256, 256), interpolation=cv2.INTER_NEAREST)
+        
+        mask = (mask > 127).astype(np.float32)
+        img_norm = (img - img.min()) / (img.max() - img.min() + 1e-7)
+        image_25d = np.stack([img_norm, img_norm, img_norm], axis=0)
+
+        return torch.from_numpy(image_25d).float(), torch.from_numpy(mask).unsqueeze(0).float()
+
 def surface_distances_3d(result, reference, voxelspacing=(2.5, 0.45, 0.45)):
     result = result.astype(bool)
     reference = reference.astype(bool)
@@ -191,10 +232,13 @@ def run_evaluation(table_name, dataset_key, weight_suffix, is_kaggle=False):
     else:
         # Download kaggle
         print(f"Downloading Kaggle dataset for {table_name}...")
-        kaggle_id = "vbookshelf/computed-tomography-ct-images" if weight_suffix == "kaggle_hemorrhage" else "fedesoriano/stroke-prediction-dataset"
+        kaggle_id = "vbookshelf/computed-tomography-ct-images" if weight_suffix == "kaggle_hemorrhage" else "ozguraslank/brain-stroke-ct-dataset"
         try:
             path = kagglehub.dataset_download(kaggle_id)
-            test_loader = DataLoader(PublicKaggleDataset(path), batch_size=8, shuffle=False)
+            if weight_suffix == "kaggle_hemorrhage":
+                test_loader = DataLoader(PublicHemorrhageDataset(path), batch_size=8, shuffle=False)
+            else:
+                test_loader = DataLoader(PublicKaggleDataset(path), batch_size=8, shuffle=False)
         except Exception as e:
             print(f"Kaggle download failed: {e}")
             return
