@@ -20,6 +20,8 @@ import re
 # ==========================================
 def surface_distances_3d(result, reference, voxelspacing=(1., 1., 1.)):
     """Computes HD95 on the full 3D patient volume."""
+    result = result.astype(bool)
+    reference = reference.astype(bool)
     res_borders = result ^ binary_erosion(result)
     ref_borders = reference ^ binary_erosion(reference)
     
