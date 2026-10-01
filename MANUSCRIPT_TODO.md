@@ -31,8 +31,8 @@ This document tracks all the missing quantitative values (`XXXX`) in the manuscr
 - [x] **False Positives:** False-positive lesions per scan.
 - [x] **Cross-Slice Tracking:** Reference tracks recovered as one track (%), Fragmented tracks (%), Merged tracks (%).
 - [x] **Volumetric Agreement:** Volume ICC(2,1) [95% CI].
-- [ ] **Bland-Altman:** Bias, mL [95% LoA].
-- [ ] **Stratified Error:** Absolute volume error for lesions <1 mL, 1–10 mL, and >10 mL.
+- [x] **Bland-Altman:** Bias, mL [95% LoA].
+- [x] **Stratified Error:** Absolute volume error for lesions <1 mL, 1–10 mL, and >10 mL.
 
 ## 🟢 4. Dataset Paths Setup
 Ensure that any new comprehensive evaluation script maps dynamically to these paths:
