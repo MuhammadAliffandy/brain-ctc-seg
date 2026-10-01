@@ -6,7 +6,10 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import scipy.ndimage
-from pingouin import intraclass_corr
+try:
+    from pingouin import intraclass_corr
+except ImportError:
+    pass
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
 from train_ablation import filter_df_by_dataset
@@ -80,37 +83,26 @@ def calculate_lesion_metrics_full(gt_vol, pred_vol, voxel_vol_ml):
     metrics = {
         'total_gt_lesions': n_gt,
         'total_pred_lesions': n_pred,
-        'tp_lesions': 0,
-        'fp_lesions': 0,
-        'fn_lesions': 0,
-        'fragmented_tracks': 0,
-        'merged_tracks': 0,
-        'volumes_gt': [],
-        'volumes_pred': [],
-        'abs_errors': []
+        'tp_lesions': 0, 'fp_lesions': 0, 'fn_lesions': 0,
+        'fragmented_tracks': 0, 'merged_tracks': 0,
+        'volumes_gt': [], 'volumes_pred': [], 'abs_errors': []
     }
     
     gt_matched = np.zeros(n_gt + 1, dtype=bool)
     pred_matched = np.zeros(n_pred + 1, dtype=bool)
     
     for i in range(1, n_gt + 1):
-        matches = 0
-        best_iou = 0
-        best_pred_idx = -1
+        matches = 0; best_iou = 0; best_pred_idx = -1
         for j in range(1, n_pred + 1):
             intersect = overlap_matrix[i, j]
             if intersect > 0:
                 iou = intersect / (gt_areas[i] + pred_areas[j] - intersect)
                 if iou >= 0.1:
-                    gt_matched[i] = True
-                    pred_matched[j] = True
+                    gt_matched[i] = True; pred_matched[j] = True
                     matches += 1
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_pred_idx = j
+                    if iou > best_iou: best_iou = iou; best_pred_idx = j
         
-        if matches > 1:
-            metrics['fragmented_tracks'] += 1
+        if matches > 1: metrics['fragmented_tracks'] += 1
             
         vol_gt = gt_areas[i] * voxel_vol_ml
         metrics['volumes_gt'].append(vol_gt)
@@ -128,30 +120,31 @@ def calculate_lesion_metrics_full(gt_vol, pred_vol, voxel_vol_ml):
             intersect = overlap_matrix[i, j]
             if intersect > 0:
                 iou = intersect / (gt_areas[i] + pred_areas[j] - intersect)
-                if iou >= 0.1:
-                    matches += 1
-        if matches > 1:
-            metrics['merged_tracks'] += 1
+                if iou >= 0.1: matches += 1
+        if matches > 1: metrics['merged_tracks'] += 1
             
     metrics['tp_lesions'] = np.sum(gt_matched[1:])
     metrics['fn_lesions'] = n_gt - metrics['tp_lesions']
     metrics['fp_lesions'] = n_pred - np.sum(pred_matched[1:])
-    
     return metrics
 
-def run_table10_evaluation():
-    print("="*60)
-    print(" 📊 GENERATING TABLE 10: FULL LESION TRACKING & ICC")
-    print("="*60)
+def calculate_bland_altman(gt_vols, pred_vols):
+    gt_vols = np.array(gt_vols); pred_vols = np.array(pred_vols)
+    diff = pred_vols - gt_vols
+    bias = np.mean(diff)
+    sd = np.std(diff)
+    return bias, bias - 1.96 * sd, bias + 1.96 * sd
 
+def run_table10_evaluation():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     CSV_REPORT = get_valid_path("new_drive/CT Brain Data/MyDrive/Dataset_CT_Report.csv")
     DATA_PATH = get_valid_path("local_ct_workspace_full")
-    MODEL_PATH = get_valid_path("brain-ctc-seg/training/saved_models_ablation/A8_ct_best.pth")
 
-    model = SE2_CNNET(n_channels=3, n_classes=2, N=8, base_channels=32).to(device)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
-    model.eval()
+    # We evaluate CT-SE(2) [A8] vs Mod-SE(2) [A2]
+    MODELS = {
+        "CT-SE(2)": {"path": "brain-ctc-seg/training/saved_models_ablation/A8_ct_best.pth", "slices": 3},
+        "Mod-SE(2)": {"path": "brain-ctc-seg/training/saved_models_ablation/A2_ct_best.pth", "slices": 1}
+    }
 
     df = pd.read_csv(CSV_REPORT)
     pc = 'Patient_Folder' if 'Patient_Folder' in df.columns else 'Patient'
@@ -161,88 +154,105 @@ def run_table10_evaluation():
     val_df = df.drop(train_df.index)
     val_patients = val_df[pc].unique()
 
-    # Voxel volume in mL (cm^3). Assuming 0.5mm x 0.5mm x 2.5mm = 0.625 mm^3 = 0.000625 mL
     voxel_vol_ml = 0.000625 
-    
-    total_metrics = {
-        'total_gt': 0, 'total_pred': 0, 'tp': 0, 'fp': 0, 'fn': 0,
-        'frag': 0, 'merge': 0, 'scans': 0
-    }
-    all_vol_gt = []
-    all_vol_pred = []
-    all_abs_err = []
 
-    with torch.no_grad():
-        for patient in tqdm(val_patients, desc="Processing Scans"):
-            dataset = PatientVolumeDataset(patient, DATA_PATH, n_slices=3)
-            if len(dataset) == 0: continue
-            loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    print("="*60)
+    print(" 📊 GENERATING TABLE 10: BLAND-ALTMAN & STRATIFIED ERRORS")
+    print("="*60)
 
-            vol_preds = []
-            vol_masks = []
-            for imgs, masks in loader:
-                imgs = imgs.to(device)
-                logits = model(imgs)
-                preds = torch.argmax(F.softmax(logits, 1), 1)
-                vol_preds.append(preds.cpu().numpy())
-                vol_masks.append(masks.squeeze(1).cpu().numpy())
+    for model_name, info in MODELS.items():
+        weight_path = get_valid_path(info["path"])
+        if not os.path.exists(weight_path):
+            print(f"⚠️ {weight_path} not found. Skipping {model_name}.")
+            continue
 
-            vol_preds = np.concatenate(vol_preds, axis=0)
-            vol_masks = np.concatenate(vol_masks, axis=0)
+        model = SE2_CNNET(n_channels=info["slices"], n_classes=2, N=8, base_channels=32).to(device)
+        model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True))
+        model.eval()
+        
+        total_metrics = {'gt': 0, 'pred': 0, 'tp': 0, 'fp': 0, 'fn': 0, 'frag': 0, 'merge': 0, 'scans': 0}
+        all_vol_gt, all_vol_pred, all_abs_err = [], [], []
+        slice_accuracy_list = []
 
-            m = calculate_lesion_metrics_full(vol_masks, vol_preds, voxel_vol_ml)
-            total_metrics['total_gt'] += m['total_gt_lesions']
-            total_metrics['total_pred'] += m['total_pred_lesions']
-            total_metrics['tp'] += m['tp_lesions']
-            total_metrics['fp'] += m['fp_lesions']
-            total_metrics['fn'] += m['fn_lesions']
-            total_metrics['frag'] += m['fragmented_tracks']
-            total_metrics['merge'] += m['merged_tracks']
-            total_metrics['scans'] += 1
-            
-            all_vol_gt.extend(m['volumes_gt'])
-            all_vol_pred.extend(m['volumes_pred'])
-            all_abs_err.extend(m['abs_errors'])
+        with torch.no_grad():
+            for patient in tqdm(val_patients, desc=f"Evaluating {model_name}"):
+                dataset = PatientVolumeDataset(patient, DATA_PATH, n_slices=info["slices"])
+                if len(dataset) == 0: continue
+                loader = DataLoader(dataset, batch_size=8, shuffle=False)
 
-    # Calculations
-    eps = 1e-7
-    sens = total_metrics['tp'] / (total_metrics['total_gt'] + eps)
-    prec = total_metrics['tp'] / (total_metrics['total_pred'] + eps)
-    f1 = 2 * (prec * sens) / (prec + sens + eps)
-    fp_per_scan = total_metrics['fp'] / (total_metrics['scans'] + eps)
-    
-    frag_pct = total_metrics['frag'] / (total_metrics['total_gt'] + eps)
-    merge_pct = total_metrics['merge'] / (total_metrics['total_gt'] + eps)
-    one_to_one_pct = (total_metrics['tp'] - total_metrics['frag'] - total_metrics['merge']) / (total_metrics['total_gt'] + eps)
-    
-    # ICC Calculation using Pingouin
-    icc_val = "N/A"
-    try:
-        df_icc = pd.DataFrame({
-            'Target': np.tile(np.arange(len(all_vol_gt)), 2),
-            'Rater': np.repeat(['GT', 'Pred'], len(all_vol_gt)),
-            'Score': np.concatenate([all_vol_gt, all_vol_pred])
-        })
-        icc_res = intraclass_corr(data=df_icc, targets='Target', raters='Rater', ratings='Score')
-        icc_val = icc_res.set_index('Type').loc['ICC2', 'ICC']
-    except Exception as e:
-        icc_val = f"Failed (pip install pingouin required)"
+                vol_preds = []
+                vol_masks = []
+                for imgs, masks in loader:
+                    imgs = imgs.to(device)
+                    logits = model(imgs)
+                    preds = torch.argmax(F.softmax(logits, 1), 1)
+                    vol_preds.append(preds.cpu().numpy())
+                    vol_masks.append(masks.squeeze(1).cpu().numpy())
 
-    print("\n" + "="*50)
-    print(" 📈 TABLE 10: MOD-SE(2) LESION TRACKING METRICS")
-    print("="*50)
-    print(f" Total Scans                   : {total_metrics['scans']}")
-    print(f" Total Reference Lesions       : {total_metrics['total_gt']}")
-    print(f" Lesion-wise Sensitivity       : {sens*100:.2f}%")
-    print(f" Lesion-wise Precision         : {prec*100:.2f}%")
-    print(f" Lesion-wise F1 Score          : {f1:.4f}")
-    print(f" False-positive lesions/scan   : {fp_per_scan:.2f}")
-    print(f" Ref tracks recovered as 1     : {max(0, one_to_one_pct)*100:.2f}%")
-    print(f" Fragmented tracks             : {frag_pct*100:.2f}%")
-    print(f" Merged tracks                 : {merge_pct*100:.2f}%")
-    print(f" Volume ICC(2,1)               : {icc_val}")
-    print("="*50)
-    print("Run this to complete Table 10!")
+                vol_preds = np.concatenate(vol_preds, axis=0)
+                vol_masks = np.concatenate(vol_masks, axis=0)
+
+                # Slice-level lesion-count accuracy (exact count match per slice)
+                for s in range(vol_masks.shape[0]):
+                    _, n_g = scipy.ndimage.label(vol_masks[s])
+                    _, n_p = scipy.ndimage.label(vol_preds[s])
+                    slice_accuracy_list.append(1 if n_g == n_p else 0)
+
+                m = calculate_lesion_metrics_full(vol_masks, vol_preds, voxel_vol_ml)
+                total_metrics['gt'] += m['total_gt_lesions']
+                total_metrics['pred'] += m['total_pred_lesions']
+                total_metrics['tp'] += m['tp_lesions']
+                total_metrics['fp'] += m['fp_lesions']
+                total_metrics['fn'] += m['fn_lesions']
+                total_metrics['frag'] += m['fragmented_tracks']
+                total_metrics['merge'] += m['merged_tracks']
+                total_metrics['scans'] += 1
+                
+                all_vol_gt.extend(m['volumes_gt'])
+                all_vol_pred.extend(m['volumes_pred'])
+                all_abs_err.extend(m['abs_errors'])
+
+        eps = 1e-7
+        sens = total_metrics['tp'] / (total_metrics['gt'] + eps)
+        prec = total_metrics['tp'] / (total_metrics['pred'] + eps)
+        f1 = 2 * (prec * sens) / (prec + sens + eps)
+        fp_per_scan = total_metrics['fp'] / (total_metrics['scans'] + eps)
+        frag_pct = total_metrics['frag'] / (total_metrics['gt'] + eps)
+        merge_pct = total_metrics['merge'] / (total_metrics['gt'] + eps)
+        one_to_one_pct = (total_metrics['tp'] - total_metrics['frag'] - total_metrics['merge']) / (total_metrics['gt'] + eps)
+        slice_acc = np.mean(slice_accuracy_list)
+
+        # Volumetric metrics
+        bias, loa_l, loa_u = calculate_bland_altman(all_vol_gt, all_vol_pred)
+        
+        err_small = [e for v, e in zip(all_vol_gt, all_abs_err) if v < 1.0]
+        err_med = [e for v, e in zip(all_vol_gt, all_abs_err) if 1.0 <= v <= 10.0]
+        err_large = [e for v, e in zip(all_vol_gt, all_abs_err) if v > 10.0]
+
+        icc_val = "N/A"
+        if 'intraclass_corr' in globals():
+            try:
+                df_icc = pd.DataFrame({
+                    'Target': np.tile(np.arange(len(all_vol_gt)), 2),
+                    'Rater': np.repeat(['GT', 'Pred'], len(all_vol_gt)),
+                    'Score': np.concatenate([all_vol_gt, all_vol_pred])
+                })
+                icc_res = intraclass_corr(data=df_icc, targets='Target', raters='Rater', ratings='Score')
+                icc_val = icc_res.set_index('Type').loc['ICC2', 'ICC']
+                icc_val = f"{icc_val:.4f}"
+            except Exception:
+                icc_val = "Failed"
+
+        print(f"\n[{model_name}] RESULTS:")
+        print(f" Sens: {sens*100:.2f} | Prec: {prec*100:.2f} | F1: {f1:.4f}")
+        print(f" FP/scan: {fp_per_scan:.2f} | Slice Acc: {slice_acc*100:.2f}%")
+        print(f" 1-track: {max(0, one_to_one_pct)*100:.2f}% | Frag: {frag_pct*100:.2f}% | Merge: {merge_pct*100:.2f}%")
+        print(f" Volume ICC: {icc_val}")
+        print(f" Bland-Altman Bias: {bias:.4f} mL [{loa_l:.4f}, {loa_u:.4f}]")
+        print(f" Abs Error <1mL: {np.mean(err_small) if err_small else 0:.4f} mL")
+        print(f" Abs Error 1-10mL: {np.mean(err_med) if err_med else 0:.4f} mL")
+        print(f" Abs Error >10mL: {np.mean(err_large) if err_large else 0:.4f} mL")
+    print("="*60)
 
 if __name__ == "__main__":
     run_table10_evaluation()
