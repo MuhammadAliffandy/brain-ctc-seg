@@ -43,8 +43,8 @@ def surface_distances_2d(result, reference, voxelspacing=(0.45, 0.45)):
 
 def run_table11():
     DATA_DIR = os.path.expanduser("~/Clara/local_ct_workspace_full")
-    # For Table 11, it says CT-SE(2). Let's use A8_ct_best.pth which is the Mod-SE(2) / CT-SE(2) retrained.
-    WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_ablation/A8_ct_best.pth")
+    # For Table 11 (Figure 8), we must use the CTC weights because the chosen patient (CTC 2) is from the CTC dataset!
+    WEIGHT_PATH = os.path.expanduser("~/Clara/brain-ctc-seg/training/saved_models_25D/se2_unet_ctc_best.pth")
     TARGET_SLICE = 65
     CROP_MARGIN = 40
     ROTATE_K = 3
@@ -83,7 +83,8 @@ def run_table11():
     model.load_state_dict(torch.load(WEIGHT_PATH, map_location=device, weights_only=True))
     model.eval()
 
-    tensor = torch.from_numpy(img_25d).permute(2, 0, 1).unsqueeze(0).to(device)
+    img_25d_norm = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min()) if img_25d.max() > img_25d.min() else img_25d
+    tensor = torch.from_numpy(img_25d_norm).permute(2, 0, 1).unsqueeze(0).to(device)
     
     with torch.no_grad():
         with torch.amp.autocast('cuda'):
