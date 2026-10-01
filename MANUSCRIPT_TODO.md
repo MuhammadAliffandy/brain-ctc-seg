@@ -7,9 +7,9 @@ This document tracks all the missing quantitative values (`XXXX`) in the manuscr
 **Action Required:** Rewrite the HD95 evaluation logic to safely ignore or penalize empty slices without breaking the mean calculation, then recalculate for **ALL** datasets and models.
 
 - [x] **Table 3 (NCCT NTUH):** HD95 for CT-SE(2), HarmonicNet, Mod-SE(2), nnU-Net, U-Net, Att U-Net, TransUNet.
-- [ ] **Table 4 (CECT NTUH):** HD95 for all evaluated models.
-- [ ] **Table 5 (Kaggle Stroke):** HD95 for all evaluated models. *(Requires Public Dataset Path)*
-- [ ] **Table 6 (Kaggle Hemorrhage):** HD95 for all evaluated models. *(Requires Public Dataset Path)*
+- [x] **Table 4 (CECT NTUH):** HD95 for all evaluated models.
+- [x] **Table 5 (Kaggle Stroke):** HD95 for all evaluated models. *(Requires Public Dataset Path)*
+- [x] **Table 6 (Kaggle Hemorrhage):** HD95 for all evaluated models. *(Requires Public Dataset Path)*
 - [x] **Table 7 (Component Ablation):** HD95 for models A1 through A8.
 - [x] **Table 8 (Loss Ablation):** HD95 for Dice, Focal+Dice, Dice+Bound, CT-SE(2).
 - [x] **Table 9 (Context Ablation):** HD95 for 1-slice, 3-slices, 5-slices.
