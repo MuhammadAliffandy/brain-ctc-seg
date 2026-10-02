@@ -267,6 +267,12 @@ def main():
         "Standard U-Net": (StandardUNet, False),
     }
     
+    import sys
+    if len(sys.argv) > 1:
+        target_models = sys.argv[1:]
+        models_to_train = {k: v for k, v in models_to_train.items() if k in target_models}
+        print(f"Hanya men-training model terpilih: {list(models_to_train.keys())}")
+    
     results = []
     
     for name, (ModelClass, is_se2) in models_to_train.items():

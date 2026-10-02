@@ -274,13 +274,19 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     models_to_train = {
-        # "Mod-Seg-SE(2)": (SE2_CNNET, True), # SUDAH DITRAINING SEBELUMNYA
+        "Mod-Seg-SE(2)": (SE2_CNNET, True),
         "HarmonicNet": (HarmonicNet, False),
         "nnU-Net": (nnUNet, False),
         "Attention U-Net": (AttentionUNet, False),
         "TransUNet": (TransUNet, False),
         "Standard U-Net": (StandardUNet, False),
     }
+    
+    import sys
+    if len(sys.argv) > 1:
+        target_models = sys.argv[1:]
+        models_to_train = {k: v for k, v in models_to_train.items() if k in target_models}
+        print(f"Hanya men-training model terpilih: {list(models_to_train.keys())}")
     
     results = []
     csv_path = os.path.join(os.path.dirname(__file__), "public_intra_eval_metrics.csv")
