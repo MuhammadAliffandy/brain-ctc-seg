@@ -229,25 +229,26 @@ def run_table10_evaluation():
         err_med = [e for v, e in zip(all_vol_gt, all_abs_err) if 1.0 <= v <= 10.0]
         err_large = [e for v, e in zip(all_vol_gt, all_abs_err) if v > 10.0]
 
-        icc_val = "N/A"
-        if 'intraclass_corr' in globals():
-            try:
-                df_icc = pd.DataFrame({
-                    'Target': np.tile(np.arange(len(all_vol_gt)), 2),
-                    'Rater': np.repeat(['GT', 'Pred'], len(all_vol_gt)),
-                    'Score': np.concatenate([all_vol_gt, all_vol_pred])
-                })
-                icc_res = intraclass_corr(data=df_icc, targets='Target', raters='Rater', ratings='Score')
-                icc_val = icc_res.set_index('Type').loc['ICC2', 'ICC']
-                icc_val = f"{icc_val:.4f}"
-            except Exception:
-                icc_val = "Failed"
+        icc_val_str = "N/A"
+        try:
+            import pingouin as pg
+            df_icc = pd.DataFrame({
+                'Target': np.tile(np.arange(len(all_vol_gt)), 2),
+                'Rater': np.repeat(['GT', 'Pred'], len(all_vol_gt)),
+                'Score': np.concatenate([all_vol_gt, all_vol_pred])
+            })
+            icc_res = pg.intraclass_corr(data=df_icc, targets='Target', raters='Rater', ratings='Score')
+            icc_val = icc_res.set_index('Type').loc['ICC2', 'ICC']
+            icc_ci95 = icc_res.set_index('Type').loc['ICC2', 'CI95%']
+            icc_val_str = f"{icc_val:.4f} [95% CI {icc_ci95[0]:.4f}-{icc_ci95[1]:.4f}]"
+        except Exception as e:
+            icc_val_str = f"Failed (Error: {e})"
 
         print(f"\n[{model_name}] RESULTS:")
         print(f" Sens: {sens*100:.2f} | Prec: {prec*100:.2f} | F1: {f1:.4f}")
         print(f" FP/scan: {fp_per_scan:.2f} | Slice Acc: {slice_acc*100:.2f}%")
         print(f" 1-track: {max(0, one_to_one_pct)*100:.2f}% | Frag: {frag_pct*100:.2f}% | Merge: {merge_pct*100:.2f}%")
-        print(f" Volume ICC: {icc_val}")
+        print(f" Volume ICC: {icc_val_str}")
         print(f" Bland-Altman Bias: {bias:.4f} mL [{loa_l:.4f}, {loa_u:.4f}]")
         print(f" Abs Error <1mL: {np.mean(err_small) if err_small else 0:.4f} mL")
         print(f" Abs Error 1-10mL: {np.mean(err_med) if err_med else 0:.4f} mL")
