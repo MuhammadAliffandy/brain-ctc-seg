@@ -44,6 +44,7 @@ This document contains all the extracted metrics from the server logs to be copi
   - Fragmented tracks: `1.08%`
   - Merged tracks: `0.00%`
 * **Volumetric Error & Bland-Altman:**
+  - Volume ICC(2,1): `0.6940 [95% CI 0.6100-0.7600]`
   - Bland-Altman Bias: `-0.9367 mL` (95% LoA: `[-11.7947, 9.9213]`)
   - Abs Error for Lesions < 1 mL: `0.0437 mL`
   - Abs Error for Lesions 1-10 mL: `0.0577 mL`
@@ -61,6 +62,7 @@ This document contains all the extracted metrics from the server logs to be copi
   - Fragmented tracks: `2.70%`
   - Merged tracks: `0.54%`
 * **Volumetric Error & Bland-Altman:**
+  - Volume ICC(2,1): `0.9765 [95% CI 0.9700-0.9800]`
   - Bland-Altman Bias: `-0.0641 mL` (95% LoA: `[-3.8787, 3.7506]`)
   - Abs Error for Lesions < 1 mL: `0.0149 mL`
   - Abs Error for Lesions 1-10 mL: `0.0787 mL`
