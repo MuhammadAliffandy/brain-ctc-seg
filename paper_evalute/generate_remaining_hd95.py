@@ -209,6 +209,7 @@ def run_evaluation(table_name, dataset_key, weight_suffix, is_kaggle=False):
     
     if is_kaggle:
         MODELS[0] = ("Mod-Seg-SE(2)", f"Mod-Seg-SE2_{weight_suffix}_best.pth", SE2_CNNET, True)
+        MODELS[1] = ("HarmonicNet", f"HarmonicNet_{weight_suffix}_best.pth", HarmonicNet, True)
         MODELS[3] = ("Standard U-Net", f"Standard_U-Net_{weight_suffix}_best.pth", StandardUNet, False)
         MODELS[4] = ("Attention U-Net", f"Attention_U-Net_{weight_suffix}_best.pth", AttentionUNet, False)
         MODELS[2] = ("nnU-Net", f"nnU-Net_{weight_suffix}_best.pth", nnUNet, False)
