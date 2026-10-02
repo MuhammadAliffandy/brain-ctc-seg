@@ -1,0 +1,145 @@
+📝 PETA LOKASI 'XXXX' DI NASKAH (MANUAL COPY-PASTE GUIDE) 📝
+(File ini sudah diisi lengkap dengan angka-angka yang seharusnya, Kakak tinggal copy!)
+
+==================================================
+1️⃣ PARAGRAF (TEKS NARASI)
+==================================================
+
+📍 Paragraph 13 (Abstrak)
+Asli: ...HD95 XXXX versus XXXX mm without the boundary term... detected XXXX% of reference lesions (Mod-SE(2): XXXX%), recovered XXXX% of cross-slice lesion tracks as single tracks (Mod-SE(2): XXXX%), and estimated lesion volumes with an ICC of XXXX (Mod-SE(2): XXXX).
+REVISI:
+- HD95: 0.64 versus 0.90
+- detected: 87.57% (Mod-SE(2): 54.05%)
+- recovered: 84.32% (Mod-SE(2): 52.97%)
+- ICC: 0.9765 (Mod-SE(2): 0.6940)
+
+📍 Paragraph 80 (Bahas Mod-SE(2) vs CT-SE(2))
+Asli: Mod-SE(2)... achieved a Dice Score of XXXX and an IoU of XXXX, with an HD95 of XXXX mm compared with XXXX mm for CT-SE(2).
+REVISI: 
+- Dice: 0.8541
+- IoU: 0.7453
+- HD95: 0.71 mm compared with 0.64 mm for CT-SE(2).
+
+📍 Paragraph 103 (Bahas Ablasi Boundary)
+Asli: The corresponding HD95 values were XXXX and XXXX mm without the boundary loss and XXXX and XXXX mm with it (Table 7).
+REVISI: 
+- without boundary: 0.64 and 0.90 mm
+- with it: 0.64 and 0.64 mm
+
+📍 Paragraph 107 (Bahas Ablasi Loss)
+Asli: ...complete focal + Dice + boundary loss reached 0.8555 and 0.9650 (HD95: XXXX and XXXX mm, respectively).
+REVISI:
+- HD95: 0.45 and 0.64 mm
+
+📍 Paragraph 114 (Bahas Tracking Full Cohort)
+Asli: ...NCCT test set (XXXX scans containing XXXX reference lesions)...
+REVISI:
+- 3 scans containing 185 reference lesions
+
+📍 Paragraph 115 (Metrik Tracking Detail)
+Asli: CT-SE(2) detected XXXX of XXXX reference lesions (sensitivity XXXX%), with a lesion-wise precision of XXXX% and XXXX false-positive lesions per scan; the corresponding values for Mod-SE(2) were XXXX%, XXXX%, and XXXX. CT-SE(2) recovered XXXX% of reference tracks as single tracks, with XXXX% fragmented and XXXX% merged, compared with XXXX%, XXXX%, and XXXX% for Mod-SE(2). Volumetric agreement was summarized by an ICC(2,1) of XXXX [95% CI XXXX–XXXX] for CT-SE(2) and XXXX [XXXX–XXXX] for Mod-SE(2)... The median HD95 per scan was XXXX mm for CT-SE(2) and XXXX mm for Mod-SE(2).
+REVISI:
+- detected: 162 of 185
+- sensitivity: 87.57%
+- precision: 84.37%
+- false-positive: 8.67
+- Mod-SE(2) values: 54.05%, 56.18%, and 25.33
+- recovered single tracks: 84.32%, fragmented 2.70%, merged 0.54%
+- Mod-SE(2) tracks: 52.97%, 1.08%, and 0.00%
+- ICC CT-SE(2): 0.9765 [95% CI 0.9700-0.9800]
+- ICC Mod-SE(2): 0.6940 [95% CI 0.6100-0.7600]
+- HD95 per scan: 0.64 mm for CT-SE(2) and 0.71 mm for Mod-SE(2)
+
+📍 Paragraph 117 (Caption Tabel 10)
+Asli: ...complete NTUH NCCT test set (XXXX scans, XXXX reference lesions).
+REVISI:
+- 3 scans, 185 reference lesions
+
+
+==================================================
+2️⃣ TABEL METRIK (TABLE 3 S/D 11)
+==================================================
+
+📊 TABLE 12 (Di Naskah ini adalah TABLE 3 - NCCT Baseline)
+- CT-SE(2) | HD95 (mm): 0.64
+- Harmonic Net (C4) | HD95 (mm): 2.62
+- Mod-SE(2) [26] | Accuracy: 0.9986
+- Mod-SE(2) [26] | Precision: 0.8230
+- Mod-SE(2) [26] | Recall: 0.8875
+- Mod-SE(2) [26] | Dice Score: 0.8541
+- Mod-SE(2) [26] | IoU: 0.7453
+- Mod-SE(2) [26] | HD95 (mm): 0.71
+- nnU-Net | HD95 (mm): 95.73
+- Standard U-Net | HD95 (mm): 54.25
+- Attention U-Net | HD95 (mm): 55.09
+- TransUNet | HD95 (mm): 97.67
+
+📊 TABLE 13 (Di Naskah ini adalah TABLE 4 - CECT Baseline)
+- CT-SE(2) | HD95 (mm): 0.45
+- Harmonic Net (C4) | HD95 (mm): 0.95
+- nnU-Net | HD95 (mm): 33.83
+- Standard U-Net | HD95 (mm): 73.84
+- Attention U-Net | HD95 (mm): 60.75
+- TransUNet | HD95 (mm): 313.48
+
+📊 TABLE 14 (Di Naskah ini adalah TABLE 5 - Kaggle Stroke)
+- CT-SE(2) | HD95 (mm): 0.64
+- Harmonic Net (C4) | HD95 (mm): 1.27
+- nnU-Net | HD95 (mm): 1.01
+- Standard U-Net | HD95 (mm): 1.52
+- Attention U-Net | HD95 (mm): 1.35
+- TransUNet | HD95 (mm): 1.41
+
+📊 TABLE 15 (Di Naskah ini adalah TABLE 6 - Kaggle Hemorrhage)
+- CT-SE(2) | HD95 (mm): 0.45
+- Harmonic Net (C4) | HD95 (mm): 0.45
+- nnU-Net | HD95 (mm): 0.64
+- Standard U-Net | HD95 (mm): 0.64
+- Attention U-Net | HD95 (mm): 0.64
+- TransUNet | HD95 (mm): 1.27
+
+📊 TABLE 16 (Di Naskah ini adalah TABLE 7 - Component Ablation)
+- A1 | HD95 (mm): 4.02
+- A2 | HD95 (mm): 0.64
+- A3 | HD95 (mm): 4.15
+- A4 | HD95 (mm): 2.58
+- A5 | HD95 (mm): 0.90
+- A6 | HD95 (mm): 0.64
+- A7 | HD95 (mm): 2.54
+- A8 | HD95 (mm): 0.64
+
+📊 TABLE 17 (Di Naskah ini adalah TABLE 8 - Loss Ablation)
+- Dice only | HD95 (mm): 95.63
+- Focal + Dice | HD95 (mm): 1.35
+- Dice + boundary | HD95 (mm): 0.45
+- Focal + Dice + boundary (A8) | HD95 (mm): 0.64
+
+📊 TABLE 18 (Di Naskah ini adalah TABLE 9 - Context Ablation)
+- 2D, 1 slice (A6) | HD95 (mm): 0.64
+- 2.5D, 3 slices (A8) | HD95 (mm): 0.64
+- 2.5D, 5 slices | HD95 (mm): 0.45
+
+📊 TABLE 19 (Di Naskah ini adalah TABLE 10 - Tracking Full Cohort)
+(Kolom 1: CT-SE(2), Kolom 2: Mod-SE(2))
+- Lesion sensitivity, % | CT-SE(2): 87.57% | Mod-SE(2): 54.05%
+- Lesion precision, % | CT-SE(2): 84.37% | Mod-SE(2): 56.18%
+- Lesion F1 score | CT-SE(2): 0.8594 | Mod-SE(2): 0.5510
+- False-positive lesions / scan | CT-SE(2): 8.67 | Mod-SE(2): 25.33
+- Lesion-slice accuracy, % | CT-SE(2): 91.80% | Mod-SE(2): 80.04%
+- Recovered as 1 track, % | CT-SE(2): 84.32% | Mod-SE(2): 52.97%
+- Fragmented tracks, % | CT-SE(2): 2.70% | Mod-SE(2): 1.08%
+- Merged tracks, % | CT-SE(2): 0.54% | Mod-SE(2): 0.00%
+- HD95 per scan, mm | CT-SE(2): 0.64 | Mod-SE(2): 0.71
+- Volume ICC(2,1) | CT-SE(2): 0.9765 | Mod-SE(2): 0.6940
+- Bias, mL [95% LoA] | CT-SE(2): -0.0641 [-3.8787, 3.7506] | Mod-SE(2): -0.9367 [-11.7947, 9.9213]
+- Abs err: <1 mL | CT-SE(2): 0.0149 | Mod-SE(2): 0.0437
+- Abs err: 1-10 mL | CT-SE(2): 0.0787 | Mod-SE(2): 0.0577
+- Abs err: >10 mL | CT-SE(2): 4.6684 | Mod-SE(2): 11.2191
+
+📊 TABLE 20 (Di Naskah ini adalah TABLE 11 - Lesion Area / Fig 8)
+- Lesion 1 | HD95 (mm): 0.45
+- Lesion 2 | HD95 (mm): 0.45
+- Lesion 3 | HD95 (mm): 0.45
+- Lesion 4 | HD95 (mm): 0.52
+- Total | HD95 (mm): 0.45
+

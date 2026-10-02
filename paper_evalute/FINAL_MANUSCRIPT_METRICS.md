@@ -98,7 +98,7 @@ This document contains all the extracted metrics from the server logs to be copi
 *(Values extracted from `remaining_hd95_v2.log`)*
 
 - **Mod-Seg-SE(2):** `0.64 mm`
-- **HarmonicNet:** *(N/A - Model not evaluated)*
+- **HarmonicNet:** `1.27 mm`
 - **nnU-Net:** `1.01 mm`
 - **Standard U-Net:** `1.52 mm`
 - **Attention U-Net:** `1.35 mm`
@@ -110,10 +110,11 @@ This document contains all the extracted metrics from the server logs to be copi
 *(Values extracted from `remaining_hd95_v3.log`)*
 
 - **Mod-Seg-SE(2):** `0.45 mm`
+- **HarmonicNet:** `0.45 mm`
 - **nnU-Net:** `0.64 mm`
+- **Standard U-Net:** `0.64 mm`
 - **Attention U-Net:** `0.64 mm`
-- **TransUNet:** `1.27 mm`
-- *(HarmonicNet and Standard U-Net were not evaluated)*
+- **TransUNet:** `1.35 mm`
 
 ---
 
