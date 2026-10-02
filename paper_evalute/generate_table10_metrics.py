@@ -238,8 +238,8 @@ def run_table10_evaluation():
                 'Score': np.concatenate([all_vol_gt, all_vol_pred])
             })
             icc_res = pg.intraclass_corr(data=df_icc, targets='Target', raters='Rater', ratings='Score')
-            icc_val = icc_res.set_index('Type').loc['ICC2', 'ICC']
-            icc_ci95 = icc_res.set_index('Type').loc['ICC2', 'CI95%']
+            icc_val = icc_res.set_index('Type').loc['ICC(A,1)', 'ICC']
+            icc_ci95 = icc_res.set_index('Type').loc['ICC(A,1)', 'CI95']
             icc_val_str = f"{icc_val:.4f} [95% CI {icc_ci95[0]:.4f}-{icc_ci95[1]:.4f}]"
         except Exception as e:
             icc_val_str = f"Failed (Error: {e})"
