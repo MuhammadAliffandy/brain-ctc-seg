@@ -55,7 +55,7 @@ def main():
         val_df   = df.drop(train_df.index)
         
         val_dataset_native = CTBrain25DDatasetNoResize(val_df, DATA_PATH)
-        val_loader_native = DataLoader(val_dataset_native, batch_size=8, shuffle=False, num_workers=2)
+        val_loader_native = DataLoader(val_dataset_native, batch_size=2, shuffle=False, num_workers=2)
     else:
         # For Kaggle datasets
         sys.path.append(os.path.join(os.path.dirname(__file__), "..", "public_dataset"))
@@ -83,7 +83,7 @@ def main():
             _, test_samples = get_kaggle_hemorrhage_splits()
             
         test_dataset = KaggleDataset(test_samples)
-        val_loader_native = val_loader_256 = DataLoader(test_dataset, batch_size=8, shuffle=False, num_workers=2)
+        val_loader_native = val_loader_256 = DataLoader(test_dataset, batch_size=2, shuffle=False, num_workers=2)
         SAVE_DIR = get_valid_path("brain-ctc-seg/public_dataset/saved_models")
 
     # ─── 2. Model Registry ───

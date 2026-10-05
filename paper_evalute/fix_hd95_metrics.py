@@ -91,7 +91,7 @@ def main():
             _, test_samples = get_kaggle_hemorrhage_splits(test_size=0.15, seed=42)
             test_dataset = IntraHemorrhageDataset(test_samples)
             
-        test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=2, shuffle=False)
         SAVE_DIR = get_valid_path("brain-ctc-seg/public_dataset/saved_models")
         is_3d = False
         spacing = (0.976, 0.976) # ~1mm for 256x256
@@ -143,7 +143,7 @@ def main():
                 for patient in tqdm(val_patients, desc=f"Eval {name}"):
                     dataset = PatientVolumeDataset(patient, DATA_PATH, n_slices=3)
                     if len(dataset) == 0: continue
-                    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+                    loader = DataLoader(dataset, batch_size=2, shuffle=False)
                     vol_preds, vol_masks = [], []
                     for imgs, masks in loader:
                         imgs = imgs.to(device)
