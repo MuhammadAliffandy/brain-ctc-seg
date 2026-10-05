@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "training"))
 from evaluate_trained_models import (
     SE2_CNNET, HarmonicNet, nnUNet, AttentionUNet, TransUNet, StandardUNet,
-    CTBrain25DDatasetNoResize, CTBrain25DDataset, filter_df_by_dataset, load_se2_weights
+    CTBrain25DDatasetNoResize, filter_df_by_dataset, load_se2_weights
 )
 
 def get_valid_path(rel_path):
@@ -55,10 +55,7 @@ def main():
         val_df   = df.drop(train_df.index)
         
         val_dataset_native = CTBrain25DDatasetNoResize(val_df, DATA_PATH)
-        val_dataset_256    = CTBrain25DDataset(val_df, DATA_PATH)
-        
         val_loader_native = DataLoader(val_dataset_native, batch_size=8, shuffle=False, num_workers=2)
-        val_loader_256    = DataLoader(val_dataset_256, batch_size=8, shuffle=False, num_workers=2)
     else:
         # For Kaggle datasets
         sys.path.append(os.path.join(os.path.dirname(__file__), "..", "public_dataset"))
@@ -118,7 +115,7 @@ def main():
             continue
             
         print(f"Inference: {name}...")
-        loader = val_loader_native if use_se2_loader else val_loader_256
+        loader = val_loader_native
         model = ModelClass(n_channels=3, n_classes=2)
         
         # Load weights
@@ -143,7 +140,12 @@ def main():
                 masks = masks.to(device, non_blocking=True)
                 
                 with torch.amp.autocast('cuda'):
+                    if not use_se2_loader and ds in ['ct', 'ctc']:
+                        imgs = F.interpolate(imgs, size=(256, 256), mode='bilinear', align_corners=False)
                     logits = model(imgs)
+                    if not use_se2_loader and ds in ['ct', 'ctc']:
+                        orig_h, orig_w = masks.shape[-2:]
+                        logits = F.interpolate(logits, size=(orig_h, orig_w), mode='bilinear', align_corners=False)
                 
                 # Get exact probabilities for positive class (tumor)
                 probs = F.softmax(logits, dim=1)[:, 1, :, :]
