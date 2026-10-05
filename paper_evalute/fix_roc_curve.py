@@ -116,15 +116,16 @@ def main():
             
         print(f"Inference: {name}...")
         loader = val_loader_native
-        model = ModelClass(n_channels=3, n_classes=2)
         
         # Load weights
         if name.startswith("CT-SE(2)"):
             if ds in ['ct', 'ctc']:
-                model = load_se2_weights(model, weight_path, device)
+                model = load_se2_weights(ModelClass, weight_path, device)
             else:
+                model = ModelClass(n_channels=3, n_classes=2, N=8, base_channels=32)
                 model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True))
         else:
+            model = ModelClass(n_channels=3, n_classes=2)
             model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True))
             
         model.to(device)
