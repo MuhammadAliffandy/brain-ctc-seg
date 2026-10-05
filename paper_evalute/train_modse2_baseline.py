@@ -171,8 +171,8 @@ def main():
     train_set_cect = CTBrainAblationDataset(train_df, DATA_PATH, n_slices=1, transform=None)
     val_set_cect = CTBrainAblationDataset(val_df, DATA_PATH, n_slices=1, transform=None)
     
-    train_loader_cect = DataLoader(train_set_cect, batch_size=16, shuffle=True, num_workers=2)
-    val_loader_cect = DataLoader(val_set_cect, batch_size=16, shuffle=False, num_workers=2)
+    train_loader_cect = DataLoader(train_set_cect, batch_size=2, shuffle=True, num_workers=2)
+    val_loader_cect = DataLoader(val_set_cect, batch_size=2, shuffle=False, num_workers=2)
     
     train_and_eval("CECT (Table 4)", train_loader_cect, val_loader_cect, val_loader_cect, device, get_valid_path("brain-ctc-seg/training/saved_models/ModSE2_A2_cect.pth"))
     
@@ -195,16 +195,16 @@ def main():
             
     root_dir = kagglehub.dataset_download("ozguraslank/brain-stroke-ct-dataset")
     train_samples, test_samples = get_kaggle_splits(root_dir)
-    train_loader_stroke = DataLoader(Kaggle1CDataset(train_samples), batch_size=16, shuffle=True, num_workers=2)
-    test_loader_stroke = DataLoader(Kaggle1CDataset(test_samples), batch_size=16, shuffle=False, num_workers=2)
+    train_loader_stroke = DataLoader(Kaggle1CDataset(train_samples), batch_size=2, shuffle=True, num_workers=2)
+    test_loader_stroke = DataLoader(Kaggle1CDataset(test_samples), batch_size=2, shuffle=False, num_workers=2)
     
     train_and_eval("Kaggle Stroke (Table 5)", train_loader_stroke, test_loader_stroke, test_loader_stroke, device, get_valid_path("brain-ctc-seg/training/saved_models/ModSE2_A2_stroke.pth"))
     
     # 3. Kaggle Hemorrhage
     from train_all_intra_hemorrhage import get_kaggle_hemorrhage_splits
     train_samples_h, test_samples_h = get_kaggle_hemorrhage_splits()
-    train_loader_hemo = DataLoader(Kaggle1CDataset(train_samples_h), batch_size=16, shuffle=True, num_workers=2)
-    test_loader_hemo = DataLoader(Kaggle1CDataset(test_samples_h), batch_size=16, shuffle=False, num_workers=2)
+    train_loader_hemo = DataLoader(Kaggle1CDataset(train_samples_h), batch_size=2, shuffle=True, num_workers=2)
+    test_loader_hemo = DataLoader(Kaggle1CDataset(test_samples_h), batch_size=2, shuffle=False, num_workers=2)
     
     train_and_eval("Kaggle Hemorrhage (Table 6)", train_loader_hemo, test_loader_hemo, test_loader_hemo, device, get_valid_path("brain-ctc-seg/training/saved_models/ModSE2_A2_hemo.pth"))
     
