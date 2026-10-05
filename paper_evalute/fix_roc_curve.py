@@ -126,7 +126,14 @@ def main():
                 model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True))
         else:
             model = ModelClass(n_channels=3, n_classes=2)
-            model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True))
+            ckpt = torch.load(weight_path, map_location=device, weights_only=True)
+            if name.startswith("TransUNet"):
+                new_ckpt = {}
+                for k, v in ckpt.items():
+                    new_k = k.replace("norm1", "n1").replace("norm2", "n2")
+                    new_ckpt[new_k] = v
+                ckpt = new_ckpt
+            model.load_state_dict(ckpt, strict=False)
             
         model.to(device)
         model.eval()

@@ -127,7 +127,14 @@ def main():
             continue
 
         model = ModelClass(n_channels=3, n_classes=2, N=8, base_channels=32).to(device) if is_se2 and name != "HarmonicNet" else ModelClass(n_channels=3, n_classes=2, N=4, base_channels=32).to(device) if name == "HarmonicNet" else ModelClass(n_channels=3, n_classes=2).to(device)
-        model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True), strict=False)
+        ckpt = torch.load(weight_path, map_location=device, weights_only=True)
+        if name.startswith("TransUNet"):
+            new_ckpt = {}
+            for k, v in ckpt.items():
+                new_k = k.replace("norm1", "n1").replace("norm2", "n2")
+                new_ckpt[new_k] = v
+            ckpt = new_ckpt
+        model.load_state_dict(ckpt, strict=False)
         model.eval()
 
         hd95_list = []
