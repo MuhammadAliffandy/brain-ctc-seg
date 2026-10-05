@@ -76,6 +76,12 @@ REVISI:
 
 📊 TABLE 13 (Di Naskah ini adalah TABLE 4 - CECT Baseline)
 - CT-SE(2) | HD95 (mm): 0.45
+- Mod-SE(2) [26] | Accuracy: XXXX
+- Mod-SE(2) [26] | Precision: XXXX
+- Mod-SE(2) [26] | Recall: XXXX
+- Mod-SE(2) [26] | Dice Score: XXXX
+- Mod-SE(2) [26] | IoU: XXXX
+- Mod-SE(2) [26] | HD95 (mm): XXXX
 - Harmonic Net (C4) | HD95 (mm): 0.95
 - nnU-Net | HD95 (mm): 33.83
 - Standard U-Net | HD95 (mm): 73.84
@@ -84,6 +90,12 @@ REVISI:
 
 📊 TABLE 14 (Di Naskah ini adalah TABLE 5 - Kaggle Stroke)
 - CT-SE(2) | HD95 (mm): 0.64
+- Mod-SE(2) [26] | Accuracy: XXXX
+- Mod-SE(2) [26] | Precision: XXXX
+- Mod-SE(2) [26] | Recall: XXXX
+- Mod-SE(2) [26] | Dice Score: XXXX
+- Mod-SE(2) [26] | IoU: XXXX
+- Mod-SE(2) [26] | HD95 (mm): XXXX
 - Harmonic Net (C4) | HD95 (mm): 1.27
 - nnU-Net | HD95 (mm): 1.01
 - Standard U-Net | HD95 (mm): 1.52
@@ -92,6 +104,12 @@ REVISI:
 
 📊 TABLE 15 (Di Naskah ini adalah TABLE 6 - Kaggle Hemorrhage)
 - CT-SE(2) | HD95 (mm): 0.45
+- Mod-SE(2) [26] | Accuracy: XXXX
+- Mod-SE(2) [26] | Precision: XXXX
+- Mod-SE(2) [26] | Recall: XXXX
+- Mod-SE(2) [26] | Dice Score: XXXX
+- Mod-SE(2) [26] | IoU: XXXX
+- Mod-SE(2) [26] | HD95 (mm): XXXX
 - Harmonic Net (C4) | HD95 (mm): 0.45
 - nnU-Net | HD95 (mm): 0.64
 - Standard U-Net | HD95 (mm): 0.64
