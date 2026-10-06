@@ -14,21 +14,33 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 import timm
 
 # =====================================================================
-# 1. KONFIGURASI (UBAH SESUAI PATH DI SERVER DGX)
+# 1. KONFIGURASI PATH OTOMATIS
 # =====================================================================
 NUM_CLASSES = 4 # MES 0, 1, 2, 3
 IMAGE_SIZE = 224
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def get_valid_path(rel_path):
+    candidates = [
+        os.path.expanduser(f"~/Clara/Colonomind/{rel_path}"),
+        f"/raid/D13K48009/Clara/Colonomind/{rel_path}",
+        os.path.expanduser(f"~/Colonomind/{rel_path}"),
+        f"/raid/D13K48009/Colonomind/{rel_path}",
+        os.path.expanduser(f"~/Documents/PukulEnam/ColonomindComparasionWeb/{rel_path}") # Local fallback
+    ]
+    for c in candidates:
+        if os.path.exists(c): return c
+    return candidates[0]
+
 MODEL_PATHS = {
-    'ResNet-50': '/path/to/resnet50.pth',
-    'DenseNet-121': '/path/to/densenet121.pth',
-    'EfficientNet-B4': '/path/to/efficientnet_b4.pth',
-    'ConvNeXt-Tiny': '/path/to/convnext_tiny.pth',
-    'ViT-B/16': '/path/to/vit_b_16.pth'
+    'ResNet-50': get_valid_path('models/resnet50.pth'),
+    'DenseNet-121': get_valid_path('models/densenet121.pth'),
+    'EfficientNet-B4': get_valid_path('models/efficientnet_b4.pth'),
+    'ConvNeXt-Tiny': get_valid_path('models/convnext_tiny.pth'),
+    'ViT-B/16': get_valid_path('models/vit_b_16.pth')
 }
 
-DATASET_CSV_OR_FOLDER = '/path/to/test_dataset' 
+DATASET_CSV_OR_FOLDER = get_valid_path('test_dataset') 
 
 # =====================================================================
 # 2. FUNGSI INISIALISASI MODEL
