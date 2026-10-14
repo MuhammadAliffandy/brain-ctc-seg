@@ -912,35 +912,25 @@ def main():
         st.image(ensemble_overlay, use_container_width=True, caption=f"Ensemble Mask ({voting_mode})")
 
     with c_ens_metrics:
-        st.markdown("""
-        <div class="ensemble-banner">
-            <h4 style="color:#58a6ff; margin:0 0 10px 0;">Consensus Summary</h4>
-            <div style="font-size:1.1rem; font-weight:600; color:#e6edf3; margin-bottom:8px;">
-                Strategy: <span style="color:#388bfd;">""" + voting_mode + """</span>
-            </div>
-            <div style="font-size:0.95rem; color:#8b949e; margin-bottom:12px;">
-                Slice: <b>""" + slice_name + """</b>
-            </div>
-            <hr style="border-color:#30363d; margin: 10px 0;">
-            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-                <span style="color:#8b949e;">Lesion Area:</span>
-                <span style="color:#e6edf3; font-weight:700;">""" + f"{ensemble_data['tumor_pixels']} px" + """</span>
-            </div>
-            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-                <span style="color:#8b949e;">Model Consensus:</span>
-                <span style="color:#3fb950; font-weight:700;">""" + f"{ensemble_data['consensus_ratio']*100:.1f}%" + """</span>
-            </div>
-            <div style="display:flex; justify-content:space-between;">
-                <span style="color:#8b949e;">Agreement Status:</span>
-                <span style="color:""" + ("#3fb950" if ensemble_data['consensus_ratio'] >= 0.70 else "#f85149") + """; font-weight:700;">""" + \
-                ("High Concordance 🟢" if ensemble_data['consensus_ratio'] >= 0.70 else "Borderline Ambiguity 🟡") + """</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if gt_mask is not None:
-            ens_dice, ens_iou = compute_dice_iou(ensemble_data["ensemble_mask"], gt_mask)
-            st.metric("Ensemble Dice Score vs Groundtruth", f"{ens_dice:.4f}", delta=f"IoU: {ens_iou:.4f}")
+        with st.container(border=True):
+            st.subheader("Consensus Summary")
+            st.markdown(f"**Strategy**: `{voting_mode}`")
+            st.caption(f"Slice: **{slice_name}**")
+            st.divider()
+            
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("Lesion Area", f"{ensemble_data['tumor_pixels']} px")
+            with m2:
+                st.metric("Consensus", f"{ensemble_data['consensus_ratio']*100:.1f}%")
+                
+            status_text = "🟢 High Concordance" if ensemble_data['consensus_ratio'] >= 0.70 else "🟡 Borderline Ambiguity"
+            st.markdown(f"**Agreement Status**: {status_text}")
+            
+            if gt_mask is not None:
+                st.divider()
+                ens_dice, ens_iou = compute_dice_iou(ensemble_data["ensemble_mask"], gt_mask)
+                st.metric("Ensemble Dice vs GT", f"{ens_dice:.4f}", delta=f"IoU: {ens_iou:.4f}")
 
     with c_ens_heatmap:
         st.markdown("**Inter-Model Agreement Heatmap (0 - 6 Models):**")
@@ -948,81 +938,55 @@ def main():
         st.image(heatmap_img, use_container_width=True, caption="Agreement Intensity: Blue (Low) → Yellow → Red (6/6 Unanimous)")
 
     # ── Clinical Recommendation Card ──
+    st.markdown("---")
     consensus_level = ensemble_data['consensus_ratio']
     if ensemble_data['tumor_pixels'] == 0:
-        rec_title = "No Pathological Lesion Detected"
-        rec_class = "alert-agree"
-        rec_text = "All benchmark models agree that no acute or subacute focal lesion is present in this slice."
+        st.success(
+            "### 🏥 Diagnostic Consensus: No Pathological Lesion Detected\n\n"
+            "All benchmark models agree that no acute or subacute focal lesion is present in this slice."
+        )
     elif consensus_level >= 0.75:
-        rec_title = "High Inter-Model Concordance (Confident Localization)"
-        rec_class = "alert-agree"
-        rec_text = (
-            f"<b>{ensemble_data['unanimous_pixels']} pixels ({consensus_level*100:.1f}%)</b> share unanimous agreement across all models. "
+        st.success(
+            "### 🏥 Diagnostic Consensus: High Inter-Model Concordance (Confident Localization)\n\n"
+            f"**{ensemble_data['unanimous_pixels']} pixels ({consensus_level*100:.1f}%)** share unanimous agreement across all models. "
             "The lesion core is clearly demarcated with high structural boundary integrity. Recommended for automated volume estimation and tracking."
         )
     else:
-        rec_title = "Border Ambiguity & Uncertainty Flagged"
-        rec_class = "alert-high"
-        rec_text = (
-            f"Consensus ratio is <b>{consensus_level*100:.1f}%</b>. While the primary lesion nidus is detected, "
+        st.warning(
+            "### 🏥 Diagnostic Consensus: Border Ambiguity & Uncertainty Flagged\n\n"
+            f"Consensus ratio is **{consensus_level*100:.1f}%**. While the primary lesion nidus is detected, "
             "significant boundary disagreement was observed between equivariant (Mod-Seg-SE2) and standard architectures. "
             "Specialist radiologist review recommended to verify peripheral edema vs active lesion margins."
         )
-
-    st.markdown(f"""
-    <div class="recommendation-box {rec_class}">
-        <h4 style="margin:0 0 6px 0;">🏥 Diagnostic Consensus Interpretation: {rec_title}</h4>
-        <div>{rec_text}</div>
-    </div>
-    """, unsafe_allow_html=True)
 
     # ── SECTION 3: INDIVIDUAL MODEL BREAKDOWN ──
     st.markdown("---")
     st.subheader("3. Individual Model Segmentation Comparison (6 Models)")
 
-    # Display Metrics summary cards in responsive grid
-    cards_html = '<div class="model-card-grid">'
-    for meta in MODEL_METADATA:
+    m_cols = st.columns(6)
+    for idx, meta in enumerate(MODEL_METADATA):
         m_key = meta["key"]
         p = predictions[m_key]
         px_count = int(np.sum(p["mask"] > 0))
         is_prop = (m_key == "se2")
-        prop_class = " proposed" if is_prop else ""
-        
-        dice_str = ""
-        if gt_mask is not None:
-            m_dice, _ = compute_dice_iou(p["mask"], gt_mask)
-            dice_str = f"<div class='model-metric'>{m_dice:.3f} <span style='font-size:0.75rem; font-weight:normal; color:#8b949e;'>Dice</span></div>"
-        else:
-            dice_str = f"<div class='model-metric'>{px_count} <span style='font-size:0.75rem; font-weight:normal; color:#8b949e;'>px</span></div>"
-
-        cards_html += f"""
-        <div class="model-card{prop_class}">
-            <div class="model-name">{meta['name']}</div>
-            <div style="font-size:0.75rem; color:#8b949e; margin-bottom:6px;">{meta['type']}</div>
-            {dice_str}
-            <div class="model-status">{px_count} px flagged</div>
-        </div>
-        """
-    cards_html += '</div>'
-    st.markdown(cards_html, unsafe_allow_html=True)
-
-    # 6-Column Visual Display (Input, GT, and 6 Models)
-    st.markdown("**Side-by-Side Visual Inspection:**")
-    m_cols = st.columns(6)
-
-    for idx, meta in enumerate(MODEL_METADATA):
-        m_key = meta["key"]
-        p = predictions[m_key]
         overlay = overlay_mask(img_gray, p["mask"], color=hex_to_rgb(meta["color"]), alpha=0.45)
+
         with m_cols[idx]:
-            st.markdown(f"**{meta['name']}**")
-            st.image(overlay, use_container_width=True)
-            if gt_mask is not None:
-                d, iou = compute_dice_iou(p["mask"], gt_mask)
-                st.caption(f"Dice: **{d:.4f}** | IoU: **{iou:.4f}**")
-            else:
-                st.caption(f"Area: **{np.sum(p['mask'] > 0)} px**")
+            with st.container(border=True):
+                if is_prop:
+                    st.markdown(f"**:green[{meta['name']}]** ⭐")
+                else:
+                    st.markdown(f"**{meta['name']}**")
+                st.caption(meta['type'])
+                
+                st.image(overlay, use_container_width=True)
+                
+                if gt_mask is not None:
+                    d, iou = compute_dice_iou(p["mask"], gt_mask)
+                    st.metric("Dice Score", f"{d:.3f}", delta=f"IoU: {iou:.3f}")
+                else:
+                    st.metric("Lesion Area", f"{px_count} px")
+                st.caption(f"Flagged: **{px_count} px**")
 
     # ── SECTION 4: UNCERTAINTY & AGREEMENT DISTRIBUTION ──
     st.markdown("---")
