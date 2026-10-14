@@ -786,27 +786,84 @@ def main():
                 img_gray = np.array(pil_img).astype(np.float32) / 255.0
                 tensor_input = torch.from_numpy(np.stack([img_gray, img_gray, img_gray], axis=0)).unsqueeze(0).float()
     else:
-        # Generate clean synthetic brain scan slice with realistic ventricle / tissue skull boundary
-        H, W = 256, 256
-        y, x = np.ogrid[:H, :W]
-        center_y, center_x = H // 2, W // 2
-        # Brain skull ellipse
-        brain_mask = ((x - center_x) ** 2) / (100 ** 2) + ((y - center_y) ** 2) / (115 ** 2) <= 1.0
-        base_scan = np.zeros((H, W), dtype=np.float32)
-        base_scan[brain_mask] = 0.35 + 0.05 * np.sin(x[brain_mask] / 10.0)
-        # Ventricles
-        v_mask = (((x - center_x - 12) ** 2) / (12 ** 2) + ((y - center_y) ** 2) / (30 ** 2) <= 1.0) | \
-                 (((x - center_x + 12) ** 2) / (12 ** 2) + ((y - center_y) ** 2) / (30 ** 2) <= 1.0)
-        base_scan[v_mask] = 0.12
-        # Reference Lesion (Tumor or stroke)
-        lesion_mask = ((x - (center_x + 40)) ** 2) / (22 ** 2) + ((y - (center_y - 20)) ** 2) / (20 ** 2) <= 1.0
-        base_scan[lesion_mask] = 0.78
-        # Noise
-        noise = np.random.normal(0, 0.02, (H, W)).astype(np.float32)
-        img_gray = np.clip(base_scan + noise, 0.0, 1.0)
-        gt_mask = lesion_mask.astype(np.uint8)
-        tensor_input = torch.from_numpy(np.stack([img_gray, img_gray, img_gray], axis=0)).unsqueeze(0).float()
-        slice_name = f"{current_cfg['key'].upper()}_Synthetic_Reference_Case_042"
+        # Check if real dataset slice exists on DGX server
+        real_sample = None
+        if current_cfg.get("prefix"):
+            data_dirs = [
+                "/raid/D13K48009/Clara/local_ct_workspace_full",
+                os.path.expanduser("~/Clara/local_ct_workspace_full"),
+                os.path.expanduser("~/local_ct_workspace_full")
+            ]
+            for dd in data_dirs:
+                if not os.path.exists(dd): continue
+                for folder in sorted(os.listdir(dd)):
+                    if not folder.upper().startswith(current_cfg["prefix"].upper()): continue
+                    fpath = os.path.join(dd, folder)
+                    if not os.path.isdir(fpath): continue
+                    imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')])
+                    for i, fname in enumerate(imgs):
+                        img_path = os.path.join(fpath, fname)
+                        mask_path = img_path.replace('_img.npy', '_mask.npy')
+                        if os.path.exists(mask_path):
+                            m = np.load(mask_path)
+                            if 200 < np.sum(m) < 15000:
+                                i_prev = max(0, i - 1)
+                                i_next = min(len(imgs) - 1, i + 1)
+                                real_sample = dict(
+                                    name=f"{folder}_{fname.replace('_img.npy', '')}",
+                                    prev=os.path.join(fpath, imgs[i_prev]),
+                                    curr=img_path,
+                                    next=os.path.join(fpath, imgs[i_next]),
+                                    mask=mask_path
+                                )
+                                break
+                    if real_sample: break
+                if real_sample: break
+
+        if real_sample is not None:
+            # Load real patient slice from DGX workspace
+            i0 = np.load(real_sample['prev']).astype(np.float32)
+            i1 = np.load(real_sample['curr']).astype(np.float32)
+            i2 = np.load(real_sample['next']).astype(np.float32)
+            m_raw = np.load(real_sample['mask']).astype(np.uint8)
+            
+            img_25d = np.stack([i0, i1, i2], axis=-1)
+            if img_25d.max() > img_25d.min():
+                img_25d = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min())
+                
+            mid = i1.copy()
+            if mid.max() > 2.0: mid = mid / 255.0
+            mid = np.clip(mid, 0.0, 1.0)
+            
+            # Crop margins to center brain tissue
+            cm = 35
+            img_gray = mid[cm:-cm, cm:-cm].copy()
+            gt_mask  = m_raw[cm:-cm, cm:-cm].copy()
+            inp_crop = img_25d[cm:-cm, cm:-cm].copy()
+            tensor_input = torch.from_numpy(inp_crop).permute(2, 0, 1).unsqueeze(0).float()
+            slice_name = f"DGX_Patient_{real_sample['name']}"
+        else:
+            # Generate clean synthetic brain scan slice with realistic ventricle / tissue skull boundary
+            H, W = 256, 256
+            y, x = np.mgrid[:H, :W]
+            center_y, center_x = H // 2, W // 2
+            # Brain skull ellipse
+            brain_mask = ((x - center_x) ** 2) / (100 ** 2) + ((y - center_y) ** 2) / (115 ** 2) <= 1.0
+            base_scan = np.zeros((H, W), dtype=np.float32)
+            base_scan[brain_mask] = 0.35 + 0.05 * np.sin(x[brain_mask] / 10.0)
+            # Ventricles
+            v_mask = (((x - center_x - 12) ** 2) / (12 ** 2) + ((y - center_y) ** 2) / (30 ** 2) <= 1.0) | \
+                     (((x - center_x + 12) ** 2) / (12 ** 2) + ((y - center_y) ** 2) / (30 ** 2) <= 1.0)
+            base_scan[v_mask] = 0.12
+            # Reference Lesion (Tumor or stroke)
+            lesion_mask = ((x - (center_x + 40)) ** 2) / (22 ** 2) + ((y - (center_y - 20)) ** 2) / (20 ** 2) <= 1.0
+            base_scan[lesion_mask] = 0.78
+            # Noise
+            noise = np.random.normal(0, 0.02, (H, W)).astype(np.float32)
+            img_gray = np.clip(base_scan + noise, 0.0, 1.0)
+            gt_mask = lesion_mask.astype(np.uint8)
+            tensor_input = torch.from_numpy(np.stack([img_gray, img_gray, img_gray], axis=0)).unsqueeze(0).float()
+            slice_name = f"{current_cfg['key'].upper()}_Reference_Case_042"
 
     if img_gray is None:
         st.warning("Please upload a scan or select a preset to begin analysis.")
