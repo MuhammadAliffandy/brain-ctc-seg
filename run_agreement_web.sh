@@ -22,7 +22,7 @@ fi
 if ! command -v streamlit &> /dev/null
 then
     echo "⚠️ Streamlit not found in current PATH. Attempting python3 -m streamlit..."
-    python3 -m streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    python3 -m streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
 else
-    streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
 fi
