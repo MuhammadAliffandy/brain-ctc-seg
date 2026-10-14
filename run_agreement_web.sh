@@ -12,6 +12,12 @@ PORT=${1:-8502}
 echo "🧠 Starting Brain CT Multi-Model Agreement Dashboard on port $PORT..."
 echo "📂 Working directory: $(pwd)"
 
+# Check and install plotly if missing
+if ! python3 -c "import plotly" &> /dev/null; then
+    echo "📦 Installing plotly for interactive charts..."
+    pip install plotly --quiet || true
+fi
+
 # Check if streamlit is available
 if ! command -v streamlit &> /dev/null
 then

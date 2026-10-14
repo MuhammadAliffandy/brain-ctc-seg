@@ -18,8 +18,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
+import matplotlib.pyplot as plt
+
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
 
 # ─────────────────────────────────────────────────────────────────
 # 1. PAGE SETUP & STYLES (Aesthetic Clinical Dark Theme)
@@ -971,24 +977,39 @@ def main():
         agreement_flat = ensemble_data["agreement_counts"][ensemble_data["agreement_counts"] > 0]
         if len(agreement_flat) > 0:
             counts = [np.sum(agreement_flat == k) for k in range(1, ensemble_data["num_models"] + 1)]
-            fig_hist = go.Figure(data=[
-                go.Bar(
-                    x=[f"{k}/6 Models" for k in range(1, ensemble_data["num_models"] + 1)],
-                    y=counts,
-                    marker_color=['#4c566a', '#5e81ac', '#81a1c1', '#88c0d0', '#a3be8c', '#3fb950'],
-                    text=[f"{c} px" for c in counts],
-                    textposition='auto'
+            x_labels = [f"{k}/6 Models" for k in range(1, ensemble_data["num_models"] + 1)]
+            palette = ['#4c566a', '#5e81ac', '#81a1c1', '#88c0d0', '#a3be8c', '#3fb950']
+            
+            if HAS_PLOTLY:
+                fig_hist = go.Figure(data=[
+                    go.Bar(
+                        x=x_labels,
+                        y=counts,
+                        marker_color=palette,
+                        text=[f"{c} px" for c in counts],
+                        textposition='auto'
+                    )
+                ])
+                fig_hist.update_layout(
+                    title="Pixel Count by Model Agreement Level",
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    height=260,
+                    margin=dict(l=20, r=20, t=35, b=20)
                 )
-            ])
-            fig_hist.update_layout(
-                title="Pixel Count by Model Agreement Level",
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                height=260,
-                margin=dict(l=20, r=20, t=35, b=20)
-            )
-            st.plotly_chart(fig_hist, use_container_width=True)
+                st.plotly_chart(fig_hist, use_container_width=True)
+            else:
+                fig, ax = plt.subplots(figsize=(6, 3), facecolor='#161b22')
+                ax.set_facecolor('#161b22')
+                bars = ax.bar(x_labels, counts, color=palette)
+                ax.bar_label(bars, fmt='%d px', color='#e6edf3', padding=3, fontsize=8)
+                ax.set_title("Pixel Count by Model Agreement Level", color='#58a6ff', fontsize=10, fontweight='bold')
+                ax.tick_params(colors='#8b949e', labelsize=8)
+                for sp in ax.spines.values(): sp.set_color('#30363d')
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
 
     with col_chart2:
         # Comparison bar chart of predicted tumor pixel volume per model
@@ -996,24 +1017,37 @@ def main():
         model_areas = [int(np.sum(predictions[m["key"]]["mask"] > 0)) for m in MODEL_METADATA] + [ensemble_data["tumor_pixels"]]
         colors = [m["color"] for m in MODEL_METADATA] + ["#388bfd"]
 
-        fig_bar = go.Figure(data=[
-            go.Bar(
-                x=model_names,
-                y=model_areas,
-                marker_color=colors,
-                text=[f"{a} px" for a in model_areas],
-                textposition='auto'
+        if HAS_PLOTLY:
+            fig_bar = go.Figure(data=[
+                go.Bar(
+                    x=model_names,
+                    y=model_areas,
+                    marker_color=colors,
+                    text=[f"{a} px" for a in model_areas],
+                    textposition='auto'
+                )
+            ])
+            fig_bar.update_layout(
+                title="Tumor Segment Area per Model (Pixels)",
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                height=260,
+                margin=dict(l=20, r=20, t=35, b=20)
             )
-        ])
-        fig_bar.update_layout(
-            title="Tumor Segment Area per Model (Pixels)",
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            height=260,
-            margin=dict(l=20, r=20, t=35, b=20)
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            fig, ax = plt.subplots(figsize=(6, 3), facecolor='#161b22')
+            ax.set_facecolor('#161b22')
+            bars = ax.bar(model_names, model_areas, color=colors)
+            ax.bar_label(bars, fmt='%d px', color='#e6edf3', padding=3, fontsize=8)
+            ax.set_title("Tumor Segment Area per Model (Pixels)", color='#58a6ff', fontsize=10, fontweight='bold')
+            ax.tick_params(colors='#8b949e', labelsize=8)
+            plt.xticks(rotation=20, ha='right')
+            for sp in ax.spines.values(): sp.set_color('#30363d')
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
 
     # ── Footer ──
     st.markdown("---")
