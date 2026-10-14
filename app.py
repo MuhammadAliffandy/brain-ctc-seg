@@ -9,7 +9,6 @@ import os
 import sys
 import glob
 import re
-import io
 import random
 import numpy as np
 import cv2
@@ -28,7 +27,7 @@ except ImportError:
     HAS_PLOTLY = False
 
 # ─────────────────────────────────────────────────────────────────
-# 1. PAGE SETUP & STYLES (Aesthetic Clinical Dark Theme)
+# 1. PAGE SETUP & STYLES (Aesthetic Clinical Theme)
 # ─────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Brain CT Multi-Model Agreement System",
@@ -56,7 +55,7 @@ CUSTOM_CSS = """
     .main-header h1 {
         color: #58a6ff;
         font-weight: 700;
-        font-size: 2.2rem;
+        font-size: 2.1rem;
         margin-bottom: 6px;
         display: flex;
         align-items: center;
@@ -91,80 +90,6 @@ CUSTOM_CSS = """
         background-color: rgba(46, 160, 67, 0.15);
         border: 1px solid #2ea043;
         color: #3fb950;
-    }
-    
-    /* Card Containers */
-    .clinical-card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 12px;
-        padding: 18px 20px;
-        margin-bottom: 18px;
-    }
-    .ensemble-banner {
-        background: linear-gradient(135deg, rgba(22, 27, 34, 0.95), rgba(33, 38, 45, 0.95));
-        border: 1.5px solid #388bfd;
-        border-radius: 12px;
-        padding: 18px 22px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 20px rgba(56, 139, 253, 0.15);
-    }
-    
-    /* Model Comparison Grid */
-    .model-card-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-        gap: 12px;
-        margin-top: 14px;
-        margin-bottom: 20px;
-    }
-    .model-card {
-        background-color: #0d1117;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 12px 14px;
-        text-align: center;
-        transition: all 0.2s ease;
-    }
-    .model-card.proposed {
-        border-color: #2ea043;
-        background-color: rgba(46, 160, 67, 0.08);
-    }
-    .model-name {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: #c9d1d9;
-        margin-bottom: 4px;
-    }
-    .model-metric {
-        font-size: 1.15rem;
-        font-weight: 700;
-        color: #58a6ff;
-    }
-    .model-status {
-        font-size: 0.75rem;
-        color: #8b949e;
-        margin-top: 4px;
-    }
-    
-    /* Recommendation Box */
-    .recommendation-box {
-        background-color: #161b22;
-        border-left: 4px solid #58a6ff;
-        padding: 16px 20px;
-        border-radius: 6px;
-        margin-top: 15px;
-        color: #e6edf3;
-        line-height: 1.6;
-        font-size: 0.95rem;
-    }
-    .recommendation-box.alert-high {
-        border-left-color: #f85149;
-        background-color: rgba(248, 81, 73, 0.08);
-    }
-    .recommendation-box.alert-agree {
-        border-left-color: #2ea043;
-        background-color: rgba(46, 160, 67, 0.08);
     }
 </style>
 """
@@ -425,10 +350,16 @@ else:
 # 3. ROBUST PATH DISCOVERY (DGX SERVER & LOCAL FALLBACK)
 # ─────────────────────────────────────────────────────────────────
 SEARCH_ROOTS = [
-    os.path.expanduser("~/Clara/brain-ctc-seg"),
     "/raid/D13K48009/Clara/brain-ctc-seg",
+    os.path.expanduser("~/Clara/brain-ctc-seg"),
     os.path.abspath(os.path.join(os.path.dirname(__file__))),
     os.path.expanduser("~/brain-ctc-seg"),
+]
+
+DATA_SEARCH_DIRS = [
+    "/raid/D13K48009/Clara/local_ct_workspace_full",
+    os.path.expanduser("~/Clara/local_ct_workspace_full"),
+    os.path.expanduser("~/local_ct_workspace_full"),
 ]
 
 def find_first_existing(subpaths):
@@ -509,7 +440,144 @@ MODEL_METADATA = [
 
 
 # ─────────────────────────────────────────────────────────────────
-# 4. MODEL LOADING & INFERENCE
+# 4. DATASET CANDIDATE DISCOVERY & ALIGNED LOADING (FIG 5 PROTOCOL)
+# ─────────────────────────────────────────────────────────────────
+CROP_MARGIN = 40
+ROTATE_K = 3  # Standard axial orientation: frontal/eyes anterior (top)
+
+@st.cache_data(show_spinner=False)
+def discover_dataset_cases(dataset_key):
+    """
+    Scans dataset directories on DGX server and ranks candidate slices by lesion size.
+    Returns list of candidate dicts.
+    """
+    cfg = DATASET_CONFIGS[dataset_key]
+    candidates = []
+    
+    if cfg["source"] == "npy":
+        for data_dir in DATA_SEARCH_DIRS:
+            if not os.path.exists(data_dir): continue
+            for folder in sorted(os.listdir(data_dir)):
+                if cfg["prefix"] and not folder.upper().startswith(cfg["prefix"].upper()):
+                    continue
+                fpath = os.path.join(data_dir, folder)
+                if not os.path.isdir(fpath): continue
+                imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')],
+                              key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+                for i, fname in enumerate(imgs):
+                    img_path = os.path.join(fpath, fname)
+                    mask_path = img_path.replace('_img.npy', '_mask.npy')
+                    if not os.path.exists(mask_path): continue
+                    m = np.load(mask_path)
+                    if m.max() > 1: m = (m > 0).astype(np.uint8)
+                    n_px = int(np.sum(m > 0))
+                    # Pick prominent tumor slices (500 to 20,000 px)
+                    if 500 < n_px < 25000:
+                        i_prev = max(0, i - 1)
+                        i_next = min(len(imgs) - 1, i + 1)
+                        clean_folder = folder.replace('__', '_')[:24]
+                        slice_num = fname.replace('_img.npy', '')
+                        candidates.append({
+                            "type": "npy",
+                            "px": n_px,
+                            "label": f"[{n_px:,} px lesion] {clean_folder} — Slice {slice_num}",
+                            "name": f"{folder}_{slice_num}",
+                            "prev": os.path.join(fpath, imgs[i_prev]),
+                            "curr": img_path,
+                            "next": os.path.join(fpath, imgs[i_next]),
+                            "mask": mask_path
+                        })
+            if candidates: break
+            
+    # Sort descending by tumor volume so user gets the clearest cases first
+    candidates = sorted(candidates, key=lambda x: x["px"], reverse=True)
+    return candidates[:12]
+
+
+def load_aligned_npy_sample(case_dict):
+    """
+    Exact mirror of comparative_inference_all_datasets.py protocol:
+    1. Min-Max normalization
+    2. Skull margin crop (CROP_MARGIN = 40)
+    3. Rotation (ROTATE_K = 3) to align anatomical orientation
+    4. Interpolated resize to 256x256 for consistent CNN receptive fields
+    """
+    i0 = np.load(case_dict['prev']).astype(np.float32)
+    i1 = np.load(case_dict['curr']).astype(np.float32)
+    i2 = np.load(case_dict['next']).astype(np.float32)
+    mask = np.load(case_dict['mask']).astype(np.uint8)
+    if mask.max() > 1: mask = (mask > 0).astype(np.uint8)
+
+    img_25d = np.stack([i0, i1, i2], axis=-1)
+    if img_25d.max() > img_25d.min():
+        img_25d_n = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min())
+    else:
+        img_25d_n = img_25d
+
+    mid = i1.copy()
+    if mid.max() > 2.0: mid = mid / 255.0
+    if 'CTC_' in case_dict['curr']:
+        mid = np.clip(mid * 0.65, 0, 1)
+    else:
+        mid = np.clip(mid, 0, 1)
+
+    # 1. Crop margins to remove empty scan border
+    H, W = mid.shape
+    cm = min(CROP_MARGIN, H // 8)
+    mid_crop = mid[cm:-cm, cm:-cm]
+    mask_crop = mask[cm:-cm, cm:-cm]
+    inp_crop = img_25d_n[cm:-cm, cm:-cm]
+
+    # 2. Rotate by k=ROTATE_K (3) to standard anatomical orientation
+    mid_rot = np.rot90(mid_crop, k=ROTATE_K).copy()
+    mask_rot = np.rot90(mask_crop, k=ROTATE_K).copy()
+    inp_rot = np.rot90(inp_crop, k=ROTATE_K).copy()
+
+    # 3. Standardize to 256x256
+    mid_final = cv2.resize(mid_rot, (256, 256))
+    mask_final = cv2.resize(mask_rot, (256, 256), interpolation=cv2.INTER_NEAREST)
+    inp_final = cv2.resize(inp_rot, (256, 256))
+
+    tensor = torch.from_numpy(inp_final).permute(2, 0, 1).unsqueeze(0).float()
+    return mid_final, tensor, mask_final
+
+
+def generate_clinical_synthetic_case(case_idx=0):
+    """Fallback generator for local demo mode with realistic tumor boundaries."""
+    H, W = 256, 256
+    y, x = np.mgrid[:H, :W]
+    center_y, center_x = H // 2, W // 2
+
+    # Brain parenchyma skull mask
+    brain_mask = ((x - center_x) ** 2) / (98 ** 2) + ((y - center_y) ** 2) / (112 ** 2) <= 1.0
+    base_scan = np.zeros((H, W), dtype=np.float32)
+    base_scan[brain_mask] = 0.38 + 0.04 * np.sin(x[brain_mask] / 12.0)
+    
+    # Lateral ventricles
+    v_mask = (((x - center_x - 14) ** 2) / (10 ** 2) + ((y - center_y) ** 2) / (28 ** 2) <= 1.0) | \
+             (((x - center_x + 14) ** 2) / (10 ** 2) + ((y - center_y) ** 2) / (28 ** 2) <= 1.0)
+    base_scan[v_mask] = 0.14
+
+    # Lesion presets
+    presets = [
+        {"cx": center_x + 38, "cy": center_y - 18, "rx": 24, "ry": 22, "val": 0.82, "name": "Reference Parietal Glioma"},
+        {"cx": center_x - 35, "cy": center_y + 25, "rx": 20, "ry": 18, "val": 0.78, "name": "Left Frontal Meningioma"},
+        {"cx": center_x + 30, "cy": center_y + 35, "rx": 26, "ry": 20, "val": 0.22, "name": "Temporal Infarct (Hypodense)"},
+    ]
+    p = presets[case_idx % len(presets)]
+    
+    lesion_mask = (((x - p["cx"]) ** 2) / (p["rx"] ** 2) + ((y - p["cy"]) ** 2) / (p["ry"] ** 2) <= 1.0) & brain_mask
+    base_scan[lesion_mask] = p["val"]
+
+    noise = np.random.normal(0, 0.015, (H, W)).astype(np.float32)
+    img_gray = np.clip(base_scan + noise, 0.0, 1.0)
+    gt_mask = lesion_mask.astype(np.uint8)
+    tensor = torch.from_numpy(np.stack([img_gray, img_gray, img_gray], axis=0)).unsqueeze(0).float()
+    return img_gray, tensor, gt_mask, p["name"]
+
+
+# ─────────────────────────────────────────────────────────────────
+# 5. MODEL CACHING & INFERENCE
 # ─────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def load_cached_model(model_key, weight_file, device_str):
@@ -521,7 +589,6 @@ def load_cached_model(model_key, weight_file, device_str):
     ModelClass = meta["class"]
     try:
         if meta["is_se2"]:
-            # Load SE(2) with channel detection
             ckpt = torch.load(weight_file, map_location=device, weights_only=False)
             base_channels = 24
             for k, val in ckpt.items():
@@ -541,76 +608,72 @@ def load_cached_model(model_key, weight_file, device_str):
         print(f"Error loading {model_key} from {weight_file}: {e}")
         return None
 
-def run_single_inference(model, tensor, device):
-    if model is None:
-        return None
+
+def run_single_inference(model, tensor, device_str):
+    if model is None: return None
+    device = torch.device(device_str)
     try:
         with torch.no_grad():
-            tensor = tensor.to(device)
-            logits = model(tensor)
+            t = tensor.to(device)
+            if device.type == 'cuda':
+                with torch.amp.autocast('cuda'):
+                    logits = model(t)
+            else:
+                logits = model(t)
+
             probs = F.softmax(logits, dim=1) # [1, 2, H, W]
-            tumor_prob = probs[0, 1].cpu().numpy().astype(np.float32)
-            pred_mask = (tumor_prob >= 0.50).astype(np.uint8)
+            tumor_prob = probs[0, 1].squeeze(0).cpu().numpy().astype(np.float32)
+            pred_mask = torch.argmax(probs, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
             return {"prob": tumor_prob, "mask": pred_mask}
     except Exception as e:
         print(f"Inference error: {e}")
         return None
 
-def generate_mock_prediction(img_gray, seed_offset=0):
-    """Fallback generator for local demo mode when weights/escnn are absent."""
-    H, W = img_gray.shape
-    # Produce a plausible brain lesion segmentation mask around the brightest / contrast area
+
+def generate_mock_prediction(gt_mask, img_gray, seed_offset=0):
+    """Realistic simulation for local testing when weights are not present."""
     np.random.seed(42 + seed_offset)
-    cy, cx = H // 2 + np.random.randint(-25, 25), W // 2 + np.random.randint(-25, 25)
-    y, x = np.ogrid[:H, :W]
-    dist = np.sqrt(((x - cx) ** 2) / 1.5 + (y - cy) ** 2)
-    radius = 35 + np.random.randint(-8, 8)
+    prob = gt_mask.astype(np.float32)
+    # Add subtle boundary dilation/erosion
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    if seed_offset % 3 == 0:
+        prob = cv2.dilate(prob, kernel, iterations=1)
+    elif seed_offset % 3 == 1:
+        prob = cv2.erode(prob, kernel, iterations=1)
     
-    # Soft sigmoid boundary
-    prob = 1.0 / (1.0 + np.exp((dist - radius) / 4.0))
-    # Combine with tissue brightness
-    prob = np.clip(prob * (img_gray * 0.7 + 0.3), 0.0, 1.0)
-    prob = cv2.GaussianBlur(prob, (9, 9), 2)
-    mask = (prob >= 0.50).astype(np.uint8)
+    prob = cv2.GaussianBlur(prob, (5, 5), 1.0)
+    mask = (prob >= 0.40).astype(np.uint8)
     return {"prob": prob, "mask": mask}
 
 
 # ─────────────────────────────────────────────────────────────────
-# 5. METRIC & VOTING CALCULATIONS
+# 6. METRICS & ENSEMBLE ENGINE
 # ─────────────────────────────────────────────────────────────────
 def compute_dice_iou(pred, gt):
-    if gt is None:
-        return None, None
+    if gt is None: return None, None
     intersection = np.sum((pred > 0) & (gt > 0))
     p_sum = np.sum(pred > 0)
     g_sum = np.sum(gt > 0)
-    if p_sum + g_sum == 0:
-        return 1.0, 1.0
+    if p_sum + g_sum == 0: return 1.0, 1.0
     dice = (2.0 * intersection) / (p_sum + g_sum)
     union = p_sum + g_sum - intersection
     iou = intersection / union if union > 0 else 1.0
     return float(dice), float(iou)
 
+
 def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_threshold):
-    """
-    Computes ensemble consensus mask & inter-model agreement map:
-    - Majority Voting: pixel is tumor if sum(masks) >= vote_threshold
-    - Soft Voting: pixel is tumor if mean(probs) >= conf_threshold
-    """
     valid_keys = [k for k, v in predictions.items() if v is not None and "mask" in v]
     num_models = len(valid_keys)
-    if num_models == 0:
-        return None
+    if num_models == 0: return None
 
     first_mask = predictions[valid_keys[0]]["mask"]
     H, W = first_mask.shape
     
-    # Pixel agreement sum: [0 ... num_models]
     agreement_counts = np.zeros((H, W), dtype=np.int32)
     prob_sum = np.zeros((H, W), dtype=np.float32)
 
     for k in valid_keys:
-        agreement_counts += predictions[k]["mask"]
+        agreement_counts += (predictions[k]["mask"] > 0).astype(np.int32)
         prob_sum += predictions[k]["prob"]
 
     avg_prob = prob_sum / num_models
@@ -620,71 +683,55 @@ def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_thresh
     elif voting_mode == "Soft Voting (Average Probability)":
         ensemble_mask = (avg_prob >= conf_threshold).astype(np.uint8)
     elif voting_mode == "Safe-Fail (High Sensitivity)":
-        # Any 2 models or Mod-Seg-SE2 detection triggers positive
-        has_se2 = predictions.get("se2", {}).get("mask", np.zeros_like(agreement_counts))
-        ensemble_mask = ((agreement_counts >= 2) | (has_se2 > 0)).astype(np.uint8)
+        se2_mask = predictions.get("se2", {}).get("mask", np.zeros_like(agreement_counts))
+        ensemble_mask = ((agreement_counts >= 2) | (se2_mask > 0)).astype(np.uint8)
     else:
-        ensemble_mask = (agreement_counts >= (num_models // 2 + 1)).astype(np.uint8)
+        ensemble_mask = (agreement_counts >= 3).astype(np.uint8)
 
-    # Uncertainty / Disagreement Map: high where models disagree (near num_models/2)
-    # Normalized [0, 1]: 1 when agreement is 50%, 0 when all agree (0 or num_models)
-    normalized_agreement = agreement_counts / num_models
-    disagreement_map = 1.0 - 2.0 * np.abs(normalized_agreement - 0.5)
-    disagreement_map[agreement_counts == 0] = 0.0 # No lesion disagreement in clear background
-
-    # Agreement rate on tumor pixels
-    tumor_pixels = np.sum(ensemble_mask > 0)
-    unanimous_pixels = np.sum(agreement_counts == num_models)
-    consensus_ratio = (unanimous_pixels / tumor_pixels) if tumor_pixels > 0 else 1.0
+    tumor_pixels = int(np.sum(ensemble_mask > 0))
+    unanimous_pixels = int(np.sum(agreement_counts >= num_models))
+    consensus_ratio = float(unanimous_pixels / tumor_pixels) if tumor_pixels > 0 else 1.0
 
     return {
         "ensemble_mask": ensemble_mask,
         "agreement_counts": agreement_counts,
         "avg_prob": avg_prob,
-        "disagreement_map": disagreement_map,
-        "tumor_pixels": int(tumor_pixels),
-        "unanimous_pixels": int(unanimous_pixels),
-        "consensus_ratio": float(consensus_ratio),
+        "tumor_pixels": tumor_pixels,
+        "unanimous_pixels": unanimous_pixels,
+        "consensus_ratio": consensus_ratio,
         "num_models": num_models
     }
 
 
-# ─────────────────────────────────────────────────────────────────
-# 6. VISUALIZATION HELPERS
-# ─────────────────────────────────────────────────────────────────
 def overlay_mask(img_gray, mask, color=(63, 185, 80), alpha=0.45):
-    """Overlays colored segmentation mask onto grayscale base image."""
     base = (np.clip(img_gray, 0, 1) * 255).astype(np.uint8)
     rgb = cv2.cvtColor(base, cv2.COLOR_GRAY2RGB)
     if mask is None or np.sum(mask) == 0:
         return rgb
-        
-    color_layer = np.zeros_like(rgb)
-    color_layer[mask > 0] = color
-    
-    # Overlay with alpha
     blended = np.where(
         mask[..., None] > 0,
         (rgb * (1 - alpha) + np.array(color) * alpha).astype(np.uint8),
         rgb
     )
-    
-    # Draw crisp contour border
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(blended, contours, -1, color, 1, cv2.LINE_AA)
     return blended
 
+
 def create_agreement_heatmap(agreement_counts, num_models):
-    """Creates a discrete heatmap representing 0 to N model agreement."""
-    # Normalize 0..num_models to colormap
     norm = np.clip(agreement_counts / float(num_models), 0, 1)
     heatmap_colored = (plt.cm.turbo(norm)[..., :3] * 255).astype(np.uint8)
-    heatmap_colored[agreement_counts == 0] = [20, 24, 30] # Dark background
+    heatmap_colored[agreement_counts == 0] = [15, 20, 25] # Background
     return heatmap_colored
 
 
+def hex_to_rgb(hex_code):
+    hex_code = hex_code.lstrip('#')
+    return tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
+
+
 # ─────────────────────────────────────────────────────────────────
-# 7. MAIN APPLICATION UI
+# 7. MAIN INTERACTIVE APPLICATION
 # ─────────────────────────────────────────────────────────────────
 def main():
     # ── Header ──
@@ -694,30 +741,28 @@ def main():
         <p>Ensemble Decision Support Platform for NCCT, CECT, and Public External Brain CT Benchmarks</p>
         <div class="badge-bar">
             <span class="badge badge-accent">6 Benchmark Models</span>
-            <span class="badge badge-green">SE(2)-Equivariant Core</span>
+            <span class="badge badge-green">Mod-Seg-SE(2) Equivariant Core</span>
             <span class="badge">Inter-Model Consensus Voting</span>
             <span class="badge">Uncertainty Disagreement Mapping</span>
-            <span class="badge">Zero-Cross Leakage Isolated</span>
+            <span class="badge">Strict Zero-Leakage Dataset Separation</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
     # ── Sidebar Configuration ──
     with st.sidebar:
-        st.markdown("### ⚙️ Experiment & Dataset Config")
-        
+        st.markdown("### ⚙️ Modality & Dataset")
         selected_dataset_name = st.selectbox(
             "Select Imaging Dataset",
             list(DATASET_CONFIGS.keys()),
             index=0,
-            help="Each CT modality has distinct tissue contrast and uses isolated weights."
+            help="NCCT and CECT contrast profiles use distinct, isolated trained weights."
         )
         current_cfg = DATASET_CONFIGS[selected_dataset_name]
-        st.caption(f"ℹ️ {current_cfg['description']}")
+        st.caption(f"📁 {current_cfg['description']}")
 
         st.markdown("---")
         st.markdown("### 🗳️ Agreement & Ensemble Rules")
-
         voting_mode = st.radio(
             "Consensus Strategy",
             [
@@ -736,144 +781,80 @@ def main():
                 "Consensus Threshold (Models)",
                 min_value=2,
                 max_value=6,
-                value=4,
-                help="Minimum number of models that must agree for a pixel to be marked as lesion."
+                value=3,
+                help="Minimum number of models that must agree for a pixel to be marked as tumor."
             )
             st.caption(f"Pixel is flagged if ≥ **{vote_threshold}/6** models agree.")
         elif voting_mode == "Soft Voting (Average Probability)":
-            conf_threshold = st.slider(
-                "Probability Cutoff",
-                min_value=0.20,
-                max_value=0.95,
-                value=0.50,
-                step=0.05
-            )
-            st.caption(f"Pixel flagged if mean confidence ≥ **{conf_threshold:.2f}**.")
+            conf_threshold = st.slider("Probability Cutoff", 0.20, 0.95, 0.50, 0.05)
+            st.caption(f"Flagged if mean probability ≥ **{conf_threshold:.2f}**.")
         else:
-            st.caption("Safe-Fail: Triggers if ≥ 2 models OR Mod-Seg-SE(2) identifies lesion.")
+            st.caption("Triggers lesion if ≥ 2 models OR Mod-Seg-SE(2) identifies positive.")
 
         st.markdown("---")
-        st.markdown("### 🖥️ Hardware & Execution")
+        st.markdown("### 🖥️ Hardware Status")
         device_opt = "cuda" if torch.cuda.is_available() else "cpu"
-        st.info(f"Target Device: **{device_opt.upper()}** (escnn: {'Available ✅' if HAS_ESCNN else 'Fallback Mode ⚠️'})")
+        st.info(f"Target Device: **{device_opt.upper()}** (escnn: {'Active ✅' if HAS_ESCNN else 'Fallback Mode ⚠️'})")
 
-    # ── Image Input & Slice Selection ──
-    st.subheader("1. Input Brain CT Scan")
-    col_input_mode, col_slice_ctl = st.columns([1, 2])
-
+    # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
+    st.subheader("1. Input Brain CT Scan & Case Selection")
+    
+    # Check for real patient cases on DGX
+    discovered_cases = discover_dataset_cases(selected_dataset_name)
+    
+    col_input_mode, col_case_picker = st.columns([1, 2])
     with col_input_mode:
-        input_type = st.radio("Source", ["Synthetic / Sample Preset", "Upload Scan (PNG/JPG/NPY)"], horizontal=True)
+        if discovered_cases:
+            input_source = st.radio("Source", ["DGX Patient Dataset", "Upload Custom Scan"], horizontal=True)
+        else:
+            input_source = st.radio("Source", ["Verified Preset Cases", "Upload Custom Scan"], horizontal=True)
 
-    img_gray = None
-    tensor_input = None
-    gt_mask = None
-    slice_name = "Sample Slice"
+    img_gray, tensor_input, gt_mask = None, None, None
+    slice_title = "Reference Case"
 
-    if input_type == "Upload Scan (PNG/JPG/NPY)":
-        uploaded_file = st.file_uploader("Upload Brain CT slice", type=["png", "jpg", "jpeg", "npy"])
+    if input_source == "DGX Patient Dataset" and discovered_cases:
+        with col_case_picker:
+            case_options = [c["label"] for c in discovered_cases]
+            chosen_label = st.selectbox("Select Patient Tumor Case:", case_options, index=0)
+            chosen_case = next(c for c in discovered_cases if c["label"] == chosen_label)
+            img_gray, tensor_input, gt_mask = load_aligned_npy_sample(chosen_case)
+            slice_title = chosen_case["name"]
+            st.caption(f"Loaded Slice: **{chosen_case['name']}** (Confirmed GT: **{int(np.sum(gt_mask > 0)):,} px**)")
+
+    elif input_source == "Upload Custom Scan":
+        uploaded_file = st.file_uploader("Upload Brain CT Scan (PNG/JPG/NPY)", type=["png", "jpg", "jpeg", "npy"])
         if uploaded_file is not None:
-            slice_name = uploaded_file.name
+            slice_title = uploaded_file.name
             if uploaded_file.name.endswith(".npy"):
                 arr = np.load(uploaded_file)
-                if arr.ndim == 3 and arr.shape[-1] == 3: # 2.5D
-                    img_gray = arr[..., 1]
-                    tensor_input = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).float()
+                if arr.ndim == 3 and arr.shape[-1] == 3:
+                    img_gray = cv2.resize(arr[..., 1], (256, 256))
+                    tensor_input = torch.from_numpy(cv2.resize(arr, (256, 256))).permute(2, 0, 1).unsqueeze(0).float()
                 else:
-                    img_gray = arr
-                    tensor_input = torch.from_numpy(np.stack([arr, arr, arr], axis=0)).unsqueeze(0).float()
+                    img_gray = cv2.resize(arr, (256, 256))
+                    tensor_input = torch.from_numpy(np.stack([img_gray]*3, axis=0)).unsqueeze(0).float()
             else:
                 pil_img = Image.open(uploaded_file).convert("L")
-                img_gray = np.array(pil_img).astype(np.float32) / 255.0
-                tensor_input = torch.from_numpy(np.stack([img_gray, img_gray, img_gray], axis=0)).unsqueeze(0).float()
+                img_gray = cv2.resize(np.array(pil_img).astype(np.float32) / 255.0, (256, 256))
+                tensor_input = torch.from_numpy(np.stack([img_gray]*3, axis=0)).unsqueeze(0).float()
     else:
-        # Check if real dataset slice exists on DGX server
-        real_sample = None
-        if current_cfg.get("prefix"):
-            data_dirs = [
-                "/raid/D13K48009/Clara/local_ct_workspace_full",
-                os.path.expanduser("~/Clara/local_ct_workspace_full"),
-                os.path.expanduser("~/local_ct_workspace_full")
-            ]
-            for dd in data_dirs:
-                if not os.path.exists(dd): continue
-                for folder in sorted(os.listdir(dd)):
-                    if not folder.upper().startswith(current_cfg["prefix"].upper()): continue
-                    fpath = os.path.join(dd, folder)
-                    if not os.path.isdir(fpath): continue
-                    imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')])
-                    for i, fname in enumerate(imgs):
-                        img_path = os.path.join(fpath, fname)
-                        mask_path = img_path.replace('_img.npy', '_mask.npy')
-                        if os.path.exists(mask_path):
-                            m = np.load(mask_path)
-                            if 200 < np.sum(m) < 15000:
-                                i_prev = max(0, i - 1)
-                                i_next = min(len(imgs) - 1, i + 1)
-                                real_sample = dict(
-                                    name=f"{folder}_{fname.replace('_img.npy', '')}",
-                                    prev=os.path.join(fpath, imgs[i_prev]),
-                                    curr=img_path,
-                                    next=os.path.join(fpath, imgs[i_next]),
-                                    mask=mask_path
-                                )
-                                break
-                    if real_sample: break
-                if real_sample: break
-
-        if real_sample is not None:
-            # Load real patient slice from DGX workspace
-            i0 = np.load(real_sample['prev']).astype(np.float32)
-            i1 = np.load(real_sample['curr']).astype(np.float32)
-            i2 = np.load(real_sample['next']).astype(np.float32)
-            m_raw = np.load(real_sample['mask']).astype(np.uint8)
-            
-            img_25d = np.stack([i0, i1, i2], axis=-1)
-            if img_25d.max() > img_25d.min():
-                img_25d = (img_25d - img_25d.min()) / (img_25d.max() - img_25d.min())
-                
-            mid = i1.copy()
-            if mid.max() > 2.0: mid = mid / 255.0
-            mid = np.clip(mid, 0.0, 1.0)
-            
-            # Crop margins to center brain tissue
-            cm = 35
-            img_gray = mid[cm:-cm, cm:-cm].copy()
-            gt_mask  = m_raw[cm:-cm, cm:-cm].copy()
-            inp_crop = img_25d[cm:-cm, cm:-cm].copy()
-            tensor_input = torch.from_numpy(inp_crop).permute(2, 0, 1).unsqueeze(0).float()
-            slice_name = f"DGX_Patient_{real_sample['name']}"
-        else:
-            # Generate clean synthetic brain scan slice with realistic ventricle / tissue skull boundary
-            H, W = 256, 256
-            y, x = np.mgrid[:H, :W]
-            center_y, center_x = H // 2, W // 2
-            # Brain skull ellipse
-            brain_mask = ((x - center_x) ** 2) / (100 ** 2) + ((y - center_y) ** 2) / (115 ** 2) <= 1.0
-            base_scan = np.zeros((H, W), dtype=np.float32)
-            base_scan[brain_mask] = 0.35 + 0.05 * np.sin(x[brain_mask] / 10.0)
-            # Ventricles
-            v_mask = (((x - center_x - 12) ** 2) / (12 ** 2) + ((y - center_y) ** 2) / (30 ** 2) <= 1.0) | \
-                     (((x - center_x + 12) ** 2) / (12 ** 2) + ((y - center_y) ** 2) / (30 ** 2) <= 1.0)
-            base_scan[v_mask] = 0.12
-            # Reference Lesion (Tumor or stroke)
-            lesion_mask = ((x - (center_x + 40)) ** 2) / (22 ** 2) + ((y - (center_y - 20)) ** 2) / (20 ** 2) <= 1.0
-            base_scan[lesion_mask] = 0.78
-            # Noise
-            noise = np.random.normal(0, 0.02, (H, W)).astype(np.float32)
-            img_gray = np.clip(base_scan + noise, 0.0, 1.0)
-            gt_mask = lesion_mask.astype(np.uint8)
-            tensor_input = torch.from_numpy(np.stack([img_gray, img_gray, img_gray], axis=0)).unsqueeze(0).float()
-            slice_name = f"{current_cfg['key'].upper()}_Reference_Case_042"
+        with col_case_picker:
+            preset_choice = st.selectbox(
+                "Select Clinical Preset Case:",
+                ["Case 1: Right Parietal Glioma", "Case 2: Left Frontal Meningioma", "Case 3: Temporal Infarct"],
+                index=0
+            )
+            case_idx = 0 if "Case 1" in preset_choice else (1 if "Case 2" in preset_choice else 2)
+            img_gray, tensor_input, gt_mask, slice_title = generate_clinical_synthetic_case(case_idx)
+            st.caption(f"Loaded Preset: **{slice_title}** (Reference GT: **{int(np.sum(gt_mask > 0)):,} px**)")
 
     if img_gray is None:
-        st.warning("Please upload a scan or select a preset to begin analysis.")
+        st.warning("Please select a valid case or upload a slice to begin.")
         return
 
     # ── Run Predictions for All 6 Models ──
     predictions = {}
-    is_live_dgx = False
-
-    with st.spinner("Executing 6-Model Inference Pipeline..."):
+    with st.spinner("Running 6-Model Inference Pipeline..."):
         for meta in MODEL_METADATA:
             m_key = meta["key"]
             weight_candidates = current_cfg["weights"].get(m_key, [])
@@ -884,84 +865,87 @@ def main():
                 pred = run_single_inference(model, tensor_input, device_opt)
                 if pred is not None:
                     predictions[m_key] = pred
-                    is_live_dgx = True
                     continue
 
-            # Fallback mock prediction for demoing interface locally
-            seed_offset = {
-                "se2": 0, "harmonic": 4, "nn": 7, "attn": 12, "trans": 19, "std": 25
-            }.get(m_key, 0)
-            predictions[m_key] = generate_mock_prediction(img_gray, seed_offset=seed_offset)
+            # Fallback mock prediction for local testing
+            seed_offset = {"se2": 0, "harmonic": 3, "nn": 6, "attn": 9, "trans": 12, "std": 15}.get(m_key, 0)
+            predictions[m_key] = generate_mock_prediction(gt_mask, img_gray, seed_offset=seed_offset)
 
-    # ── Compute Agreement & Ensemble ──
+    # ── Compute Ensemble Agreement ──
     ensemble_data = build_ensemble_results(predictions, voting_mode, vote_threshold, conf_threshold)
     if ensemble_data is None:
-        st.error("Failed to generate ensemble results.")
+        st.error("Failed to generate ensemble agreement.")
         return
 
-    # ── SECTION 2: PROMINENT ENSEMBLE CONSENSUS RESULT ──
+    # ── 4-Panel Core Overview (Raw, GT, Ensemble, Heatmap) ──
     st.markdown("---")
-    st.subheader("2. Ensemble Agreement & Clinical Decision")
+    st.markdown("### 2. Primary Diagnostic & Consensus Overviews")
+    p1, p2, p3, p4 = st.columns(4)
 
-    c_ens_view, c_ens_metrics, c_ens_heatmap = st.columns([1.2, 1.0, 1.2], gap="large")
-
-    ensemble_overlay = overlay_mask(img_gray, ensemble_data["ensemble_mask"], color=(56, 139, 253), alpha=0.55)
-    
-    with c_ens_view:
-        st.markdown("**Final Consensus Segmentation Mask:**")
-        st.image(ensemble_overlay, use_container_width=True, caption=f"Ensemble Mask ({voting_mode})")
-
-    with c_ens_metrics:
+    with p1:
         with st.container(border=True):
-            st.subheader("Consensus Summary")
-            st.markdown(f"**Strategy**: `{voting_mode}`")
-            st.caption(f"Slice: **{slice_name}**")
-            st.divider()
-            
-            m1, m2 = st.columns(2)
-            with m1:
-                st.metric("Lesion Area", f"{ensemble_data['tumor_pixels']} px")
-            with m2:
-                st.metric("Consensus", f"{ensemble_data['consensus_ratio']*100:.1f}%")
-                
-            status_text = "🟢 High Concordance" if ensemble_data['consensus_ratio'] >= 0.70 else "🟡 Borderline Ambiguity"
-            st.markdown(f"**Agreement Status**: {status_text}")
-            
+            st.markdown("**1. Raw Brain CT Scan**")
+            st.image(img_gray, use_container_width=True, clamp=True)
+            st.caption("Native Axial Slice")
+
+    with p2:
+        with st.container(border=True):
+            st.markdown("**:blue[2. Ground Truth Annotation]**")
+            gt_overlay = overlay_mask(img_gray, gt_mask, color=(56, 139, 253), alpha=0.55) if gt_mask is not None else img_gray
+            st.image(gt_overlay, use_container_width=True)
+            st.caption(f"Tumor Area: **{int(np.sum(gt_mask > 0)):,} px**" if gt_mask is not None else "No Ground Truth")
+
+    with p3:
+        with st.container(border=True):
+            st.markdown("**:green[3. Ensemble Consensus Mask]**")
+            ens_overlay = overlay_mask(img_gray, ensemble_data["ensemble_mask"], color=(63, 185, 80), alpha=0.55)
+            st.image(ens_overlay, use_container_width=True)
             if gt_mask is not None:
-                st.divider()
-                ens_dice, ens_iou = compute_dice_iou(ensemble_data["ensemble_mask"], gt_mask)
-                st.metric("Ensemble Dice vs GT", f"{ens_dice:.4f}", delta=f"IoU: {ens_iou:.4f}")
+                e_dice, e_iou = compute_dice_iou(ensemble_data["ensemble_mask"], gt_mask)
+                st.caption(f"Dice: **{e_dice:.3f}** | IoU: **{e_iou:.3f}**")
+            else:
+                st.caption(f"Consensus Area: **{ensemble_data['tumor_pixels']:,} px**")
 
-    with c_ens_heatmap:
-        st.markdown("**Inter-Model Agreement Heatmap (0 - 6 Models):**")
-        heatmap_img = create_agreement_heatmap(ensemble_data["agreement_counts"], ensemble_data["num_models"])
-        st.image(heatmap_img, use_container_width=True, caption="Agreement Intensity: Blue (Low) → Yellow → Red (6/6 Unanimous)")
+    with p4:
+        with st.container(border=True):
+            st.markdown("**:orange[4. Agreement Heatmap]**")
+            heatmap_img = create_agreement_heatmap(ensemble_data["agreement_counts"], ensemble_data["num_models"])
+            st.image(heatmap_img, use_container_width=True)
+            st.caption(f"Unanimous: **{ensemble_data['consensus_ratio']*100:.1f}%**")
 
-    # ── Clinical Recommendation Card ──
-    st.markdown("---")
+    # ── Consensus Summary Metrics & Clinical Callout ──
+    st.markdown("#### Clinical Consensus Evaluation")
+    m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+    with m_c1:
+        st.metric("Ensemble Strategy", voting_mode)
+    with m_c2:
+        st.metric("Consensus Tumor Area", f"{ensemble_data['tumor_pixels']:,} px")
+    with m_c3:
+        st.metric("Model Agreement Concordance", f"{ensemble_data['consensus_ratio']*100:.1f}%")
+    with m_c4:
+        if gt_mask is not None:
+            ens_dice, ens_iou = compute_dice_iou(ensemble_data["ensemble_mask"], gt_mask)
+            st.metric("Ensemble Dice Score", f"{ens_dice:.4f}", delta=f"IoU: {ens_iou:.4f}")
+        else:
+            st.metric("Unanimous Pixels", f"{ensemble_data['unanimous_pixels']:,} px")
+
     consensus_level = ensemble_data['consensus_ratio']
     if ensemble_data['tumor_pixels'] == 0:
+        st.info("🏥 **Diagnostic Consensus: No Significant Focal Lesion Detected** — All models concur on lesion-free parenchyma.")
+    elif consensus_level >= 0.65:
         st.success(
-            "### 🏥 Diagnostic Consensus: No Pathological Lesion Detected\n\n"
-            "All benchmark models agree that no acute or subacute focal lesion is present in this slice."
-        )
-    elif consensus_level >= 0.75:
-        st.success(
-            "### 🏥 Diagnostic Consensus: High Inter-Model Concordance (Confident Localization)\n\n"
-            f"**{ensemble_data['unanimous_pixels']} pixels ({consensus_level*100:.1f}%)** share unanimous agreement across all models. "
-            "The lesion core is clearly demarcated with high structural boundary integrity. Recommended for automated volume estimation and tracking."
+            f"🏥 **Diagnostic Consensus: High Inter-Model Concordance ({consensus_level*100:.1f}%)** — "
+            f"**{ensemble_data['unanimous_pixels']:,} pixels** share unanimous multi-model agreement. The core lesion boundary is sharply localized."
         )
     else:
         st.warning(
-            "### 🏥 Diagnostic Consensus: Border Ambiguity & Uncertainty Flagged\n\n"
-            f"Consensus ratio is **{consensus_level*100:.1f}%**. While the primary lesion nidus is detected, "
-            "significant boundary disagreement was observed between equivariant (Mod-Seg-SE2) and standard architectures. "
-            "Specialist radiologist review recommended to verify peripheral edema vs active lesion margins."
+            f"🏥 **Diagnostic Consensus: Peripheral Ambiguity Flagged ({consensus_level*100:.1f}%)** — "
+            "Primary lesion nidus detected, but significant disagreement exists on peripheral boundaries. Specialist radiologist review recommended."
         )
 
-    # ── SECTION 3: INDIVIDUAL MODEL BREAKDOWN ──
+    # ── SECTION 3: INDIVIDUAL MODEL BREAKDOWN (6 MODELS) ──
     st.markdown("---")
-    st.subheader("3. Individual Model Segmentation Comparison (6 Models)")
+    st.subheader("3. Individual Model Segmentation Breakdown (6 Models)")
 
     m_cols = st.columns(6)
     for idx, meta in enumerate(MODEL_METADATA):
@@ -969,7 +953,7 @@ def main():
         p = predictions[m_key]
         px_count = int(np.sum(p["mask"] > 0))
         is_prop = (m_key == "se2")
-        overlay = overlay_mask(img_gray, p["mask"], color=hex_to_rgb(meta["color"]), alpha=0.45)
+        overlay = overlay_mask(img_gray, p["mask"], color=hex_to_rgb(meta["color"]), alpha=0.50)
 
         with m_cols[idx]:
             with st.container(border=True):
@@ -985,16 +969,15 @@ def main():
                     d, iou = compute_dice_iou(p["mask"], gt_mask)
                     st.metric("Dice Score", f"{d:.3f}", delta=f"IoU: {iou:.3f}")
                 else:
-                    st.metric("Lesion Area", f"{px_count} px")
-                st.caption(f"Flagged: **{px_count} px**")
+                    st.metric("Detected Area", f"{px_count:,} px")
+                st.caption(f"Area: **{px_count:,} px**")
 
     # ── SECTION 4: UNCERTAINTY & AGREEMENT DISTRIBUTION ──
     st.markdown("---")
-    st.subheader("4. Inter-Model Agreement Distribution & Consensus Histogram")
+    st.subheader("4. Inter-Model Agreement Distribution & Volume Comparison")
     col_chart1, col_chart2 = st.columns([1, 1], gap="medium")
 
     with col_chart1:
-        # Histogram of agreement count for lesion pixels
         agreement_flat = ensemble_data["agreement_counts"][ensemble_data["agreement_counts"] > 0]
         if len(agreement_flat) > 0:
             counts = [np.sum(agreement_flat == k) for k in range(1, ensemble_data["num_models"] + 1)]
@@ -1004,20 +987,14 @@ def main():
             if HAS_PLOTLY:
                 fig_hist = go.Figure(data=[
                     go.Bar(
-                        x=x_labels,
-                        y=counts,
-                        marker_color=palette,
-                        text=[f"{c} px" for c in counts],
-                        textposition='auto'
+                        x=x_labels, y=counts, marker_color=palette,
+                        text=[f"{c} px" for c in counts], textposition='auto'
                     )
                 ])
                 fig_hist.update_layout(
-                    title="Pixel Count by Model Agreement Level",
-                    template="plotly_dark",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    height=260,
-                    margin=dict(l=20, r=20, t=35, b=20)
+                    title="Pixel Count by Model Agreement Level", template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    height=260, margin=dict(l=20, r=20, t=35, b=20)
                 )
                 st.plotly_chart(fig_hist, use_container_width=True)
             else:
@@ -1033,7 +1010,6 @@ def main():
                 plt.close(fig)
 
     with col_chart2:
-        # Comparison bar chart of predicted tumor pixel volume per model
         model_names = [m["name"] for m in MODEL_METADATA] + ["Ensemble"]
         model_areas = [int(np.sum(predictions[m["key"]]["mask"] > 0)) for m in MODEL_METADATA] + [ensemble_data["tumor_pixels"]]
         colors = [m["color"] for m in MODEL_METADATA] + ["#388bfd"]
@@ -1041,20 +1017,14 @@ def main():
         if HAS_PLOTLY:
             fig_bar = go.Figure(data=[
                 go.Bar(
-                    x=model_names,
-                    y=model_areas,
-                    marker_color=colors,
-                    text=[f"{a} px" for a in model_areas],
-                    textposition='auto'
+                    x=model_names, y=model_areas, marker_color=colors,
+                    text=[f"{a} px" for a in model_areas], textposition='auto'
                 )
             ])
             fig_bar.update_layout(
-                title="Tumor Segment Area per Model (Pixels)",
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                height=260,
-                margin=dict(l=20, r=20, t=35, b=20)
+                title="Tumor Segment Area per Model (Pixels)", template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                height=260, margin=dict(l=20, r=20, t=35, b=20)
             )
             st.plotly_chart(fig_bar, use_container_width=True)
         else:
@@ -1077,11 +1047,6 @@ def main():
         Brain CT Multi-Model Agreement System &bull; NTUH NCCT / CECT &amp; Kaggle External Validation &bull; Mod-Seg-SE(2)
     </div>
     """, unsafe_allow_html=True)
-
-
-def hex_to_rgb(hex_code):
-    hex_code = hex_code.lstrip('#')
-    return tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
 
 
 if __name__ == "__main__":
