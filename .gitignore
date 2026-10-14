@@ -19,6 +19,7 @@ check_kaggle*.py
 Paper/Client_GIFs_Final_25D/*
 Paper/*.docx
 paper/*.docx
+*.docx
 
 # Public Dataset Data
 public_dataset/data/
