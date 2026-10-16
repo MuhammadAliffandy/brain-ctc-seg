@@ -4,6 +4,23 @@ Dokumen ini berisi catatan lengkap perintah (*command cheat-sheet*) untuk menjal
 
 ---
 
+## ⚡ Perintah Utama (Harian / Daily Commands)
+
+Berikut 2 perintah persis yang biasa kita gunakan:
+
+### 1️⃣ Terminal 1: Nyalakan Web
+```bash
+cd /raid/D13K48009/Clara/brain-ctc-seg
+./run_agreement_web.sh 8501
+```
+
+### 2️⃣ Terminal 2: Nyalakan Ngrok
+```bash
+ngrok http 8501 --config ~/.config/ngrok/ngrok2.yml --host-header="localhost:8501"
+```
+
+---
+
 ## 🚀 1. Persiapan Awal di Server (DGX)
 
 Buka terminal dan masuk ke direktori proyek, lalu pastikan kode sudah paling baru:
