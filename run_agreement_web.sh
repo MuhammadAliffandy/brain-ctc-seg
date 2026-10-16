@@ -12,10 +12,16 @@ PORT=${1:-8502}
 echo "🧠 Starting Brain CT Multi-Model Agreement Dashboard on port $PORT..."
 echo "📂 Working directory: $(pwd)"
 
-# Check and install plotly if missing
+# Check NumPy version (escnn / lie_learn strictly requires NumPy < 2)
+if ! python3 -c "import numpy as np; exit(0 if int(np.__version__.split('.')[0]) < 2 else 1)" 2>/dev/null; then
+    echo "⚠️ NumPy 2.x detected! Downgrading to 'numpy<2' for escnn / lie_learn compatibility..."
+    pip install "numpy<2" --quiet
+fi
+
+# Check and install plotly if missing (preserving numpy<2)
 if ! python3 -c "import plotly" &> /dev/null; then
     echo "📦 Installing plotly for interactive charts..."
-    pip install plotly --quiet || true
+    pip install plotly "numpy<2" --quiet || true
 fi
 
 # Check if streamlit is available

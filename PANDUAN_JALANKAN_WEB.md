@@ -128,3 +128,10 @@ pkill -f streamlit
 ```bash
 pkill -f ngrok
 ```
+
+### Jika Muncul Error "NumPy 1.x cannot be run in NumPy 2.x" (ESCNN Crash):
+Library steerable `escnn` (`lie_learn`) wajib menggunakan NumPy versi 1.x. Jalankan perintah ini:
+```bash
+pip install "numpy<2"
+```
+*(Script `./run_agreement_web.sh` terbaru sekarang sudah otomatis mengecek dan memperbaiki ini).*
