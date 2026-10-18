@@ -1064,28 +1064,47 @@ def isolate_target_lesion(mask_3d, active_z):
     """
     Keeps only the 3D connected lesion that intersects the active slice, so the
     bounding box and volume describe the selected tumor rather than every
-    annotated blob in the series. Falls back to the full mask if the active
+    annotated blob in the series. Falls back to closest slice with tumor if the active
     slice has no annotation.
     """
     if mask_3d is None or mask_3d.sum() == 0:
         return mask_3d
     active_z = int(np.clip(active_z, 0, mask_3d.shape[0] - 1))
+    
+    # If active slice has no lesion, anchor to the slice with the largest tumor area
     if mask_3d[active_z].sum() == 0:
-        return mask_3d
+        slice_sums = mask_3d.reshape(mask_3d.shape[0], -1).sum(axis=1)
+        if np.max(slice_sums) > 0:
+            active_z = int(np.argmax(slice_sums))
+        else:
+            return mask_3d
+
     try:
         from scipy import ndimage
         labels, n = ndimage.label(mask_3d > 0)
-        if n <= 1:
-            return mask_3d
-        keep = np.unique(labels[active_z][labels[active_z] > 0])
-        return np.isin(labels, keep).astype(np.uint8)
-    except ImportError:
-        # Fallback: contiguous run of annotated slices around active_z
+        active_labels = np.unique(labels[active_z][labels[active_z] > 0])
+        if len(active_labels) > 0:
+            filtered = np.isin(labels, active_labels).astype(np.uint8)
+        else:
+            filtered = mask_3d.copy()
+            
+        # Constrain Z-span to contiguous slices around active_z (prevent stray noise across whole brain)
+        z_has = np.where(filtered.reshape(filtered.shape[0], -1).sum(axis=1) > 0)[0]
+        if len(z_has) > 0 and (z_has[-1] - z_has[0] > 10):
+            lo, hi = active_z, active_z
+            while lo - 1 >= 0 and filtered[lo - 1].sum() > 0:
+                lo -= 1
+            while hi + 1 < filtered.shape[0] and filtered[hi + 1].sum() > 0:
+                hi += 1
+            out = np.zeros_like(filtered)
+            out[lo:hi+1] = filtered[lo:hi+1]
+            return out
+        return filtered
+    except Exception:
         has = mask_3d.reshape(mask_3d.shape[0], -1).sum(axis=1) > 0
-        lo = active_z
+        lo, hi = active_z, active_z
         while lo - 1 >= 0 and has[lo - 1]:
             lo -= 1
-        hi = active_z
         while hi + 1 < len(has) and has[hi + 1]:
             hi += 1
         out = np.zeros_like(mask_3d)
@@ -1116,18 +1135,21 @@ def load_real_patient_3d_volume(folder_path, target_base=None):
 
     def get_series(f):
         base = f.replace('_img.npy', '')
-        m = re.match(r'^(.*?)_?z\d+$', base)
-        return m.group(1) if m else ""
+        m = re.match(r'^(.*?)(?:_?z?\d+)$', base)
+        if m and m.group(1):
+            return m.group(1).rstrip('_')
+        return ""
 
     all_files = [f for f in os.listdir(folder_path) if f.endswith('_img.npy')]
     target_series = get_series(target_base + '_img.npy') if target_base else None
 
-    if target_series is not None:
+    if target_series is not None and target_series != "":
         series_files = [f for f in all_files if get_series(f) == target_series]
     else:
         groups = {}
         for f in all_files:
-            groups.setdefault(get_series(f), []).append(f)
+            s_name = get_series(f)
+            groups.setdefault(s_name, []).append(f)
         series_files = max(groups.values(), key=len) if groups else []
 
     # One slice per z position, ordered inferior -> superior
@@ -1434,12 +1456,71 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d):
     return fig
 
 
+def reconstruct_isotropic_mpr_volume(vol_aligned, mask_aligned=None):
+    """
+    Transforms sparse anisotropic 3D axial CT series (~20-25 slices, 5.0mm slice thickness)
+    into a continuous, dense 256x256x256 isotropic 3D volume:
+    1. Inter-slice cranial centroid registration: eliminates lateral shear jumps and staircases.
+    2. Dense Z-spline interpolation: eliminates thick horizontal bands and gaps.
+    3. Bilateral edge-preserving filtering: preserves crisp skull bone, parenchyma, ventricles & tumor.
+    """
+    depth, H, W = vol_aligned.shape
+    if depth <= 2:
+        return vol_aligned, mask_aligned
+
+    import scipy.ndimage as ndi
+
+    # Step 1: Compute cranial skull/brain centroid for each slice
+    centroids = []
+    for z in range(depth):
+        head = vol_aligned[z] > 0.12
+        if np.any(head):
+            cy, cx = ndi.center_of_mass(head)
+        else:
+            cy, cx = H / 2.0, W / 2.0
+        centroids.append((cy, cx))
+
+    cys = [c[0] for c in centroids]
+    cxs = [c[1] for c in centroids]
+
+    # Smooth centroids along Z to retain genuine cranial tapering while removing abrupt slice-to-slice shifts
+    filt_size = min(5, depth if depth % 2 == 1 else depth - 1)
+    smooth_cy = ndi.median_filter(cys, size=max(3, filt_size))
+    smooth_cx = ndi.median_filter(cxs, size=max(3, filt_size))
+
+    vol_reg = np.zeros_like(vol_aligned)
+    mask_reg = np.zeros_like(mask_aligned) if mask_aligned is not None else None
+
+    for z in range(depth):
+        dy = float(np.clip(smooth_cy[z] - cys[z], -15.0, 15.0))
+        dx = float(np.clip(smooth_cx[z] - cxs[z], -15.0, 15.0))
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        vol_reg[z] = cv2.warpAffine(vol_aligned[z], M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        if mask_aligned is not None and mask_reg is not None:
+            mask_reg[z] = cv2.warpAffine(mask_aligned[z].astype(np.float32), M, (W, H), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0).astype(np.uint8)
+
+    # Step 2: Dense Isotropic Z-Resampling to 256 slices
+    target_d = 256
+    scale_z = target_d / float(depth)
+    
+    # 1D smoothing along Z axis to blend discrete scanner slice seams
+    vol_z_smooth = ndi.gaussian_filter1d(vol_reg, sigma=0.60, axis=0)
+    vol_dense = ndi.zoom(vol_z_smooth, (scale_z, 1.0, 1.0), order=1)
+    
+    mask_dense = None
+    if mask_reg is not None:
+        mask_z = ndi.zoom(mask_reg.astype(np.float32), (scale_z, 1.0, 1.0), order=1)
+        mask_dense = (mask_z > 0.35).astype(np.uint8)
+
+    return vol_dense, mask_dense
+
+
 def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
     """
     Generates 4 views matching Wireframe Screenshot 2:
-    1. Ax {current_z}: Axial slice with tumor outline
-    2. Cor: Coronal orthogonal view (superior at top)
-    3. Sag: Sagittal orthogonal view (superior at top)
+    1. Ax {current_z}: Native high-resolution Axial slice with tumor outline
+    2. Cor: Coronal view reconstructed from isotropic MPR (superior at top)
+    3. Sag: Sagittal view reconstructed from isotropic MPR (superior at top)
     4. 3D · bounding box: 3D perspective wireframe rendering & Planar ROI box
     Also returns (x_mm, y_mm, z_mm) coordinate centroid.
     """
@@ -1450,7 +1531,10 @@ def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
     vol_aligned = np.stack([align_for_clinical_display(vol_3d[z], crop=crop, rot_k=rot_k) for z in range(depth)], axis=0)
     mask_aligned = np.stack([align_for_clinical_display(mask_3d[z], crop=crop, rot_k=rot_k, is_mask=True) for z in range(depth)], axis=0)
     
-    # 1. Axial View
+    # Isolate focal lesion connected to active slice to ensure clean bounding box and contour
+    mask_aligned = isolate_target_lesion(mask_aligned, current_z)
+
+    # 1. Native High-Resolution Axial View
     ax_display = overlay_mask_with_outline(vol_aligned[current_z], mask_aligned[current_z], fill_color=(46, 160, 67), outline_color=(248, 81, 73))
     
     pos = np.argwhere(mask_aligned > 0)
@@ -1462,25 +1546,38 @@ def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
     x_mm = xc * PIXEL_SPACING_MM
     y_mm = yc * PIXEL_SPACING_MM
     z_mm = current_z * SLICE_THICKNESS_MM
+
+    # Reconstruct dense isotropic volume for seamless Coronal & Sagittal rendering
+    vol_dense, mask_dense = reconstruct_isotropic_mpr_volume(vol_aligned, mask_aligned)
     
-    # 2. Coronal View (cut at yc, invert Z so vertex is superior/top)
-    cor_raw = vol_aligned[:, yc, :][::-1, :]
-    cor_mask_raw = mask_aligned[:, yc, :][::-1, :]
-    cor_aligned = cv2.resize(cor_raw, (256, 256), interpolation=cv2.INTER_LINEAR)
-    cor_mask_aligned = (cv2.resize(cor_mask_raw.astype(np.float32), (256, 256), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
-    cor_display = overlay_mask_with_outline(cor_aligned, cor_mask_aligned, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
+    # 2. Coronal View (cut at yc from dense isotropic volume, invert Z so vertex is superior/top)
+    cor_raw = vol_dense[:, yc, :][::-1, :]
+    cor_u8 = (np.clip(cor_raw, 0.0, 1.0) * 255.0).astype(np.uint8)
+    cor_clean = cv2.bilateralFilter(cor_u8, d=5, sigmaColor=25, sigmaSpace=5)
+    
+    if mask_dense is not None:
+        cor_mask = mask_dense[:, yc, :][::-1, :]
+    else:
+        cor_mask = np.zeros((256, 256), dtype=np.uint8)
+        
+    cor_display = overlay_mask_with_outline(cor_clean, cor_mask, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
     
     # Draw reference crosshair line indicating current active axial Z slice
     z_norm = 1.0 - (current_z / float(depth))
     z_line_y = int(np.clip(z_norm * 255, 4, 251))
     cv2.line(cor_display, (4, z_line_y), (251, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
     
-    # 3. Sagittal View (cut at xc, invert Z so vertex is superior/top)
-    sag_raw = vol_aligned[:, :, xc][::-1, :]
-    sag_mask_raw = mask_aligned[:, :, xc][::-1, :]
-    sag_aligned = cv2.resize(sag_raw, (256, 256), interpolation=cv2.INTER_LINEAR)
-    sag_mask_aligned = (cv2.resize(sag_mask_raw.astype(np.float32), (256, 256), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
-    sag_display = overlay_mask_with_outline(sag_aligned, sag_mask_aligned, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
+    # 3. Sagittal View (cut at xc from dense isotropic volume, invert Z so vertex is superior/top)
+    sag_raw = vol_dense[:, :, xc][::-1, :]
+    sag_u8 = (np.clip(sag_raw, 0.0, 1.0) * 255.0).astype(np.uint8)
+    sag_clean = cv2.bilateralFilter(sag_u8, d=5, sigmaColor=25, sigmaSpace=5)
+    
+    if mask_dense is not None:
+        sag_mask = mask_dense[:, :, xc][::-1, :]
+    else:
+        sag_mask = np.zeros((256, 256), dtype=np.uint8)
+        
+    sag_display = overlay_mask_with_outline(sag_clean, sag_mask, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
     cv2.line(sag_display, (4, z_line_y), (251, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
     
     # 4. 3D Bounding Box View (both 3D isometric perspective and planar box)
