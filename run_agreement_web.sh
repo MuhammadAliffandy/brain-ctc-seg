@@ -24,6 +24,12 @@ if ! python3 -c "import plotly" &> /dev/null; then
     pip install plotly "numpy<2" --quiet || true
 fi
 
+# Check and install python-docx if missing (preserving numpy<2)
+if ! python3 -c "import docx" &> /dev/null; then
+    echo "📦 Installing python-docx for clinical Word report downloads..."
+    pip install python-docx "numpy<2" --quiet || true
+fi
+
 # Check if streamlit is available
 if ! command -v streamlit &> /dev/null
 then
