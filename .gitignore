@@ -5,6 +5,7 @@ venv/
 ppt.py 
 *.pth
 *.pptx
+!Brain_CT_Seg_Client_Presentation.pptx
 
 # Ignore large files and archives
 *.tar.gz
