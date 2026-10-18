@@ -1060,10 +1060,46 @@ def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, 
     }
 
 
-@st.cache_data(show_spinner=False)
-def load_real_patient_3d_volume(folder_path):
+def isolate_target_lesion(mask_3d, active_z):
     """
-    Loads all slices for a patient on DGX server into a true 3D numpy volume.
+    Keeps only the 3D connected lesion that intersects the active slice, so the
+    bounding box and volume describe the selected tumor rather than every
+    annotated blob in the series. Falls back to the full mask if the active
+    slice has no annotation.
+    """
+    if mask_3d is None or mask_3d.sum() == 0:
+        return mask_3d
+    active_z = int(np.clip(active_z, 0, mask_3d.shape[0] - 1))
+    if mask_3d[active_z].sum() == 0:
+        return mask_3d
+    try:
+        from scipy import ndimage
+        labels, n = ndimage.label(mask_3d > 0)
+        if n <= 1:
+            return mask_3d
+        keep = np.unique(labels[active_z][labels[active_z] > 0])
+        return np.isin(labels, keep).astype(np.uint8)
+    except ImportError:
+        # Fallback: contiguous run of annotated slices around active_z
+        has = mask_3d.reshape(mask_3d.shape[0], -1).sum(axis=1) > 0
+        lo = active_z
+        while lo - 1 >= 0 and has[lo - 1]:
+            lo -= 1
+        hi = active_z
+        while hi + 1 < len(has) and has[hi + 1]:
+            hi += 1
+        out = np.zeros_like(mask_3d)
+        out[lo:hi + 1] = mask_3d[lo:hi + 1]
+        return out
+
+
+@st.cache_data(show_spinner=False)
+def load_real_patient_3d_volume(folder_path, target_base=None):
+    """
+    Loads all slices of ONE acquisition series for a patient into a 3D volume.
+    A patient folder can hold several series (e.g. `1_z076`, `2_z076`); mixing them
+    interleaves different scans and produces banded coronal/sagittal reconstructions,
+    so only slices sharing the selected slice's series prefix are stacked.
     Returns:
     - vol_3d: [depth, 256, 256] float 0..1
     - mask_3d: [depth, 256, 256] uint8 0/1
@@ -1074,14 +1110,31 @@ def load_real_patient_3d_volume(folder_path):
 
     def get_z_num(f):
         m = re.findall(r'z(\d+)', f)
-        if m: return int(m[0])
+        if m: return int(m[-1])
         nums = re.findall(r'\d+', f)
         return int(nums[-1]) if nums else 0
 
-    img_files = sorted(
-        [f for f in os.listdir(folder_path) if f.endswith('_img.npy')],
-        key=get_z_num
-    )
+    def get_series(f):
+        base = f.replace('_img.npy', '')
+        m = re.match(r'^(.*?)_?z\d+$', base)
+        return m.group(1) if m else ""
+
+    all_files = [f for f in os.listdir(folder_path) if f.endswith('_img.npy')]
+    target_series = get_series(target_base + '_img.npy') if target_base else None
+
+    if target_series is not None:
+        series_files = [f for f in all_files if get_series(f) == target_series]
+    else:
+        groups = {}
+        for f in all_files:
+            groups.setdefault(get_series(f), []).append(f)
+        series_files = max(groups.values(), key=len) if groups else []
+
+    # One slice per z position, ordered inferior -> superior
+    by_z = {}
+    for f in series_files:
+        by_z.setdefault(get_z_num(f), f)
+    img_files = [by_z[z] for z in sorted(by_z)]
     if len(img_files) < 8:
         return None, None, []
 
@@ -1251,25 +1304,32 @@ def render_3d_bbox_perspective(vol_3d, mask_3d, size=256):
         xmin, xmax = W//2 - 20, W//2 + 20
         zc, yc, xc = D//2, H//2, W//2
 
-    def project(x, y, z):
-        nx = (x - W/2.0) / (W/2.0)
-        ny = (y - H/2.0) / (H/2.0)
-        nz = (z - D/2.0) / (D/2.0)
-        px = 0.866 * nx - 0.5 * ny
-        py = -0.5 * 0.5 * nx - 0.866 * 0.5 * ny + 0.866 * nz
-        sx = int(size/2 + px * (size * 0.38))
-        sy = int(size/2 - py * (size * 0.38))
-        return sx, sy
+    # Physical (mm) coordinates so a 5 mm slice isn't drawn as thin as a 0.5 mm pixel
+    sx_mm, sz_mm = PIXEL_SPACING_MM, SLICE_THICKNESS_MM
+    cx_mm, cy_mm, cz_mm = W * sx_mm / 2.0, H * sx_mm / 2.0, D * sz_mm / 2.0
+    half_extent = max(cx_mm, cy_mm, cz_mm) * 1.05
 
-    # Cranial rings representing 3D skull at inferior, middle, and superior heights (RGB)
-    for z_lvl, col in [(D*0.15, (60, 70, 85)), (D*0.50, (90, 105, 125)), (D*0.85, (60, 70, 85))]:
-        ring_pts = []
-        for ang in np.linspace(0, 2*np.pi, 36):
-            rx = 85 * np.cos(ang) + W/2.0
-            ry = 95 * np.sin(ang) + H/2.0
-            ring_pts.append(project(rx, ry, z_lvl))
-        pts_arr = np.array(ring_pts, dtype=np.int32).reshape((-1, 1, 2))
-        cv2.polylines(canvas, [pts_arr], True, col, 1, cv2.LINE_AA)
+    def project(x, y, z):
+        nx = (x * sx_mm - cx_mm) / half_extent
+        ny = (y * sx_mm - cy_mm) / half_extent
+        nz = (z * sz_mm - cz_mm) / half_extent
+        px = 0.866 * nx - 0.5 * ny
+        py = -0.25 * nx - 0.433 * ny + 0.866 * nz
+        return int(size / 2 + px * (size * 0.40)), int(size / 2 - py * (size * 0.40))
+
+    # Real skull outline at several heights, taken from the CT volume itself
+    for frac, col in [(0.2, (60, 70, 85)), (0.4, (75, 88, 105)), (0.6, (90, 105, 125)), (0.8, (75, 88, 105))]:
+        z_lvl = int(np.clip(frac * (D - 1), 0, D - 1))
+        head = (vol_3d[z_lvl] > 0.15).astype(np.uint8)
+        cnts, _ = cv2.findContours(head, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            continue
+        cnt = max(cnts, key=cv2.contourArea)
+        if cv2.contourArea(cnt) < 200:
+            continue
+        step = max(1, len(cnt) // 60)
+        pts = [project(p[0][0], p[0][1], z_lvl) for p in cnt[::step]]
+        cv2.polylines(canvas, [np.array(pts, dtype=np.int32).reshape((-1, 1, 2))], True, col, 1, cv2.LINE_AA)
 
     # 3D Bounding box with 12 edges (RGB Amber Gold)
     corners = [
@@ -1288,8 +1348,10 @@ def render_3d_bbox_perspective(vol_3d, mask_3d, size=256):
 
     # Tumor centroid sphere projection (RGB Green fill, Red outline)
     tc = project(xc, yc, zc)
-    cv2.circle(canvas, tc, 14, (46, 160, 67), -1)
-    cv2.circle(canvas, tc, 14, (248, 81, 73), 2, cv2.LINE_AA)
+    box_w = max(abs(p_corners[1][0] - p_corners[3][0]), abs(p_corners[0][1] - p_corners[4][1]))
+    r_tc = int(np.clip(box_w * 0.18, 3, 12))
+    cv2.circle(canvas, tc, r_tc, (46, 160, 67), -1)
+    cv2.circle(canvas, tc, r_tc, (248, 81, 73), 2, cv2.LINE_AA)
     
     # 3D Orientation Axes indicator at bottom left (RGB)
     orig = (35, size - 35)
@@ -1300,11 +1362,11 @@ def render_3d_bbox_perspective(vol_3d, mask_3d, size=256):
     cv2.line(canvas, orig, (orig[0] - 15, orig[1] + 12), (88, 166, 255), 2, cv2.LINE_AA) # Y (Blue)
     cv2.putText(canvas, 'Y', (orig[0] - 25, orig[1] + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (88, 166, 255), 1)
 
-    dx_mm = (xmax - xmin) * PIXEL_SPACING_MM
-    dy_mm = (ymax - ymin) * PIXEL_SPACING_MM
-    dz_mm = max(SLICE_THICKNESS_MM, (zmax - zmin) * SLICE_THICKNESS_MM)
-    text = f'ROI: {dx_mm:.0f}x{dy_mm:.0f}x{dz_mm:.0f}mm'
-    cv2.putText(canvas, text, (max(8, p_corners[4][0] - 30), max(18, p_corners[4][1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.38, gold_rgb, 1, cv2.LINE_AA)
+    dx_mm = (xmax - xmin + 1) * PIXEL_SPACING_MM
+    dy_mm = (ymax - ymin + 1) * PIXEL_SPACING_MM
+    dz_mm = (zmax - zmin + 1) * SLICE_THICKNESS_MM
+    text = f'ROI: {dx_mm:.0f} x {dy_mm:.0f} x {dz_mm:.0f} mm'
+    cv2.putText(canvas, text, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.42, gold_rgb, 1, cv2.LINE_AA)
     return canvas
 
 
@@ -1799,13 +1861,14 @@ def main():
     
     if input_source == "DGX Patient Dataset" and 'chosen_case' in locals() and chosen_case and "curr" in chosen_case:
         patient_folder = os.path.dirname(chosen_case['curr'])
-        vol_3d, mask_3d, real_names = load_real_patient_3d_volume(patient_folder)
+        target_base = os.path.basename(chosen_case['curr']).replace('_img.npy', '')
+        vol_3d, mask_3d, real_names = load_real_patient_3d_volume(patient_folder, target_base)
         if vol_3d is not None and len(vol_3d) >= 8:
-            target_base = os.path.basename(chosen_case['curr']).replace('_img.npy', '')
             if target_base in real_names:
                 patient_z_active = real_names.index(target_base)
             else:
                 patient_z_active = len(vol_3d) // 2
+            mask_3d = isolate_target_lesion(mask_3d, patient_z_active)
 
     if vol_3d is None or len(vol_3d) < 8:
         vol_3d, mask_3d = construct_anatomical_3d_volume(img_raw, mask_raw, active_z=min(patient_z_active, 65), total_depth=70)
