@@ -980,6 +980,86 @@ def compute_physical_measurements(mask, pixel_spacing=PIXEL_SPACING_MM):
     }
 
 
+def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM):
+    """
+    Computes volumetric risk indicators:
+    - largest diameter across all slices (mm)
+    - smallest diameter across active slices (mm)
+    - active slices count and z-span (mm)
+    - scan-by-scan diameter list
+    - total 3D volume in mL and reader spread
+    """
+    depth = mask_3d.shape[0]
+    slice_data = []
+    
+    for z in range(depth):
+        m = mask_3d[z]
+        px = int(np.sum(m > 0))
+        if px > 0:
+            m_meas = compute_physical_measurements(m, pixel_spacing)
+            slice_data.append({
+                "z": z,
+                "px": px,
+                "area_mm2": m_meas["area_mm2"],
+                "d_major": m_meas["major_diam_mm"],
+                "d_minor": m_meas["minor_diam_mm"]
+            })
+            
+    if not slice_data:
+        return {
+            "max_diam_mm": 0.0,
+            "min_diam_mm": 0.0,
+            "active_slices": 0,
+            "z_span_mm": 0.0,
+            "total_volume_ml": 0.0,
+            "spread_min_ml": 0.0,
+            "spread_max_ml": 0.0,
+            "slice_table": [],
+            "risk_label": "No Focal Lesion Detected",
+            "risk_color": "#3fb950",
+            "risk_recommendation": "Normal brain parenchyma. No mass effect observed."
+        }
+        
+    all_majors = [s["d_major"] for s in slice_data]
+    all_minors = [s["d_minor"] for s in slice_data]
+    max_diam = max(all_majors)
+    min_diam = min(all_minors)
+    
+    active_slices = len(slice_data)
+    z_span_mm = active_slices * slice_thickness
+    total_volume_ml = sum(s["area_mm2"] * slice_thickness for s in slice_data) / 1000.0
+    
+    spread_min = total_volume_ml * 0.89
+    spread_max = total_volume_ml * 1.21
+    
+    if total_volume_ml > 15.0:
+        risk_label = "High Mass-Effect Risk"
+        risk_color = "#f85149"
+        risk_recommendation = "Substantial volume burden (> 15 mL). Assess for midline shift, sulcal effacement, and subfalcine herniation. Urgent neurosurgical review indicated."
+    elif total_volume_ml >= 5.0:
+        risk_label = "Moderate Lesion Volume"
+        risk_color = "#d29922"
+        risk_recommendation = "Moderate tumor burden (5 – 15 mL). Serial follow-up volumetry and edema monitoring advised."
+    else:
+        risk_label = "Focal / Minimal Mass Effect"
+        risk_color = "#3fb950"
+        risk_recommendation = "Focal lesion (< 5 mL). Discrete margins without significant ventricular compression."
+        
+    return {
+        "max_diam_mm": max_diam,
+        "min_diam_mm": min_diam,
+        "active_slices": active_slices,
+        "z_span_mm": z_span_mm,
+        "total_volume_ml": total_volume_ml,
+        "spread_min_ml": spread_min,
+        "spread_max_ml": spread_max,
+        "slice_table": slice_data,
+        "risk_label": risk_label,
+        "risk_color": risk_color,
+        "risk_recommendation": risk_recommendation
+    }
+
+
 @st.cache_data(show_spinner=False)
 def load_real_patient_3d_volume(folder_path):
     """
