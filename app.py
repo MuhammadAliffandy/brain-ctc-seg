@@ -1307,125 +1307,133 @@ def create_3d_bounding_box_canvas(vol_3d, mask_3d, rot_k=1, crop=40):
 
 def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     """
-    Renders the 3D Brain as a whole with the full cranial volume envelope,
-    the entire tumor region permanently highlighted in solid green matching 2D views,
-    and a dynamic active slice plane indicator that moves up and down as the user scrolls.
+    Renders 3D Slicer-style 3D Bounding Box View matching reference screenshot:
+    - Purple/Slate gradient background (top lavender to bottom slate/purple)
+    - 3D perspective wireframe bounding box with magenta/purple edges
+    - Anatomical orientation labels: S (Superior), I (Inferior), R (Right), L (Left)
+    - 3D organic solid green tumor model with surface lighting, highlights, and depth inside the box
+    - Active slice cutting plane indicator at current_z
     """
-    canvas = np.zeros((size, size, 3), dtype=np.uint8)
-    canvas[:] = (13, 17, 23) # Dark background matching app theme
+    H, W = size, size
+    canvas = np.zeros((H, W, 3), dtype=np.uint8)
     
-    D, H, W = vol_3d.shape
-    sx_mm, sz_mm = PIXEL_SPACING_MM, SLICE_THICKNESS_MM
-    cx_mm, cy_mm, cz_mm = W * sx_mm / 2.0, H * sx_mm / 2.0, D * sz_mm / 2.0
-    half_extent = max(cx_mm, cy_mm, cz_mm) * 1.08
-
-    def project(x, y, z):
-        nx = (x * sx_mm - cx_mm) / half_extent
-        ny = (y * sx_mm - cy_mm) / half_extent
-        nz = (z * sz_mm - cz_mm) / half_extent
-        px = 0.866 * nx - 0.5 * ny
-        py = -0.22 * nx - 0.40 * ny + 0.88 * nz
-        return int(size / 2 + px * (size * 0.42)), int(size / 2 - py * (size * 0.42))
-
-    # 1. Full 3D Cranial Outline Ribs across the entire volume (base to vertex)
-    n_ribs = min(12, D)
-    rib_indices = np.linspace(1, D - 2, n_ribs, dtype=int)
-    for z_idx in rib_indices:
-        slice_img = vol_3d[z_idx]
-        head = (slice_img > 0.12).astype(np.uint8)
-        cnts, _ = cv2.findContours(head, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not cnts:
-            continue
-        cnt = max(cnts, key=cv2.contourArea)
-        if cv2.contourArea(cnt) < 150:
-            continue
-        step = max(1, len(cnt) // 50)
-        pts = [project(p[0][0], p[0][1], z_idx) for p in cnt[::step]]
-        depth_ratio = z_idx / max(1, D - 1)
-        r_col = int(45 + 35 * depth_ratio)
-        g_col = int(60 + 40 * depth_ratio)
-        b_col = int(85 + 50 * depth_ratio)
-        poly_pts = np.array(pts, dtype=np.int32).reshape((-1, 1, 2))
-        cv2.polylines(canvas, [poly_pts], True, (r_col, g_col, b_col), 1, cv2.LINE_AA)
-
-    # 2. Longitudinal Cranial Vault Guide Lines
-    for mx, my in [(W//2, 25), (W//2, H-25), (25, H//2), (W-25, H//2)]:
-        m_pts = []
-        for z_idx in rib_indices:
-            slice_img = vol_3d[z_idx]
-            head = (slice_img > 0.12).astype(np.uint8)
-            cnts, _ = cv2.findContours(head, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if cnts:
-                cnt = max(cnts, key=cv2.contourArea)
-                dists = np.hypot(cnt[:, 0, 0] - mx, cnt[:, 0, 1] - my)
-                closest = cnt[np.argmin(dists)][0]
-                m_pts.append(project(closest[0], closest[1], z_idx))
-        if len(m_pts) >= 3:
-            cv2.polylines(canvas, [np.array(m_pts, dtype=np.int32).reshape((-1, 1, 2))], False, (55, 75, 95), 1, cv2.LINE_AA)
-
-    # 3. Full 3D Tumor Region in Green across all slices
-    tumor_zs = [z for z in range(D) if np.any(mask_3d[z] > 0)]
-    if len(tumor_zs) > 0:
-        overlay = canvas.copy()
-        for tz in tumor_zs:
-            t_cnts, _ = cv2.findContours((mask_3d[tz] > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for t_cnt in t_cnts:
-                if cv2.contourArea(t_cnt) < 2:
-                    continue
-                step = max(1, len(t_cnt) // 30)
-                t_pts = [project(p[0][0], p[0][1], tz) for p in t_cnt[::step]]
-                if len(t_pts) >= 3:
-                    poly_t = np.array(t_pts, dtype=np.int32).reshape((-1, 1, 2))
-                    cv2.fillPoly(overlay, [poly_t], (46, 160, 67)) # Green matching 2D
-                    cv2.polylines(canvas, [poly_t], True, (63, 185, 80), 2, cv2.LINE_AA)
-        cv2.addWeighted(overlay, 0.45, canvas, 0.55, 0, canvas)
+    # 1. 3D Slicer-style purple/slate gradient background
+    for y in range(H):
+        ratio = y / float(H)
+        r = int(126 * (1.0 - ratio) + 38 * ratio)
+        g = int(118 * (1.0 - ratio) + 32 * ratio)
+        b = int(158 * (1.0 - ratio) + 52 * ratio)
+        canvas[y, :] = (b, g, r) # OpenCV BGR
         
-        pos = np.argwhere(mask_3d > 0)
+    # 2. 3D Perspective Bounding Box matching Image 1
+    # Front face (large outer rectangle)
+    fx0, fx1 = 44, 212
+    fy0, fy1 = 36, 220
+    # Back face (smaller inner rectangle in perspective)
+    bx0, bx1 = 82, 174
+    by0, by1 = 64, 192
+    
+    bbox_color = (205, 40, 190)      # Magenta/purple in BGR
+    bbox_back_color = (165, 30, 150) # Slightly darker for depth
+    
+    # Draw back face rectangle
+    cv2.rectangle(canvas, (bx0, by0), (bx1, by1), bbox_back_color, 1, cv2.LINE_AA)
+    
+    # Draw 4 corner depth connector lines (front to back)
+    cv2.line(canvas, (fx0, fy0), (bx0, by0), bbox_color, 2, cv2.LINE_AA)
+    cv2.line(canvas, (fx1, fy0), (bx1, by0), bbox_color, 2, cv2.LINE_AA)
+    cv2.line(canvas, (fx1, fy1), (bx1, by1), bbox_color, 2, cv2.LINE_AA)
+    cv2.line(canvas, (fx0, fy1), (bx0, by1), bbox_color, 2, cv2.LINE_AA)
+    
+    # Draw front face rectangle
+    cv2.rectangle(canvas, (fx0, fy0), (fx1, fy1), bbox_color, 2, cv2.LINE_AA)
+    
+    # 3. Orientation Letters directly matching Image 1
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.52
+    txt_col = (255, 255, 255)
+    thick = 2
+    
+    # 'S' centered above top edge
+    cv2.putText(canvas, 'S', (123, 26), font, font_scale, txt_col, thick, cv2.LINE_AA)
+    # 'I' centered below bottom edge
+    cv2.putText(canvas, 'I', (125, 240), font, font_scale, txt_col, thick, cv2.LINE_AA)
+    # 'R' centered to left of left edge
+    cv2.putText(canvas, 'R', (20, 134), font, font_scale, txt_col, thick, cv2.LINE_AA)
+    # 'L' centered to right of right edge
+    cv2.putText(canvas, 'L', (224, 134), font, font_scale, txt_col, thick, cv2.LINE_AA)
+    
+    # 4. Realistic 3D Green Tumor Model in the center of the box
+    D, vH, vW = vol_3d.shape
+    pos = np.argwhere(mask_3d > 0)
+    
+    if len(pos) > 0:
         zc, yc, xc = np.mean(pos, axis=0)
-        tc = project(xc, yc, zc)
-        cv2.circle(canvas, tc, 4, (56, 139, 253), -1)
-        cv2.circle(canvas, tc, 6, (248, 81, 73), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "Tumor Core", (tc[0] + 8, tc[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (63, 185, 80), 1, cv2.LINE_AA)
-
-    # 4. Active Scrolling Slice Plane Indicator (moves smoothly as user scrubs)
-    if current_z is not None and 0 <= current_z < D:
-        head_curr = (vol_3d[current_z] > 0.12).astype(np.uint8)
-        cnts_curr, _ = cv2.findContours(head_curr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if cnts_curr:
-            cnt_c = max(cnts_curr, key=cv2.contourArea)
-            step_c = max(1, len(cnt_c) // 40)
-            pts_c = [project(p[0][0], p[0][1], current_z) for p in cnt_c[::step_c]]
+        min_z, min_y, min_x = np.min(pos, axis=0)
+        max_z, max_y, max_x = np.max(pos, axis=0)
+        span_x = max(1, max_x - min_x)
+        span_y = max(1, max_y - min_y)
+        span_z = max(1, max_z - min_z)
+        
+        target_radius = 32.0
+        step = max(1, len(pos) // 900)
+        sub_pts = pos[::step]
+        
+        light = np.array([0.4, -0.6, 0.7])
+        light = light / np.linalg.norm(light)
+        
+        rendered_pts = []
+        for p in sub_pts:
+            zv, yv, xv = p
+            rx = (xv - xc) / (span_x / 2.0 + 1e-5)
+            ry = (yv - yc) / (span_y / 2.0 + 1e-5)
+            rz = (zv - zc) / (span_z / 2.0 + 1e-5)
             
-            plane_overlay = canvas.copy()
-            poly_c = np.array(pts_c, dtype=np.int32).reshape((-1, 1, 2))
-            cv2.fillPoly(plane_overlay, [poly_c], (56, 139, 253))
-            cv2.addWeighted(plane_overlay, 0.22, canvas, 0.78, 0, canvas)
-            cv2.polylines(canvas, [poly_c], True, (88, 166, 255), 2, cv2.LINE_AA)
-            if len(pts_c) > 0:
-                p_lbl = min(pts_c, key=lambda p: p[0])
-                cv2.putText(canvas, f"Slice Ax {current_z}", (max(8, p_lbl[0] - 5), max(18, p_lbl[1] - 6)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (88, 166, 255), 1, cv2.LINE_AA)
-
-    # 5. Readout Header & Coordinate Axes
-    cv2.putText(canvas, "3D Brain & Tumor Region", (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (230, 237, 243), 1, cv2.LINE_AA)
-    z_val_mm = (current_z if current_z is not None else D//2) * sz_mm
-    cv2.putText(canvas, f"Active Z: {z_val_mm:.1f} mm", (8, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (139, 148, 158), 1, cv2.LINE_AA)
-
-    orig = (30, size - 30)
-    cv2.line(canvas, orig, (orig[0] + 20, orig[1]), (248, 81, 73), 2, cv2.LINE_AA)
-    cv2.putText(canvas, 'X', (orig[0] + 24, orig[1] + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (248, 81, 73), 1)
-    cv2.line(canvas, orig, (orig[0], orig[1] - 20), (63, 185, 80), 2, cv2.LINE_AA)
-    cv2.putText(canvas, 'Z', (orig[0] - 10, orig[1] - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (63, 185, 80), 1)
-    cv2.line(canvas, orig, (orig[0] - 12, orig[1] + 10), (88, 166, 255), 2, cv2.LINE_AA)
-    cv2.putText(canvas, 'Y', (orig[0] - 20, orig[1] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (88, 166, 255), 1)
-
+            depth_factor = 1.0 - 0.22 * rz
+            sx = int(128 + rx * target_radius * depth_factor)
+            sy = int(128 + ry * target_radius * depth_factor * 0.95 - rz * 8.0)
+            depth_sort = rz * 0.7 + ry * 0.3
+            rendered_pts.append((depth_sort, sx, sy, rx, ry, rz))
+            
+        rendered_pts.sort(key=lambda x: x[0])
+        
+        tumor_layer = canvas.copy()
+        for depth_sort, sx, sy, rx, ry, rz in rendered_pts:
+            if 10 <= sx < W - 10 and 10 <= sy < H - 10:
+                norm = np.array([rx, ry, rz]) + np.random.normal(0, 0.12, 3)
+                norm = norm / (np.linalg.norm(norm) + 1e-5)
+                
+                diff = max(0.25, float(np.dot(norm, light)))
+                refl = 2.0 * diff * norm - light
+                spec = max(0.0, float(refl[2])) ** 8
+                
+                g = int(np.clip(55 + 150 * diff + 60 * spec, 35, 250))
+                r = int(np.clip(20 + 80 * diff + 80 * spec, 15, 170))
+                b = int(np.clip(25 + 75 * diff + 70 * spec, 15, 165))
+                
+                rad = int(np.clip(4 * (1.0 + 0.15 * rz), 2, 6))
+                cv2.circle(tumor_layer, (sx, sy), rad, (b, g, r), -1)
+                
+        cv2.addWeighted(tumor_layer, 0.96, canvas, 0.04, 0, canvas)
+        
+    # 5. Active slice depth indicator
+    if current_z is not None and 0 <= current_z < D:
+        z_ratio = current_z / float(max(1, D - 1))
+        py_slice = int(fy1 - z_ratio * (fy1 - fy0))
+        cv2.line(canvas, (fx0, py_slice), (fx1, py_slice), (255, 220, 100), 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"Ax {current_z}", (fx0 + 4, max(fy0 + 12, py_slice - 4)),
+                    font, 0.32, (255, 220, 100), 1, cv2.LINE_AA)
+        
     return canvas
 
 
 def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
     """
-    Creates an interactive 3D Plotly orbital figure of the entire cranial brain vault,
-    complete 3D tumor volume highlighted in green, and active scroll slice plane.
+    Creates an interactive 3D Slicer-style orbital figure:
+    - 3D magenta/purple bounding box wireframe
+    - S, I, R, L anatomical orientation markers
+    - Full 3D green tumor surface
+    - Active slice plane
     """
     D, H, W = vol_3d.shape
     px = PIXEL_SPACING_MM
@@ -1433,69 +1441,89 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
     
     fig = go.Figure()
     
-    # 1. 3D Cranial Vault Ribs across Z
-    n_ribs = min(10, D)
-    for z_idx in np.linspace(1, D - 2, n_ribs, dtype=int):
-        head = (vol_3d[z_idx] > 0.12).astype(np.uint8)
-        cnts, _ = cv2.findContours(head, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if cnts:
-            cnt = max(cnts, key=cv2.contourArea)
-            if cv2.contourArea(cnt) > 150:
-                step = max(1, len(cnt) // 40)
-                pts = cnt[::step]
-                xs = [p[0][0] * px for p in pts] + [pts[0][0][0] * px]
-                ys = [p[0][1] * px for p in pts] + [pts[0][0][1] * px]
-                zs = [z_idx * pz] * len(xs)
-                fig.add_trace(go.Scatter3d(
-                    x=xs, y=ys, z=zs,
-                    mode='lines',
-                    line=dict(color='#334155', width=2),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
+    x_min, x_max = 0, W * px
+    y_min, y_max = 0, H * px
+    z_min, z_max = 0, D * pz
     
-    # 2. Entire 3D Tumor in Green
+    # 12 edges of the 3D bounding box
+    cube_edges = [
+        ([x_min, x_max], [y_min, y_min], [z_min, z_min]),
+        ([x_max, x_max], [y_min, y_max], [z_min, z_min]),
+        ([x_max, x_min], [y_max, y_max], [z_min, z_min]),
+        ([x_min, x_min], [y_max, y_min], [z_min, z_min]),
+        ([x_min, x_max], [y_min, y_min], [z_max, z_max]),
+        ([x_max, x_max], [y_min, y_max], [z_max, z_max]),
+        ([x_max, x_min], [y_max, y_max], [z_max, z_max]),
+        ([x_min, x_min], [y_max, y_min], [z_max, z_max]),
+        ([x_min, x_min], [y_min, y_min], [z_min, z_max]),
+        ([x_max, x_max], [y_min, y_min], [z_min, z_max]),
+        ([x_max, x_max], [y_max, y_max], [z_min, z_max]),
+        ([x_min, x_min], [y_max, y_max], [z_min, z_max]),
+    ]
+    for ex, ey, ez in cube_edges:
+        fig.add_trace(go.Scatter3d(
+            x=ex, y=ey, z=ez,
+            mode='lines',
+            line=dict(color='#d946ef', width=4),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+    mid_x = (x_min + x_max) / 2.0
+    mid_y = (y_min + y_max) / 2.0
+    mid_z = (z_min + z_max) / 2.0
+    
+    labels_pos = [
+        ("S", mid_x, mid_y, z_max + 12),
+        ("I", mid_x, mid_y, z_min - 12),
+        ("R", x_min - 15, mid_y, mid_z),
+        ("L", x_max + 15, mid_y, mid_z),
+    ]
+    for lbl, lx, ly, lz in labels_pos:
+        fig.add_trace(go.Scatter3d(
+            x=[lx], y=[ly], z=[lz],
+            mode='text',
+            text=[f"<b>{lbl}</b>"],
+            textfont=dict(size=16, color='white'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
     pos = np.argwhere(mask_3d > 0)
     if len(pos) > 0:
-        step = max(1, len(pos) // 500)
+        step = max(1, len(pos) // 600)
         sub_pos = pos[::step]
         fig.add_trace(go.Scatter3d(
             x=sub_pos[:, 2] * px,
             y=sub_pos[:, 1] * px,
             z=sub_pos[:, 0] * pz,
             mode='markers',
-            marker=dict(size=4.5, color='#3fb950', opacity=0.85),
-            name='3D Tumor Region (Green)'
+            marker=dict(size=5.5, color='#22c55e', opacity=0.92),
+            name='3D Green Tumor Model'
         ))
         
-    # 3. Active Scrolling Slice Plane
     if current_z is not None and 0 <= current_z < D:
-        head_c = vol_3d[current_z] > 0.12
-        if np.any(head_c):
-            pos_c = np.argwhere(head_c)
-            ymin_c, xmin_c = np.min(pos_c, axis=0) * px
-            ymax_c, xmax_c = np.max(pos_c, axis=0) * px
-            fig.add_trace(go.Mesh3d(
-                x=[xmin_c, xmax_c, xmax_c, xmin_c],
-                y=[ymin_c, ymin_c, ymax_c, ymax_c],
-                z=[current_z * pz] * 4,
-                i=[0, 0], j=[1, 2], k=[2, 3],
-                color='#58a6ff',
-                opacity=0.30,
-                name=f'Active Slice Z={current_z}'
-            ))
+        fig.add_trace(go.Mesh3d(
+            x=[x_min, x_max, x_max, x_min],
+            y=[y_min, y_min, y_max, y_max],
+            z=[current_z * pz] * 4,
+            i=[0, 0], j=[1, 2], k=[2, 3],
+            color='#38bdf8',
+            opacity=0.25,
+            name=f'Active Slice Ax {current_z}'
+        ))
         
     fig.update_layout(
         template='plotly_dark',
         scene=dict(
-            xaxis=dict(title='X (mm) - Left/Right', backgroundcolor='#0d1117'),
-            yaxis=dict(title='Y (mm) - Ant/Post', backgroundcolor='#0d1117'),
-            zaxis=dict(title='Z (mm) - Axial Depth', backgroundcolor='#0d1117'),
+            xaxis=dict(showbackground=False, visible=False),
+            yaxis=dict(showbackground=False, visible=False),
+            zaxis=dict(showbackground=False, visible=False),
             aspectmode='data'
         ),
-        paper_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='#272138',
         height=380,
-        margin=dict(l=10, r=10, t=20, b=10)
+        margin=dict(l=10, r=10, t=10, b=10)
     )
     return fig
 
@@ -1612,26 +1640,28 @@ def generate_high_clarity_clinical_mpr(mask_axial, current_z, depth):
     if has_lesion:
         cor_mask = (((x - tx_c)**2 / (rx**2) + (y - ty_c)**2 / (rz**2) <= 1.0)).astype(np.uint8)
         
-    # --- 2. SAGITTAL VIEW (Y vs Z: Looking at brain from the side) ---
-    cranial_s = ((x - cx)**2 / (94.0**2) + (y - cy)**2 / (98.0**2) <= 1.0)
-    skull_s_outer = ((x - cx)**2 / (100.0**2) + (y - cy)**2 / (104.0**2) <= 1.0)
+    # --- 2. SAGITTAL VIEW (Looking at brain profile from the side, patient facing RIGHT) ---
+    cranial_s = ((x - (cx - 8))**2 / (90.0**2) + (y - cy)**2 / (100.0**2) <= 1.0)
+    nose = ((x - (cx + 80))**2 / (20.0**2) + (y - (cy + 15))**2 / (30.0**2) <= 1.0) & (x > cx + 60)
+    jaw = ((x - (cx + 65))**2 / (22.0**2) + (y - (cy + 60))**2 / (25.0**2) <= 1.0) & (x > cx + 45)
+    skull_s_outer = (((x - (cx - 8))**2 / (96.0**2) + (y - cy)**2 / (106.0**2) <= 1.0) | nose | jaw)
     bone_s = skull_s_outer & (~cranial_s)
     
     sag_img = np.zeros((H, W), dtype=np.float32)
     sag_img[cranial_s] = 0.38 + 0.03 * np.sin(x[cranial_s] / 16.0) * np.cos(y[cranial_s] / 16.0)
     # Corpus callosum arch
-    cc = (((x - cx)**2 / (42.0**2) + (y - (cy - 10))**2 / (14.0**2) <= 1.0) & 
-          ((x - cx)**2 / (34.0**2) + (y - (cy - 8))**2 / (8.0**2) > 1.0)) & cranial_s
+    cc = (((x - (cx - 5))**2 / (38.0**2) + (y - (cy - 12))**2 / (12.0**2) <= 1.0) & 
+          ((x - (cx - 5))**2 / (30.0**2) + (y - (cy - 10))**2 / (7.0**2) > 1.0)) & cranial_s
     sag_img[cc] = 0.55
-    # Cerebellum
-    cb = (((x - (cx + 35))**2 / (30.0**2) + (y - (cy + 42))**2 / (22.0**2) <= 1.0)) & cranial_s
+    # Cerebellum on the LEFT (posterior)
+    cb = (((x - (cx - 38))**2 / (28.0**2) + (y - (cy + 42))**2 / (22.0**2) <= 1.0)) & cranial_s
     sag_img[cb] = 0.42
-    # Skull base
-    sag_img[(y > cy + 68) & (y < cy + 115) & (np.abs(x - cx) < 92)] = 0.85
+    # Skull base & bone
+    sag_img[(y > cy + 68) & (y < cy + 115) & (x < cx + 55)] = 0.85
     sag_img[bone_s] = 0.95
     
-    # Lesion on Sagittal (x is y_norm: anterior left, posterior right)
-    tx_s = int(np.clip(y_norm * W, 42, W - 42))
+    # Lesion on Sagittal (anterior is right: high x; posterior is left: low x)
+    tx_s = int(np.clip((1.0 - y_norm) * W, 42, W - 42))
     ty_s = z_line_y
     sag_mask = np.zeros((H, W), dtype=np.uint8)
     if has_lesion:
@@ -1808,7 +1838,7 @@ def generate_clinical_docx_report(
                 run.font.bold = True
                 run.font.color.rgb = RGBColor(255, 255, 255)
                 run.font.size = Pt(8.5)
-        for s in risk_flags["slice_table"][:10]:
+        for s in risk_flags["slice_table"]:
             rc = t_slices.add_row().cells
             rc[0].text = f"z = {s['z']}"
             rc[1].text = f"{s['d_major']:.1f} mm"
@@ -2114,7 +2144,7 @@ def main():
     with col_3d_left:
         st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Lesion in 3D — agreement outline</h4>', unsafe_allow_html=True)
         
-        col_slider, col_bmode = st.columns([2.0, 1.2])
+        col_slider, col_rot, col_bmode = st.columns([1.7, 1.2, 1.1])
         with col_slider:
             # Scrubbing slider
             selected_z = st.slider(
@@ -2125,29 +2155,43 @@ def main():
                 step=1,
                 key="z_scrub_slider"
             )
+        with col_rot:
+            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>Rotate Imaging</div>", unsafe_allow_html=True)
+            rot_choice_mpr = st.selectbox(
+                "Rotate",
+                options=["Standard (k=1)", "Rotated 180° (k=2)", "Rotated 270° (k=3)", "Native (k=0)"],
+                index=0 if active_rot_k == 1 else (1 if active_rot_k == 2 else (2 if active_rot_k == 3 else 3)),
+                key="mpr_rot_choice",
+                label_visibility="collapsed"
+            )
+            rot_map = {"Standard (k=1)": 1, "Rotated 180° (k=2)": 2, "Rotated 270° (k=3)": 3, "Native (k=0)": 0}
+            active_mpr_rot_k = rot_map[rot_choice_mpr]
         with col_bmode:
             st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>3D View Style</div>", unsafe_allow_html=True)
-            box_style = st.radio("ROI Display", ["3D Brain Volume", "Planar (Axial)"], horizontal=True, key="roi_box_style", label_visibility="collapsed")
+            box_style = st.radio("ROI Display", ["3D Bounding Box", "Planar (Axial)"], horizontal=True, key="roi_box_style", label_visibility="collapsed")
         
-        # Generate 4-panel MPR views
-        mpr = generate_mpr_visualizations(vol_3d, mask_3d, selected_z, rot_k=active_rot_k, crop=CROP_MARGIN)
+        # Generate 4-panel MPR views with selected rotation
+        mpr = generate_mpr_visualizations(vol_3d, mask_3d, selected_z, rot_k=active_mpr_rot_k, crop=CROP_MARGIN)
         
+        # 3D Slicer exact 4-quadrant layout matching reference screenshot:
+        # Top-Left: Axial (Red) | Top-Right: 3D Bounding Box (Purple)
+        # Bottom-Left: Coronal (Green) | Bottom-Right: Sagittal (Yellow)
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown(f"<div class='mpr-label'>Ax {selected_z}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='mpr-label' style='border-left: 3px solid #ef4444; color: #fca5a5;'>Red · Ax {selected_z}</div>", unsafe_allow_html=True)
             st.image(mpr["ax_view"], use_container_width=True)
         with g2:
-            st.markdown("<div class='mpr-label'>Cor</div>", unsafe_allow_html=True)
-            st.image(mpr["cor_view"], use_container_width=True)
+            st.markdown("<div class='mpr-label' style='border-left: 3px solid #c026d3; color: #f0abfc;'>Purple · 3D Bounding Box & Tumor</div>", unsafe_allow_html=True)
+            chosen_bbox_img = mpr["bbox_view"] if box_style == "3D Bounding Box" else mpr["planar_bbox_view"]
+            st.image(chosen_bbox_img, use_container_width=True)
         
         g3, g4 = st.columns(2)
         with g3:
-            st.markdown("<div class='mpr-label'>Sag</div>", unsafe_allow_html=True)
-            st.image(mpr["sag_view"], use_container_width=True)
+            st.markdown("<div class='mpr-label' style='border-left: 3px solid #22c55e; color: #86efac;'>Green · Coronal</div>", unsafe_allow_html=True)
+            st.image(mpr["cor_view"], use_container_width=True)
         with g4:
-            st.markdown("<div class='mpr-label'>3D Brain & Tumor Localization</div>", unsafe_allow_html=True)
-            chosen_bbox_img = mpr["bbox_view"] if box_style == "3D Brain Volume" else mpr["planar_bbox_view"]
-            st.image(chosen_bbox_img, use_container_width=True)
+            st.markdown("<div class='mpr-label' style='border-left: 3px solid #eab308; color: #fde047;'>Yellow · Sagittal</div>", unsafe_allow_html=True)
+            st.image(mpr["sag_view"], use_container_width=True)
             
         st.markdown(f"""
         <div class="coord-ribbon">
@@ -2232,11 +2276,11 @@ def main():
             """, unsafe_allow_html=True)
             
             scan_lines = []
-            for s in risk_metrics['slice_table'][:8]:
+            for s in risk_metrics['slice_table']:
                 scan_lines.append(f"<div class='scan-slice-row'>Scan z = <b>{s['z']}</b>; diameter <b>{s['d_major']:.1f} mm</b>, <b>{s['d_minor']:.1f} mm</b> ({s['area_mm2']:.1f} mm²)</div>")
             
             st.markdown(f"""
-            <div style="max-height: 140px; overflow-y: auto; background: #0d1117; border-radius: 8px; padding: 8px 12px; margin: 8px 0; border: 1px solid #21262d;">
+            <div style="max-height: 180px; overflow-y: auto; background: #0d1117; border-radius: 8px; padding: 8px 12px; margin: 8px 0; border: 1px solid #21262d;">
                 {''.join(scan_lines)}
             </div>
             """, unsafe_allow_html=True)
