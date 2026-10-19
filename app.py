@@ -1692,6 +1692,14 @@ def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
     # 1. Native High-Resolution Axial View
     ax_display = overlay_mask_with_outline(vol_aligned[current_z], mask_aligned[current_z], fill_color=(46, 160, 67), outline_color=(248, 81, 73))
     
+    # Authentic DICOM Viewport Corner HUD (matching hospital PACS workstations)
+    font_hud = cv2.FONT_HERSHEY_SIMPLEX
+    hud_color = (210, 220, 235)
+    cv2.putText(ax_display, f"CT Ax z={current_z}", (6, 14), font_hud, 0.33, hud_color, 1, cv2.LINE_AA)
+    cv2.putText(ax_display, f"Thk:{SLICE_THICKNESS_MM:.1f}mm", (180, 14), font_hud, 0.33, hud_color, 1, cv2.LINE_AA)
+    cv2.putText(ax_display, "W:80 L:40", (6, 250), font_hud, 0.31, (150, 165, 185), 1, cv2.LINE_AA)
+    cv2.putText(ax_display, f"{PIXEL_SPACING_MM:.2f}mm", (195, 250), font_hud, 0.31, (150, 165, 185), 1, cv2.LINE_AA)
+    
     pos = np.argwhere(mask_aligned > 0)
     if len(pos) > 0:
         zc, yc, xc = [int(v) for v in np.mean(pos, axis=0)]
