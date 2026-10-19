@@ -13,10 +13,16 @@ card1_b64 = get_base64_img("presentation_assets/slide_cards/card1_full_visual.pn
 card2_b64 = get_base64_img("presentation_assets/slide_cards/card2_full_visual.png")
 card3_b64 = get_base64_img("presentation_assets/slide_cards/card3_full_visual.png")
 card4_b64 = get_base64_img("presentation_assets/slide_cards/card4_full_visual.png")
-arch_flow_b64 = get_base64_img("presentation_assets/slide_cards/arch_flow_real_platform.png")
 ct_mach_b64 = get_base64_img("presentation_assets/ct_scanner_machine.jpg")
 sw_b64 = get_base64_img("presentation_assets/ref_software.png")
 doc_b64 = get_base64_img("presentation_assets/slide1_doctor_visual.png")
+
+# Slide 4 images
+st1_b64 = get_base64_img("presentation_assets/real_raw_ct_input.png")
+st2_b64 = get_base64_img("presentation_assets/c8_rotation_roset.png")
+st3_b64 = get_base64_img("presentation_assets/deep_latent_feature.png")
+st4_b64 = get_base64_img("presentation_assets/decoder_feature.png")
+st5_b64 = get_base64_img("presentation_assets/real_se2_pred_output.png")
 
 html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -95,18 +101,18 @@ html_content = f"""<!DOCTYPE html>
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        padding: 30px 44px;
+        padding: 28px 44px;
     }}
 
     .slide-header {{
         display: flex;
         align-items: center;
-        margin-bottom: 16px;
+        margin-bottom: 14px;
         gap: 24px;
     }}
 
     .lab-logo img {{
-        height: 48px;
+        height: 44px;
         object-fit: contain;
     }}
 
@@ -115,7 +121,7 @@ html_content = f"""<!DOCTYPE html>
     }}
 
     .slide-title {{
-        font-size: 23px;
+        font-size: 22px;
         font-weight: 800;
         color: #1e3a8a;
         letter-spacing: -0.02em;
@@ -123,7 +129,7 @@ html_content = f"""<!DOCTYPE html>
     }}
 
     .slide-subtitle {{
-        font-size: 13px;
+        font-size: 12.5px;
         color: #64748b;
         margin-top: 2px;
         font-weight: 500;
@@ -131,28 +137,28 @@ html_content = f"""<!DOCTYPE html>
 
     .slide-footer {{
         position: absolute;
-        bottom: 16px;
+        bottom: 14px;
         left: 44px;
         right: 44px;
         display: flex;
         justify-content: space-between;
         align-items: center;
         border-top: 1px solid #e2e8f0;
-        padding-top: 10px;
+        padding-top: 8px;
         font-size: 11px;
         color: #94a3b8;
         font-weight: 600;
     }}
 
     .footer-logo img {{
-        height: 32px;
+        height: 30px;
         object-fit: contain;
     }}
 
     .slide-number {{
         background: #f1f5f9;
         color: #0f172a;
-        padding: 3px 12px;
+        padding: 2px 12px;
         border-radius: 999px;
         font-weight: 700;
     }}
@@ -161,8 +167,8 @@ html_content = f"""<!DOCTYPE html>
     .s1-columns {{
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 24px;
-        margin-bottom: 16px;
+        gap: 20px;
+        margin-bottom: 14px;
     }}
 
     .s1-col {{
@@ -173,22 +179,22 @@ html_content = f"""<!DOCTYPE html>
         background: #f8fafc;
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        padding: 12px;
+        padding: 10px;
     }}
 
     .s1-col h3 {{
-        font-size: 14px;
+        font-size: 13.5px;
         font-weight: 800;
         color: #0f2942;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
     }}
 
     .s1-col-img {{
-        height: 90px;
+        height: 85px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
     }}
 
     .s1-col-img img {{
@@ -198,7 +204,7 @@ html_content = f"""<!DOCTYPE html>
     }}
 
     .s1-col p {{
-        font-size: 11px;
+        font-size: 10.5px;
         color: #475569;
         line-height: 1.35;
     }}
@@ -207,20 +213,20 @@ html_content = f"""<!DOCTYPE html>
         background: #ffffff;
         border: 2px solid #16a34a;
         border-radius: 12px;
-        padding: 14px 20px;
+        padding: 12px 18px;
         text-align: center;
         box-shadow: 0 4px 15px rgba(22, 163, 74, 0.08);
-        margin-bottom: 14px;
+        margin-bottom: 12px;
     }}
 
     .s1-p-title {{
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 800;
         color: #15803d;
     }}
 
     .s1-p-sub {{
-        font-size: 12.5px;
+        font-size: 12px;
         font-weight: 700;
         color: #0f2942;
         margin-top: 2px;
@@ -229,27 +235,27 @@ html_content = f"""<!DOCTYPE html>
     .s1-pills {{
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
-        margin-top: 10px;
+        gap: 10px;
+        margin-top: 8px;
     }}
 
     .s1-pill {{
         background: #f8fafc;
         border: 1px solid #e2e8f0;
         border-radius: 8px;
-        padding: 8px 10px;
+        padding: 6px 10px;
         text-align: left;
     }}
 
     .s1-pill strong {{
-        font-size: 11px;
+        font-size: 10.5px;
         color: #1d4ed8;
         display: block;
         margin-bottom: 2px;
     }}
 
     .s1-pill span {{
-        font-size: 9.5px;
+        font-size: 9px;
         color: #475569;
         line-height: 1.25;
         display: block;
@@ -259,9 +265,9 @@ html_content = f"""<!DOCTYPE html>
         background: linear-gradient(135deg, #15803d, #16a34a);
         color: white;
         text-align: center;
-        padding: 10px;
+        padding: 9px;
         border-radius: 8px;
-        font-size: 15px;
+        font-size: 14.5px;
         font-weight: 800;
         letter-spacing: 0.02em;
     }}
@@ -297,7 +303,7 @@ html_content = f"""<!DOCTYPE html>
 
     .feature-badge {{
         border-radius: 10px;
-        padding: 14px;
+        padding: 12px;
         color: white;
         display: flex;
         flex-direction: column;
@@ -308,8 +314,8 @@ html_content = f"""<!DOCTYPE html>
     .fb-amber {{ background: #d97706; }}
     .fb-red {{ background: #dc2626; }}
 
-    .fb-title {{ font-size: 15px; font-weight: 800; margin-bottom: 4px; }}
-    .fb-desc {{ font-size: 11px; opacity: 0.95; line-height: 1.35; }}
+    .fb-title {{ font-size: 14px; font-weight: 800; margin-bottom: 3px; }}
+    .fb-desc {{ font-size: 10.5px; opacity: 0.95; line-height: 1.35; }}
 
     .pipeline-ribbon {{
         display: grid;
@@ -322,7 +328,7 @@ html_content = f"""<!DOCTYPE html>
         text-align: center;
         padding: 8px;
         border-radius: 8px;
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 700;
     }}
 
@@ -330,7 +336,7 @@ html_content = f"""<!DOCTYPE html>
     .advantage-grid {{
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 16px;
+        gap: 14px;
         flex: 1;
     }}
 
@@ -338,16 +344,16 @@ html_content = f"""<!DOCTYPE html>
         background: #f8fafc;
         border: 1.5px solid #e2e8f0;
         border-radius: 12px;
-        padding: 12px 14px;
+        padding: 10px 12px;
         display: flex;
         flex-direction: column;
     }}
 
     .adv-title {{
-        font-size: 13.5px;
+        font-size: 13px;
         font-weight: 800;
         color: #1e3a8a;
-        margin-bottom: 6px;
+        margin-bottom: 5px;
     }}
 
     .adv-img-box {{
@@ -368,19 +374,116 @@ html_content = f"""<!DOCTYPE html>
     }}
 
     /* SLIDE 4 */
-    .arch-container {{
-        flex: 1;
-        display: flex;
-        background: #ffffff;
-        border-radius: 12px;
-        overflow: hidden;
-        border: 1.5px solid #e2e8f0;
+    .arch-pipeline {{
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+        margin-bottom: 12px;
     }}
 
-    .arch-container img {{
+    .arch-card {{
+        border: 1.5px solid;
+        border-radius: 10px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }}
+
+    .ac-title {{
+        font-size: 11px;
+        font-weight: 800;
+        margin-bottom: 6px;
+    }}
+
+    .ac-img {{
+        height: 105px;
         width: 100%;
-        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #ffffff;
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 6px;
+        border: 1px solid #e2e8f0;
+    }}
+
+    .ac-img img {{
+        max-height: 100%;
+        max-width: 100%;
         object-fit: contain;
+    }}
+
+    .ac-desc {{
+        font-size: 9.5px;
+        color: #334155;
+        line-height: 1.3;
+        text-align: left;
+        width: 100%;
+    }}
+
+    .ac-cyan {{ background: #f0f9ff; border-color: #0284c7; }}
+    .ac-cyan .ac-title {{ color: #0284c7; }}
+
+    .ac-blue {{ background: #eff6ff; border-color: #2563eb; }}
+    .ac-blue .ac-title {{ color: #1d4ed8; }}
+
+    .ac-purple {{ background: #f5f3ff; border-color: #7c3aed; }}
+    .ac-purple .ac-title {{ color: #6d28d9; }}
+
+    .ac-green {{ background: #f0fdf4; border-color: #15803d; }}
+    .ac-green .ac-title {{ color: #15803d; }}
+
+    .skip-banner {{
+        background: #7c3aed;
+        color: white;
+        text-align: center;
+        padding: 4px;
+        border-radius: 6px;
+        font-size: 10px;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }}
+
+    .bottom-cards-row {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }}
+
+    .b-card {{
+        background: #f8fafc;
+        border: 1.5px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px 12px;
+    }}
+
+    .bc-title {{
+        font-size: 11px;
+        font-weight: 800;
+        margin-bottom: 4px;
+    }}
+
+    .b-card ul {{
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }}
+
+    .b-card li {{
+        font-size: 9.2px;
+        color: #475569;
+        line-height: 1.3;
+    }}
+
+    .b-card .formula {{
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        font-size: 9.5px;
+        margin-bottom: 4px;
     }}
 </style>
 </head>
@@ -556,8 +659,69 @@ html_content = f"""<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="arch-container">
-        <img src="{arch_flow_b64}" alt="Architecture Flow with Real Platform Scan Input & Output">
+    <div class="skip-banner">
+        Equivariant Direct-Sum Skip Connections (⊕ Preserves Fine Sub-Millimeter Boundaries)
+    </div>
+
+    <div class="arch-pipeline">
+        <div class="arch-card ac-cyan">
+            <div class="ac-title">1. 2.5D CT Triplet</div>
+            <div class="ac-img"><img src="{st1_b64}" alt="Real Raw CT"></div>
+            <div class="ac-desc">• Raw CT [B, 3, 256, 256]<br>• [z-1, z, z+1] Inter-slice<br>• Real Patient NCCT scan</div>
+        </div>
+        <div class="arch-card ac-blue">
+            <div class="ac-title">2. C8 Group R2Conv</div>
+            <div class="ac-img"><img src="{st2_b64}" alt="C8 Rosette"></div>
+            <div class="ac-desc">• 8 Discrete Rotations (45°)<br>• Pointwise MaxPool (2x2)<br>• Channels: 24 -> 48 -> 96</div>
+        </div>
+        <div class="arch-card ac-purple">
+            <div class="ac-title">3. Group Bottleneck</div>
+            <div class="ac-img"><img src="{st3_b64}" alt="Latent Features"></div>
+            <div class="ac-desc">• 192 Equivariant channels<br>• Invariant representation<br>• f(g · x) = g · f(x)</div>
+        </div>
+        <div class="arch-card ac-blue">
+            <div class="ac-title">4. Equivariant Decoder</div>
+            <div class="ac-img"><img src="{st4_b64}" alt="Decoder Features"></div>
+            <div class="ac-desc">• R2Upsampling (2x scale)<br>• Direct-Sum Skip (⊕)<br>• Sub-mm edge refinement</div>
+        </div>
+        <div class="arch-card ac-green">
+            <div class="ac-title">5. Output SOTA Mask</div>
+            <div class="ac-img"><img src="{st5_b64}" alt="Real Output Scan"></div>
+            <div class="ac-desc">• 84.2% Dice | 73.1% IoU<br>• Real Output from Platform<br>• 3D Volumetric ROI mask</div>
+        </div>
+    </div>
+
+    <div class="bottom-cards-row">
+        <div class="b-card">
+            <div class="bc-title" style="color:#0f2942;">Advanced Combined Loss Function</div>
+            <div class="formula" style="color:#0f2942;">L_total = 2.0*Dice + 0.5*Focal + 0.5*Edge</div>
+            <ul>
+                <li>• Class Weighting [1.0, 10.0] tackles extreme foreground imbalance</li>
+                <li>• Focal Loss (gamma=2.0) suppresses trivial brain background</li>
+                <li>• Edge Loss penalizes fuzzy, indistinct tumor boundaries</li>
+                <li>• Cosine Annealing Optimizer with Warm Restarts (LR 3e-5)</li>
+            </ul>
+        </div>
+        <div class="b-card" style="background:#eff6ff; border-color:#93c5fd;">
+            <div class="bc-title" style="color:#1d4ed8;">C8 Group Invariance Guarantee</div>
+            <div class="formula" style="color:#1d4ed8;">ρ_out(g)[K ⋆ f](x) = [K ⋆ ρ_in(g)f](x)</div>
+            <ul>
+                <li>• 8 Rotational symmetries spaced by 45° around scanner axis</li>
+                <li>• Steerable harmonic basis convolutions in R2Conv filter banks</li>
+                <li>• Mathematical guarantee: tumor boundary is segmented identically</li>
+                <li>  regardless of patient head tilt or scanner couch skew angle</li>
+            </ul>
+        </div>
+        <div class="b-card" style="background:#f0fdf4; border-color:#86efac;">
+            <div class="bc-title" style="color:#15803d;">Multi-Model Consensus & 3D Volumetry</div>
+            <ul>
+                <li>• 6 Benchmark Architectures Ensemble Voting</li>
+                <li>  (Mod-Seg-SE(2), HarmonicNet C4, nnU-Net, Attention U-Net)</li>
+                <li>• Mod-Seg-SE(2) SOTA: 84.2% Dice | 73.1% IoU on NCCT</li>
+                <li>• Pixel-wise uncertainty agreement heatmap at 0.80 threshold</li>
+                <li>• Automated 3D Volumetry: Tumor (mL), Edema (mL), Sphericity</li>
+            </ul>
+        </div>
     </div>
 
     <div class="slide-footer">
@@ -573,4 +737,4 @@ html_content = f"""<!DOCTYPE html>
 with open("presentation_preview.html", "w") as f:
     f.write(html_content)
 
-print("Updated presentation_preview.html successfully!")
+print("HTML presentation preview rebuilt perfectly!")

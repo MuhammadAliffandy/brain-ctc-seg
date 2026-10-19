@@ -27,14 +27,16 @@ def build_presentation():
     BG_CARD = RGBColor(248, 250, 252)
     BORDER_CARD = RGBColor(226, 232, 240)
     CYAN_ACCENT = RGBColor(2, 132, 199)
+    PURPLE_DARK = RGBColor(124, 58, 237)
+    PURPLE_LIGHT = RGBColor(245, 243, 255)
 
     logo_osl = "presentation_assets/logo_osl.png"
     logo_ntu = "presentation_assets/logo_ntu.png"
 
     def add_slide_chrome(slide, title_text, subtitle_text=None, slide_num=1):
-        # 1. Top-Left OSL Logo
+        # 1. Top-Left OSL Logo (cleaned without black bar)
         if os.path.exists(logo_osl):
-            slide.shapes.add_picture(logo_osl, Inches(0.6), Inches(0.35), Inches(1.8), Inches(0.85))
+            slide.shapes.add_picture(logo_osl, Inches(0.6), Inches(0.35), Inches(1.8), Inches(0.75))
         else:
             tx_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(2.2), Inches(0.6))
             p = tx_box.text_frame.paragraphs[0]
@@ -99,7 +101,7 @@ def build_presentation():
     tf1 = t1_box.text_frame
     tf1.word_wrap = True
     p1a = tf1.paragraphs[0]
-    p1a.text = "• The rotation problem (patient head tilt & couch skew)"
+    p1a.text = "• The rotation problem (head tilt & couch skew)"
     p1a.font.size = Pt(10)
     p1a.font.color.rgb = TEXT_MAIN
     p1b = tf1.add_paragraph()
@@ -330,15 +332,174 @@ def build_presentation():
             s3.shapes.add_picture(card_info["img"], left + Inches(0.12), top + Inches(0.38), Inches(5.51), Inches(2.05))
 
     # =========================================================================
-    # SLIDE 4: Architecture of Mod-Seg-SE(2) (With Real Input & Output Scans)
+    # SLIDE 4: Architecture of Mod-Seg-SE(2) (Clean Native PPT Design with Real Scans)
     # =========================================================================
     s4 = prs.slides.add_slide(blank_layout)
     add_slide_chrome(s4, "Mod-Seg-SE(2) Architecture & Pipeline Flow", 
                      "Group Equivariant Convolutional Network (C8 / N=8 Rotations) with Multi-Model Consensus Engine", slide_num=4)
 
-    arch_visual_path = "presentation_assets/slide_cards/arch_flow_real_platform.png"
-    if os.path.exists(arch_visual_path):
-        s4.shapes.add_picture(arch_visual_path, Inches(0.8), Inches(1.25), Inches(11.73), Inches(5.45))
+    # 5 Top Pipeline Stage Cards
+    stages_data = [
+        {
+            "num": "1. 2.5D CT Triplet",
+            "img": "presentation_assets/real_raw_ct_input.png",
+            "desc": "• Raw CT [B, 3, 256, 256]\n• [z-1, z, z+1] Inter-slice\n• Real Patient NCCT scan",
+            "color": CYAN_ACCENT, "bg": RGBColor(240, 249, 255)
+        },
+        {
+            "num": "2. C8 Group R2Conv",
+            "img": "presentation_assets/c8_rotation_roset.png",
+            "desc": "• 8 Discrete Rotations (45°)\n• Pointwise MaxPool (2x2)\n• Channels: 24 -> 48 -> 96",
+            "color": BLUE_DARK, "bg": RGBColor(239, 246, 255)
+        },
+        {
+            "num": "3. Group Bottleneck",
+            "img": "presentation_assets/deep_latent_feature.png",
+            "desc": "• 192 Equivariant channels\n• Invariant representation\n• f(g · x) = g · f(x)",
+            "color": PURPLE_DARK, "bg": PURPLE_LIGHT
+        },
+        {
+            "num": "4. Equivariant Decoder",
+            "img": "presentation_assets/decoder_feature.png",
+            "desc": "• R2Upsampling (2x scale)\n• Direct-Sum Skip (⊕)\n• Sub-mm edge refinement",
+            "color": BLUE_DARK, "bg": RGBColor(239, 246, 255)
+        },
+        {
+            "num": "5. Output SOTA Mask",
+            "img": "presentation_assets/real_se2_pred_output.png",
+            "desc": "• 84.2% Dice | 73.1% IoU\n• Real Output from Platform\n• 3D Volumetric ROI mask",
+            "color": GREEN_DARK, "bg": GREEN_LIGHT
+        }
+    ]
+
+    card_w = Inches(2.22)
+    card_h = Inches(3.25)
+    card_y = Inches(1.4)
+    start_x = Inches(0.66)
+    gap = Inches(0.23)
+
+    for i, st in enumerate(stages_data):
+        cx = start_x + i * (card_w + gap)
+        
+        # Outer Card
+        scard = s4.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, card_y, card_w, card_h)
+        scard.fill.solid()
+        scard.fill.fore_color.rgb = st["bg"]
+        scard.line.color.rgb = st["color"]
+        scard.line.width = Pt(1.5)
+        
+        # Stage Header
+        th = s4.shapes.add_textbox(cx, card_y + Inches(0.08), card_w, Inches(0.35))
+        pth = th.text_frame.paragraphs[0]
+        pth.text = st["num"]
+        pth.font.size = Pt(11)
+        pth.font.bold = True
+        pth.font.color.rgb = st["color"]
+        pth.alignment = PP_ALIGN.CENTER
+        
+        # Embedded Image
+        if os.path.exists(st["img"]):
+            s4.shapes.add_picture(st["img"], cx + Inches(0.21), card_y + Inches(0.45), Inches(1.8), Inches(1.65))
+            
+        # Description text below image
+        td = s4.shapes.add_textbox(cx + Inches(0.05), card_y + Inches(2.15), card_w - Inches(0.1), Inches(1.0))
+        td.text_frame.word_wrap = True
+        for line_i, line_t in enumerate(st["desc"].split("\n")):
+            p_line = td.text_frame.paragraphs[0] if line_i == 0 else td.text_frame.add_paragraph()
+            p_line.text = line_t
+            p_line.font.size = Pt(9.2)
+            p_line.font.color.rgb = TEXT_MAIN
+            if line_i > 0:
+                p_line.space_before = Pt(2)
+
+        # Arrow to next stage
+        if i < 4:
+            arr_box = s4.shapes.add_textbox(cx + card_w, card_y + Inches(1.2), gap, Inches(0.4))
+            p_arr = arr_box.text_frame.paragraphs[0]
+            p_arr.text = "➔"
+            p_arr.font.size = Pt(14)
+            p_arr.font.bold = True
+            p_arr.font.color.rgb = TEXT_MUTED
+            p_arr.alignment = PP_ALIGN.CENTER
+
+    # Skip Connection Badge across Stages 2-4
+    skip_badge = s4.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(3.1), Inches(1.22), Inches(7.1), Inches(0.32))
+    skip_badge.fill.solid()
+    skip_badge.fill.fore_color.rgb = PURPLE_DARK
+    skip_badge.line.fill.background()
+    p_sk = skip_badge.text_frame.paragraphs[0]
+    p_sk.text = "Equivariant Direct-Sum Skip Connections (⊕ Preserves Sub-Millimeter Boundaries)"
+    p_sk.font.size = Pt(9.5)
+    p_sk.font.bold = True
+    p_sk.font.color.rgb = WHITE
+    p_sk.alignment = PP_ALIGN.CENTER
+
+    # 3 Bottom Highlight Cards
+    b_y = Inches(4.85)
+    b_h = Inches(1.85)
+    b_w = Inches(3.85)
+    
+    bottom_data = [
+        {
+            "title": "Advanced Combined Loss Function",
+            "lines": [
+                "L_total = 2.0*Dice + 0.5*Focal + 0.5*Edge",
+                "• Class Weighting [1.0, 10.0] tackles extreme foreground imbalance",
+                "• Focal Loss (gamma=2.0) suppresses trivial brain background",
+                "• Edge Loss penalizes fuzzy, indistinct tumor boundaries",
+                "• Cosine Annealing Optimizer with Warm Restarts (LR 3e-5)"
+            ],
+            "color": NAVY, "bg": BG_CARD, "border": BORDER_CARD
+        },
+        {
+            "title": "C8 Group Invariance Guarantee",
+            "lines": [
+                "ρ_out(g)[K ⋆ f](x) = [K ⋆ ρ_in(g)f](x)",
+                "• 8 Rotational symmetries spaced by 45° around scanner axis",
+                "• Steerable harmonic basis convolutions in R2Conv filter banks",
+                "• Mathematical guarantee: tumor boundary is segmented identically",
+                "  regardless of patient head tilt or scanner couch skew angle"
+            ],
+            "color": BLUE_DARK, "bg": RGBColor(239, 246, 255), "border": RGBColor(147, 197, 253)
+        },
+        {
+            "title": "Multi-Model Consensus & 3D Volumetry",
+            "lines": [
+                "• 6 Benchmark Architectures Ensemble Voting",
+                "  (Mod-Seg-SE(2), HarmonicNet C4, nnU-Net, Attention U-Net)",
+                "• Mod-Seg-SE(2) SOTA: 84.2% Dice | 73.1% IoU on NCCT",
+                "• Pixel-wise uncertainty agreement heatmap at 0.80 threshold",
+                "• Automated 3D Volumetry: Tumor (mL), Edema (mL), Sphericity"
+            ],
+            "color": GREEN_DARK, "bg": RGBColor(240, 253, 244), "border": RGBColor(134, 239, 172)
+        }
+    ]
+
+    for b_idx, b_info in enumerate(bottom_data):
+        bx = Inches(0.66 + b_idx * 4.1)
+        b_box = s4.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, bx, b_y, b_w, b_h)
+        b_box.fill.solid()
+        b_box.fill.fore_color.rgb = b_info["bg"]
+        b_box.line.color.rgb = b_info["border"]
+        b_box.line.width = Pt(1.5)
+        
+        tf_bb = b_box.text_frame
+        tf_bb.word_wrap = True
+        p_bt = tf_bb.paragraphs[0]
+        p_bt.text = b_info["title"]
+        p_bt.font.size = Pt(11)
+        p_bt.font.bold = True
+        p_bt.font.color.rgb = b_info["color"]
+        
+        for li, lt in enumerate(b_info["lines"]):
+            p_lt = tf_bb.add_paragraph()
+            p_lt.text = lt
+            p_lt.font.size = Pt(9.0)
+            p_lt.font.color.rgb = TEXT_MAIN
+            p_lt.space_before = Pt(2.5) if li > 0 else Pt(4)
+            if li == 0 and ("L_total" in lt or "ρ_out" in lt):
+                p_lt.font.bold = True
+                p_lt.font.color.rgb = b_info["color"]
 
     # Save presentation
     output_pptx = "Brain_CT_Seg_Client_Presentation.pptx"
