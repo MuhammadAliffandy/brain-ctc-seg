@@ -2074,10 +2074,71 @@ def main():
             st.caption(f"Loaded Slice: **{chosen_case['name']}** (Confirmed GT: **{int(np.sum(mask_raw > 0)):,} px**)")
 
     elif input_source == "Upload Custom Scan":
-        uploaded_file = st.file_uploader("Upload Brain CT Scan (PNG/JPG/NPY)", type=["png", "jpg", "jpeg", "npy"])
+        uploaded_file = st.file_uploader(
+            "Upload Brain CT Scan (DICOM .dcm / Series .zip / PNG / NPY)",
+            type=["dcm", "zip", "png", "jpg", "jpeg", "npy"]
+        )
         if uploaded_file is not None:
             slice_title = uploaded_file.name
-            if uploaded_file.name.endswith(".npy"):
+            fname_lower = uploaded_file.name.lower()
+            if fname_lower.endswith(".dcm"):
+                try:
+                    import pydicom
+                    ds = pydicom.dcmread(uploaded_file)
+                    slope = float(getattr(ds, "RescaleSlope", 1.0))
+                    intercept = float(getattr(ds, "RescaleIntercept", 0.0))
+                    pixel_array = ds.pixel_array.astype(np.float32)
+                    hu = pixel_array * slope + intercept
+                    
+                    wc = float(getattr(ds, "WindowCenter", 40))
+                    ww = float(getattr(ds, "WindowWidth", 80))
+                    w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
+                    img_raw = np.clip((hu - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+                    if img_raw.shape != (256, 256):
+                        img_raw = cv2.resize(img_raw, (256, 256), interpolation=cv2.INTER_LINEAR)
+                    tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                    p_name = str(getattr(ds, "PatientName", "Anonymous Patient"))
+                    st.success(f"🏥 DICOM CT Slice Loaded: **{p_name}** | Modality: **{getattr(ds, 'Modality', 'CT')}** | Window: **L:{wc:.0f} W:{ww:.0f}**")
+                except Exception as e:
+                    st.error(f"Error reading DICOM file: {e}")
+            elif fname_lower.endswith(".zip"):
+                try:
+                    import zipfile, io, pydicom
+                    zf = zipfile.ZipFile(uploaded_file)
+                    dcm_slices = []
+                    for fname in zf.namelist():
+                        base = os.path.basename(fname)
+                        if base.lower().endswith(".dcm") or (not "." in base and not fname.endswith("/")):
+                            try:
+                                d_bytes = zf.read(fname)
+                                ds = pydicom.dcmread(io.BytesIO(d_bytes))
+                                if hasattr(ds, "pixel_array"):
+                                    slope = float(getattr(ds, "RescaleSlope", 1.0))
+                                    intercept = float(getattr(ds, "RescaleIntercept", 0.0))
+                                    hu = ds.pixel_array.astype(np.float32) * slope + intercept
+                                    wc = float(getattr(ds, "WindowCenter", 40))
+                                    ww = float(getattr(ds, "WindowWidth", 80))
+                                    w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
+                                    norm_slice = np.clip((hu - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+                                    if norm_slice.shape != (256, 256):
+                                        norm_slice = cv2.resize(norm_slice, (256, 256), interpolation=cv2.INTER_LINEAR)
+                                    inst_num = int(getattr(ds, "InstanceNumber", len(dcm_slices)))
+                                    loc = float(getattr(ds, "SliceLocation", getattr(ds, "ImagePositionPatient", [0, 0, inst_num])[2]))
+                                    dcm_slices.append((loc, inst_num, norm_slice, str(getattr(ds, "PatientName", "Patient"))))
+                            except Exception:
+                                pass
+                    if dcm_slices:
+                        dcm_slices.sort(key=lambda s: s[0])
+                        vol_3d = np.stack([s[2] for s in dcm_slices], axis=0) # [Depth, H, W]
+                        patient_z_active = len(vol_3d) // 2
+                        img_raw = vol_3d[patient_z_active]
+                        tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                        st.success(f"🏥 Full 3D DICOM Series Loaded: **{len(dcm_slices)} slices** (3D Volume active: {vol_3d.shape[0]}x{vol_3d.shape[1]}x{vol_3d.shape[2]})")
+                    else:
+                        st.error("No valid DICOM (.dcm) files found inside the uploaded ZIP.")
+                except Exception as e:
+                    st.error(f"Error processing DICOM ZIP series: {e}")
+            elif fname_lower.endswith(".npy"):
                 arr = np.load(uploaded_file)
                 if arr.ndim == 3 and arr.shape[-1] == 3:
                     img_raw = arr[..., 1].astype(np.float32)
@@ -2089,6 +2150,31 @@ def main():
                 pil_img = Image.open(uploaded_file).convert("L")
                 img_raw = np.array(pil_img).astype(np.float32) / 255.0
                 tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+        
+        # Helper download button for sample DICOM files
+        with st.expander("📥 Download Sample Clinical Brain CT DICOM Files for Testing"):
+            st.caption("Gunakan sampel DICOM klinis ini untuk menguji fitur upload DICOM:")
+            c_d1, c_d2 = st.columns(2)
+            with c_d1:
+                if os.path.exists("sample_dicom/sample_brain_ct_slice.dcm"):
+                    with open("sample_dicom/sample_brain_ct_slice.dcm", "rb") as f_dcm:
+                        st.download_button(
+                            label="📄 Download Sample Single Slice (.dcm)",
+                            data=f_dcm.read(),
+                            file_name="sample_brain_ct_slice.dcm",
+                            mime="application/dicom",
+                            use_container_width=True
+                        )
+            with c_d2:
+                if os.path.exists("sample_dicom/patient_ct_brain_series.zip"):
+                    with open("sample_dicom/patient_ct_brain_series.zip", "rb") as f_zip:
+                        st.download_button(
+                            label="📦 Download Sample 3D Series 24-Slice (.zip)",
+                            data=f_zip.read(),
+                            file_name="patient_ct_brain_series.zip",
+                            mime="application/zip",
+                            use_container_width=True
+                        )
     else:
         with col_case_picker:
             preset_choice = st.selectbox(
