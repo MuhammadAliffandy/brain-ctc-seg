@@ -1734,6 +1734,70 @@ def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
     }
 
 
+def apply_brush_stroke(mask, x, y, radius_px, action="add"):
+    """
+    Applies a circular brush stroke (Add or Delete/Eraser) at (x, y) with radius_px.
+    """
+    m = mask.copy().astype(np.uint8)
+    if action == "add":
+        cv2.circle(m, (int(x), int(y)), int(radius_px), 1, -1)
+    elif action == "delete":
+        cv2.circle(m, (int(x), int(y)), int(radius_px), 0, -1)
+    return (m > 0).astype(np.uint8)
+
+
+def apply_radial_margin(mask, margin_mm, pixel_spacing=PIXEL_SPACING_MM):
+    """
+    Applies uniform radial expansion (dilation) or contraction (erosion) in mm.
+    """
+    m = mask.copy().astype(np.uint8)
+    if abs(margin_mm) < 0.05:
+        return m
+    r_px = max(1, int(round(abs(margin_mm) / pixel_spacing)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r_px + 1, 2 * r_px + 1))
+    if margin_mm > 0:
+        return (cv2.dilate(m, kernel) > 0).astype(np.uint8)
+    else:
+        return (cv2.erode(m, kernel) > 0).astype(np.uint8)
+
+
+def apply_mask_translation(mask, shift_x_mm, shift_y_mm, pixel_spacing=PIXEL_SPACING_MM):
+    """
+    Translates/shifts the lesion centroid horizontally and vertically in mm.
+    """
+    m = mask.copy().astype(np.uint8)
+    sx = int(round(shift_x_mm / pixel_spacing))
+    sy = int(round(shift_y_mm / pixel_spacing))
+    if sx == 0 and sy == 0:
+        return m
+    H, W = m.shape
+    M = np.float32([[1, 0, sx], [0, 1, sy]])
+    return (cv2.warpAffine(m, M, (W, H), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0) > 0).astype(np.uint8)
+
+
+def apply_denoise_and_fill(mask):
+    """
+    Removes isolated pixel noise and fills internal voids in the lesion.
+    """
+    m = (mask > 0).astype(np.uint8)
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, kernel_close)
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, kernel_open)
+    return (m > 0).astype(np.uint8)
+
+
+def draw_brush_crosshair_preview(base_img, mask, cx, cy, r_px, action="add"):
+    """
+    Renders CT slice with current lesion mask and a prominent brush crosshair & circle preview.
+    """
+    overlay = overlay_mask_with_outline(base_img, mask, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
+    color = (34, 197, 94) if action == "add" else (248, 81, 73)
+    cv2.circle(overlay, (int(cx), int(cy)), int(r_px), color, 2, cv2.LINE_AA)
+    cv2.drawMarker(overlay, (int(cx), int(cy)), color, cv2.MARKER_CROSS, 16, 1, cv2.LINE_AA)
+    return overlay
+
+
 def generate_clinical_docx_report(
     case_name,
     modality_name,
@@ -1744,7 +1808,8 @@ def generate_clinical_docx_report(
     model_rows,
     outline_accepted=False,
     safety_margin_mm=0.0,
-    pacs_dispatched=False
+    pacs_dispatched=False,
+    clinician_edited=False
 ):
     """
     Generates a professionally formatted Word (.docx) clinical report
@@ -1876,7 +1941,8 @@ def generate_clinical_docx_report(
     t_sign = doc.add_table(rows=3, cols=2)
     t_sign.cell(0, 0).text = f"Reviewing Physician: {reviewer_name}"
     t_sign.cell(0, 1).text = f"Outline Accepted: {'YES (Validated)' if outline_accepted else 'Draft / Pending Approval'}"
-    t_sign.cell(1, 0).text = f"Clinical Safety Margin: {'+' if safety_margin_mm >= 0 else ''}{safety_margin_mm:.1f} mm"
+    margin_text = f"Clinician Brush Adjusted ({'+' if safety_margin_mm >= 0 else ''}{safety_margin_mm:.1f} mm)" if (safety_margin_mm != 0 or clinician_edited) else "AI Standard Model Boundary (0.0 mm)"
+    t_sign.cell(1, 0).text = f"Clinical Safety Margin: {margin_text}"
     t_sign.cell(1, 1).text = f"OR / PACS Transfer: {'Transmitted (PACS-NTUH-01)' if pacs_dispatched else 'Local Staging'}"
     t_sign.cell(2, 0).text = "Verification Checksum: DICOM-RT-SEC-99214-OK"
     t_sign.cell(2, 1).text = "Equivariance Certified: CT-SE(2) N=8 Verified"
@@ -2119,10 +2185,32 @@ def main():
             c_thresh = 0.50 if "Soft" in voting_mode else 0.50
             strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
             ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, c_thresh)
-            consensus_meas = compute_physical_measurements(ensemble_data["ensemble_mask"])
+            
+            # --- Clinician Custom Edited Mask Check ---
+            if "clinician_edited_masks" not in st.session_state:
+                st.session_state["clinician_edited_masks"] = {}
+
+            active_slice_z = st.session_state.get("z_scrub_slider", patient_z_active if patient_z_active < vol_3d.shape[0] else vol_3d.shape[0] // 2)
+            slice_edit_key = f"{slice_title}_{active_slice_z}"
+            is_clinician_edited = slice_edit_key in st.session_state["clinician_edited_masks"]
+
+            if is_clinician_edited:
+                active_consensus_mask = st.session_state["clinician_edited_masks"][slice_edit_key]
+            else:
+                active_consensus_mask = ensemble_data["ensemble_mask"]
+
+            consensus_meas = compute_physical_measurements(active_consensus_mask)
+
+            # Sync clinician edits into 3D volume
+            if is_clinician_edited and active_slice_z < len(mask_3d):
+                mask_3d = mask_3d.copy()
+                mask_3d[active_slice_z] = active_consensus_mask
+                risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
             
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
             
+            if is_clinician_edited:
+                st.markdown("<div style='background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #86efac; margin-bottom: 8px;'>✏️ <b>Clinician Adjusted Mask Active</b> (Refined by Dr. XXXXX)</div>", unsafe_allow_html=True)
             st.markdown("<div style='font-size: 13px; color: #8b949e;'>Consensus Tumor Area</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='font-size: 26px; font-weight: 700; color: #e6edf3;'>{consensus_meas['pixels']:,} px</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='font-size: 16px; font-weight: 600; color: #58a6ff;'>{consensus_meas['area_mm2']:.1f} mm² <span style='font-size: 12px; color: #8b949e;'>({consensus_meas['area_cm2']:.2f} cm²)</span></div>", unsafe_allow_html=True)
@@ -2455,9 +2543,194 @@ def main():
 
     safety_margin_mm = 0.0
     if st.session_state["edit_margin_active"]:
-        st.markdown("##### 📐 Surgical Safety Margin Adjustment")
-        safety_margin_mm = st.slider("Radial Margin Expansion/Erosion (mm)", -3.0, 3.0, 0.0, 0.5, help="Expands or contracts the consensus lesion margin for stereotactic planning.")
-        st.caption(f"Margin offset: **{safety_margin_mm:+.1f} mm** (applied to OR export)")
+        slice_edit_key = f"{slice_title}_{selected_z}"
+        with st.container(border=True):
+            st.markdown(f"""
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <h4 style="margin: 0; color: #58a6ff;">✏️ Clinician Interactive Lesion Editor (Margin & Brush)</h4>
+                <span style="font-size: 12px; color: {'#86efac' if is_clinician_edited else '#8b949e'}; background: #161b22; padding: 4px 10px; border-radius: 6px; border: 1px solid {'#22c55e' if is_clinician_edited else '#30363d'};">
+                    Slice <b>z = {selected_z}</b> {'(Modified ✍️)' if is_clinician_edited else '(AI Original)'}
+                </span>
+            </div>
+            <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">
+                Fasilitas koreksi interaktif untuk dokter: Tambah (Brush), Hapus (Eraser), Geser letak lesi, atau atur margin radial. Besaran lesi (mm², diameter, dan volume) akan diperbarui secara otomatis sebelum diekspor ke laporan Word.
+            </p>
+            """, unsafe_allow_html=True)
+            
+            curr_target_mask = active_consensus_mask.copy()
+            orig_ai_mask = ensemble_data["ensemble_mask"]
+            orig_meas = compute_physical_measurements(orig_ai_mask)
+            
+            if np.sum(curr_target_mask > 0) > 0:
+                py, px = np.where(curr_target_mask > 0)
+                def_cx, def_cy = int(np.mean(px)), int(np.mean(py))
+                min_px, max_px = int(np.min(px)), int(np.max(px))
+                min_py, max_py = int(np.min(py)), int(np.max(py))
+            else:
+                def_cx, def_cy = 128, 128
+                min_px, max_px = 110, 146
+                min_py, max_py = 110, 146
+
+            col_brush_preview, col_brush_controls = st.columns([1.1, 1.3], gap="large")
+
+            with col_brush_controls:
+                tool_tab1, tool_tab2, tool_tab3 = st.tabs(["🖌️ Brush (Add/Delete)", "📐 Radial Margin & Shift", "⚡ Quick Presets & Reset"])
+                
+                with tool_tab1:
+                    b_mode = st.radio(
+                        "Brush Action",
+                        ["🟢 Add Lesion (Brush)", "🔴 Delete Lesion (Eraser)"],
+                        horizontal=True,
+                        key=f"b_mode_{selected_z}"
+                    )
+                    action_key = "add" if "Add" in b_mode else "delete"
+                    
+                    b_rad_mm = st.slider(
+                        "Brush Diameter (mm)",
+                        min_value=1.0,
+                        max_value=25.0,
+                        value=6.0,
+                        step=0.5,
+                        key=f"b_rad_mm_{selected_z}"
+                    )
+                    b_rad_px = max(1, int(round((b_rad_mm / 2.0) / PIXEL_SPACING_MM)))
+                    st.caption(f"Brush radius: **{b_rad_mm:.1f} mm** (~{b_rad_px * 2} px diameter)")
+                    
+                    st.markdown("<div style='font-size: 13px; color: #8b949e; margin-top: 8px;'>Target Location:</div>", unsafe_allow_html=True)
+                    
+                    q1, q2, q3, q4, q5 = st.columns(5)
+                    target_x = st.session_state.get(f"bx_{selected_z}", def_cx)
+                    target_y = st.session_state.get(f"by_{selected_z}", def_cy)
+                    
+                    with q1:
+                        if st.button("🎯 Center", key=f"btn_c_{selected_z}", use_container_width=True):
+                            st.session_state[f"bx_{selected_z}"] = def_cx
+                            st.session_state[f"by_{selected_z}"] = def_cy
+                            st.rerun()
+                    with q2:
+                        if st.button("⬆️ Top", key=f"btn_t_{selected_z}", use_container_width=True):
+                            st.session_state[f"bx_{selected_z}"] = def_cx
+                            st.session_state[f"by_{selected_z}"] = min_py
+                            st.rerun()
+                    with q3:
+                        if st.button("⬇️ Bottom", key=f"btn_b_{selected_z}", use_container_width=True):
+                            st.session_state[f"bx_{selected_z}"] = def_cx
+                            st.session_state[f"by_{selected_z}"] = max_py
+                            st.rerun()
+                    with q4:
+                        if st.button("⬅️ Left", key=f"btn_l_{selected_z}", use_container_width=True):
+                            st.session_state[f"bx_{selected_z}"] = min_px
+                            st.session_state[f"by_{selected_z}"] = def_cy
+                            st.rerun()
+                    with q5:
+                        if st.button("➡️ Right", key=f"btn_r_{selected_z}", use_container_width=True):
+                            st.session_state[f"bx_{selected_z}"] = max_px
+                            st.session_state[f"by_{selected_z}"] = def_cy
+                            st.rerun()
+                    
+                    col_bx, col_by = st.columns(2)
+                    with col_bx:
+                        b_x = st.slider("X Position (px)", 0, 255, int(target_x), key=f"bx_slider_{selected_z}")
+                    with col_by:
+                        b_y = st.slider("Y Position (px)", 0, 255, int(target_y), key=f"by_slider_{selected_z}")
+                        
+                    if st.button(f"🖌️ Apply Brush Stroke at ({b_x}, {b_y})", type="primary", use_container_width=True, key=f"apply_brush_{selected_z}"):
+                        new_mask = apply_brush_stroke(curr_target_mask, b_x, b_y, b_rad_px, action=action_key)
+                        st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                        st.rerun()
+
+                with tool_tab2:
+                    st.markdown("**1. Radial Safety Margin (Uniform Expansion/Contraction)**")
+                    rad_margin = st.slider(
+                        "Radial Margin Adjustment (mm)",
+                        -4.0, 4.0, 0.0, 0.2,
+                        key=f"rad_margin_slider_{selected_z}",
+                        help="Nilai positif memperluas batas lesi (+mm); nilai negatif menyusutkan batas lesi (-mm)."
+                    )
+                    if st.button(f"📐 Apply Radial Margin ({rad_margin:+.1f} mm)", use_container_width=True, key=f"apply_rad_{selected_z}"):
+                        new_mask = apply_radial_margin(curr_target_mask, rad_margin)
+                        st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                        safety_margin_mm = rad_margin
+                        st.rerun()
+                        
+                    st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+                    st.markdown("**2. Centroid Translation / Shift Location**")
+                    col_sx, col_sy = st.columns(2)
+                    with col_sx:
+                        shift_x = st.slider("Shift X (mm)", -15.0, 15.0, 0.0, 0.5, key=f"shf_x_{selected_z}")
+                    with col_sy:
+                        shift_y = st.slider("Shift Y (mm)", -15.0, 15.0, 0.0, 0.5, key=f"shf_y_{selected_z}")
+                    if st.button(f"🎯 Shift Lesion Location (ΔX={shift_x:+.1f}mm, ΔY={shift_y:+.1f}mm)", use_container_width=True, key=f"apply_shift_{selected_z}"):
+                        new_mask = apply_mask_translation(curr_target_mask, shift_x, shift_y)
+                        st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                        st.rerun()
+
+                with tool_tab3:
+                    p1, p2 = st.columns(2)
+                    with p1:
+                        if st.button("➕ Dilate (+1.0 mm)", use_container_width=True, key=f"quick_dil_{selected_z}"):
+                            new_mask = apply_radial_margin(curr_target_mask, 1.0)
+                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                            st.rerun()
+                    with p2:
+                        if st.button("➖ Erode (-1.0 mm)", use_container_width=True, key=f"quick_ero_{selected_z}"):
+                            new_mask = apply_radial_margin(curr_target_mask, -1.0)
+                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                            st.rerun()
+                            
+                    p3, p4 = st.columns(2)
+                    with p3:
+                        if st.button("🧹 Denoise & Clean Voids", use_container_width=True, key=f"quick_den_{selected_z}"):
+                            new_mask = apply_denoise_and_fill(curr_target_mask)
+                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                            st.rerun()
+                    with p4:
+                        if st.button("🗑️ Clear Slice Lesion", use_container_width=True, key=f"quick_clr_{selected_z}"):
+                            new_mask = np.zeros_like(curr_target_mask)
+                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                            st.rerun()
+                            
+                    st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+                    if st.button("🔄 Reset to AI Model Consensus", type="secondary", use_container_width=True, key=f"reset_ai_{selected_z}"):
+                        if slice_edit_key in st.session_state["clinician_edited_masks"]:
+                            del st.session_state["clinician_edited_masks"][slice_edit_key]
+                        st.rerun()
+
+            with col_brush_preview:
+                preview_img = draw_brush_crosshair_preview(
+                    img_gray,
+                    curr_target_mask,
+                    cx=b_x if 'b_x' in locals() else def_cx,
+                    cy=b_y if 'b_y' in locals() else def_cy,
+                    r_px=b_rad_px if 'b_rad_px' in locals() else 8,
+                    action=action_key if 'action_key' in locals() else "add"
+                )
+                st.image(preview_img, caption=f"Axial Preview with Brush Crosshair at ({b_x if 'b_x' in locals() else def_cx}, {b_y if 'b_y' in locals() else def_cy})", use_container_width=True)
+                
+                # Live Comparison Card
+                delta_area = consensus_meas['area_mm2'] - orig_meas['area_mm2']
+                delta_pct = (delta_area / max(1e-5, orig_meas['area_mm2'])) * 100.0 if orig_meas['area_mm2'] > 0 else 0.0
+                
+                st.markdown(f"""
+                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 13px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="color: #8b949e;">AI Initial Area:</span>
+                        <b style="color: #c9d1d9;">{orig_meas['area_mm2']:.1f} mm² ({orig_meas['pixels']:,} px)</b>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="color: #8b949e;">Clinician Adjusted:</span>
+                        <b style="color: #58a6ff;">{consensus_meas['area_mm2']:.1f} mm² ({consensus_meas['pixels']:,} px)</b>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="color: #8b949e;">Major × Minor Diam:</span>
+                        <b style="color: #e6edf3;">{consensus_meas['major_diam_mm']:.1f} × {consensus_meas['minor_diam_mm']:.1f} mm</b>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; border-top: 1px solid #21262d; padding-top: 6px; margin-top: 4px;">
+                        <span style="color: #8b949e;">Net Margin Shift:</span>
+                        <b style="color: {'#3fb950' if delta_area >= 0 else '#f85149'};">{delta_area:+.1f} mm² ({delta_pct:+.1f}%)</b>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
     # ── Word Report (.docx) Download Button ──
     model_rows_data = []
@@ -2499,7 +2772,8 @@ def main():
         model_rows=model_rows_data,
         outline_accepted=st.session_state["outline_accepted"],
         safety_margin_mm=safety_margin_mm,
-        pacs_dispatched=st.session_state["pacs_sent"]
+        pacs_dispatched=st.session_state["pacs_sent"],
+        clinician_edited=is_clinician_edited
     )
 
     clean_file_name = f"Brain_CT_Clinical_Report_{slice_title.replace(' ', '_').replace('/', '_')}.docx"
