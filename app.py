@@ -2443,6 +2443,7 @@ def main():
     with col_mat1:
         z_min = -0.2 if "Pearson" in corr_metric else 0.0
         if HAS_PLOTLY:
+            import plotly.express as px
             fig_corr = px.imshow(
                 corr_matrix,
                 x=m_names,
@@ -2562,14 +2563,14 @@ def main():
             orig_meas = compute_physical_measurements(orig_ai_mask)
             
             if np.sum(curr_target_mask > 0) > 0:
-                py, px = np.where(curr_target_mask > 0)
-                def_cx, def_cy = int(np.mean(px)), int(np.mean(py))
-                min_px, max_px = int(np.min(px)), int(np.max(px))
-                min_py, max_py = int(np.min(py)), int(np.max(py))
+                pos_y, pos_x = np.where(curr_target_mask > 0)
+                def_cx, def_cy = int(np.mean(pos_x)), int(np.mean(pos_y))
+                min_x, max_x = int(np.min(pos_x)), int(np.max(pos_x))
+                min_y, max_y = int(np.min(pos_y)), int(np.max(pos_y))
             else:
                 def_cx, def_cy = 128, 128
-                min_px, max_px = 110, 146
-                min_py, max_py = 110, 146
+                min_x, max_x = 110, 146
+                min_y, max_y = 110, 146
 
             col_brush_preview, col_brush_controls = st.columns([1.1, 1.3], gap="large")
 
@@ -2610,21 +2611,21 @@ def main():
                     with q2:
                         if st.button("⬆️ Top", key=f"btn_t_{selected_z}", use_container_width=True):
                             st.session_state[f"bx_{selected_z}"] = def_cx
-                            st.session_state[f"by_{selected_z}"] = min_py
+                            st.session_state[f"by_{selected_z}"] = min_y
                             st.rerun()
                     with q3:
                         if st.button("⬇️ Bottom", key=f"btn_b_{selected_z}", use_container_width=True):
                             st.session_state[f"bx_{selected_z}"] = def_cx
-                            st.session_state[f"by_{selected_z}"] = max_py
+                            st.session_state[f"by_{selected_z}"] = max_y
                             st.rerun()
                     with q4:
                         if st.button("⬅️ Left", key=f"btn_l_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = min_px
+                            st.session_state[f"bx_{selected_z}"] = min_x
                             st.session_state[f"by_{selected_z}"] = def_cy
                             st.rerun()
                     with q5:
                         if st.button("➡️ Right", key=f"btn_r_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = max_px
+                            st.session_state[f"bx_{selected_z}"] = max_x
                             st.session_state[f"by_{selected_z}"] = def_cy
                             st.rerun()
                     
