@@ -155,7 +155,7 @@ def build_presentation():
     p3b.font.size = Pt(10)
     p3b.font.color.rgb = TEXT_MAIN
 
-    # Central Box (Mod-Seg-SE2 Platform)
+    # Central Box (CT-SE(2) Platform)
     box_w = Inches(11.3)
     box_x = Inches(1.0)
     box_y = Inches(3.9)
@@ -170,7 +170,7 @@ def build_presentation():
     # Box title
     title_box = s1.shapes.add_textbox(box_x, box_y + Inches(0.1), box_w, Inches(0.4))
     pt = title_box.text_frame.paragraphs[0]
-    pt.text = "Mod-Seg-SE(2) Consensus Platform"
+    pt.text = "CT-SE(2) Consensus Platform"
     pt.font.size = Pt(18)
     pt.font.bold = True
     pt.font.color.rgb = GREEN_DARK
@@ -188,7 +188,7 @@ def build_presentation():
     # 3 Feature Pills inside the solution box
     pills = [
         ("Equivariant R2Conv (C8)", "Guarantees f(g·x) = g·f(x). Boundary is identical at any scan angle."),
-        ("6-Model Consensus Engine", "Combines Mod-Seg-SE(2), HarmonicNet, nnU-Net with calibrated 0.80 threshold."),
+        ("6-Model Consensus Engine", "Combines CT-SE(2), HarmonicNet, nnU-Net with calibrated 0.80 threshold."),
         ("Automated 3D Volumetry", "Quantifies Tumor Volume (mL), Edema, Sphericity, and Midline Shift.")
     ]
     for p_idx, (p_title, p_desc) in enumerate(pills):
@@ -243,7 +243,7 @@ def build_presentation():
     p_db.font.color.rgb = WHITE
     p_db.alignment = PP_ALIGN.CENTER
 
-    mpr_img_path = "presentation_assets/dashboard_mpr_consensus_1792346200853.png"
+    mpr_img_path = "presentation_assets/dashboard_mpr_consensus_updated.png"
     if os.path.exists(mpr_img_path):
         s2.shapes.add_picture(mpr_img_path, Inches(0.8), Inches(1.3), Inches(8.8), Inches(4.5))
 
@@ -276,9 +276,9 @@ def build_presentation():
 
     steps = [
         "2.5D Slice Triplet",
-        "+ Mod-SE(2) Backbone (N=8)",
+        "+ CT-SE(2) Backbone (N=8)",
         "6-Model Consensus Engine",
-        "High-Clarity MPR & 3D BBox",
+        "High-Clarity MPR & 3D Brain",
         "Automated DOCX / PACS Report"
     ]
     step_colors = [CYAN_ACCENT, CYAN_ACCENT, BLUE_DARK, AMBER_DARK, GREEN_DARK]
@@ -296,10 +296,10 @@ def build_presentation():
         p_s.alignment = PP_ALIGN.CENTER
 
     # =========================================================================
-    # SLIDE 3: Advantage of Mod-Seg-SE(2) (Visual Brain CT Datasets)
+    # SLIDE 3: Advantage of CT-SE(2) (Visual Brain CT Datasets)
     # =========================================================================
     s3 = prs.slides.add_slide(blank_layout)
-    add_slide_chrome(s3, "Advantage of Mod-Seg-SE(2)", "Clinical Superiority Against Human Radiologists and Baseline CNNs", slide_num=3)
+    add_slide_chrome(s3, "Advantage of CT-SE(2)", "Clinical Superiority Against Human Radiologists and Baseline CNNs", slide_num=3)
 
     cards_meta = [
         {"title": "Objective tumor boundary delineation", "img": "presentation_assets/slide_cards/card1_full_visual.png"},
@@ -332,10 +332,10 @@ def build_presentation():
             s3.shapes.add_picture(card_info["img"], left + Inches(0.12), top + Inches(0.38), Inches(5.51), Inches(2.05))
 
     # =========================================================================
-    # SLIDE 4: Architecture of Mod-Seg-SE(2) (Clean Native PPT Design with Real Scans)
+    # SLIDE 4: Architecture of CT-SE(2) (Clean Native PPT Design with Real Scans)
     # =========================================================================
     s4 = prs.slides.add_slide(blank_layout)
-    add_slide_chrome(s4, "Mod-Seg-SE(2) Architecture & Pipeline Flow", 
+    add_slide_chrome(s4, "CT-SE(2) Architecture & Pipeline Flow", 
                      "Group Equivariant Convolutional Network (C8 / N=8 Rotations) with Multi-Model Consensus Engine", slide_num=4)
 
     # 5 Top Pipeline Stage Cards
@@ -466,8 +466,8 @@ def build_presentation():
             "title": "Multi-Model Consensus & 3D Volumetry",
             "lines": [
                 "• 6 Benchmark Architectures Ensemble Voting",
-                "  (Mod-Seg-SE(2), HarmonicNet C4, nnU-Net, Attention U-Net)",
-                "• Mod-Seg-SE(2) SOTA: 84.2% Dice | 73.1% IoU on NCCT",
+                "  (CT-SE(2), HarmonicNet C4, nnU-Net, Attention U-Net)",
+                "• CT-SE(2) SOTA: 84.2% Dice | 73.1% IoU on NCCT",
                 "• Pixel-wise uncertainty agreement heatmap at 0.80 threshold",
                 "• Automated 3D Volumetry: Tumor (mL), Edema (mL), Sphericity"
             ],

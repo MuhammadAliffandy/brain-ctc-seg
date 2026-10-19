@@ -74,7 +74,7 @@ ax_wo.set_title("✖ Without (3 Clinicians)\nDice 65% / 75% / 70% ?", fontsize=1
 # Sub-caption
 fig.text(0.26, 0.04, "Same scan, 3 readers, 3 conflicting contours", ha='center', fontsize=9, fontstyle='italic', color='#b91c1c')
 
-# With Mod-Seg-SE(2)
+# With CT-SE(2)
 img_w = cv2.cvtColor(curr_img, cv2.COLOR_GRAY2RGB)
 m_true = true_lesion.astype(np.uint8)
 blended = np.where(m_true[..., None] > 0, (img_w * 0.35 + np.array([34, 197, 94]) * 0.65).astype(np.uint8), img_w)
@@ -84,7 +84,7 @@ cv2.drawContours(blended, cnt_true, -1, (22, 163, 74), 2)
 crop_w = blended[ty-40:ty+40, tx-40:tx+40]
 ax_w.imshow(crop_w)
 ax_w.axis('off')
-ax_w.set_title("✔ With Mod-Seg-SE(2)\nConsensus Dice 84.2% (Conf 0.94)", fontsize=10, color='#15803d', fontweight='bold', pad=4)
+ax_w.set_title("✔ With CT-SE(2)\nConsensus Dice 84.2% (Conf 0.94)", fontsize=10, color='#15803d', fontweight='bold', pad=4)
 fig.text(0.74, 0.04, "One reproducible contour + consensus ROI", ha='center', fontsize=9, fontstyle='italic', color='#15803d')
 
 plt.savefig("presentation_assets/slide_cards/card1_full_visual.png", dpi=220, bbox_inches='tight', facecolor='#ffffff')
@@ -121,8 +121,8 @@ ax_w.set_xlim(0, 100)
 ax_w.set_ylim(-0.6, 1.8)
 ax_w.axis('off')
 
-ax_w.text(0, 1.35, "✔ With Mod-Seg-SE(2)", fontsize=11, fontweight='bold', color='#16a34a')
-ax_w.text(0, 0.95, "Mod-Seg-SE(2) [OURS]", fontsize=8.5, color='#166534', fontweight='bold')
+ax_w.text(0, 1.35, "✔ With CT-SE(2)", fontsize=11, fontweight='bold', color='#16a34a')
+ax_w.text(0, 0.95, "CT-SE(2) [OURS]", fontsize=8.5, color='#166534', fontweight='bold')
 ax_w.barh(0.65, 84.2, height=0.35, left=0, color='#16a34a', edgecolor='#15803d')
 ax_w.text(55, 0.65, "84.2% Dice", color='white', fontsize=8.5, fontweight='bold', va='center')
 
@@ -151,7 +151,7 @@ fig.text(0.26, 0.04, "Rotate / tilt: boundary collapses & flips (drop 17%)", ha=
 
 ax_r.imshow(cv2.cvtColor(img_rot_w, cv2.COLOR_BGR2RGB))
 ax_r.axis('off')
-ax_r.set_title("✔ With Mod-Seg-SE(2)", fontsize=10, color='#15803d', fontweight='bold')
+ax_r.set_title("✔ With CT-SE(2)", fontsize=10, color='#15803d', fontweight='bold')
 fig.text(0.74, 0.04, "Rotation-invariant: same lesion, identical boundary", ha='center', fontsize=9, fontstyle='italic', color='#15803d')
 
 plt.savefig("presentation_assets/slide_cards/card3_full_visual.png", dpi=220, bbox_inches='tight', facecolor='#ffffff')
@@ -189,7 +189,7 @@ ax_w.set_facecolor('#f0fdf4')
 ax_w.set_xlim(0, 10)
 ax_w.set_ylim(0, 10)
 ax_w.axis('off')
-ax_w.text(0.5, 9.0, "✔ With Mod-Seg-SE(2)", fontsize=11, fontweight='bold', color='#16a34a')
+ax_w.text(0.5, 9.0, "✔ With CT-SE(2)", fontsize=11, fontweight='bold', color='#16a34a')
 ax_w.text(0.5, 7.8, "Automated Structured Volumetry:", fontsize=8.5, color='#166534', fontweight='bold')
 
 # Mini Table
@@ -300,7 +300,7 @@ ax.add_patch(b3)
 ax.text(0.70, 0.35, "Multi-Model Consensus Engine", transform=ax.transAxes, fontsize=11, fontweight='bold', color='#15803d')
 eng_desc = (
     "• 6 Benchmark Models Ensemble Agreement"
-    "\n• Mod-Seg-SE(2) SOTA: 84.2% Dice | 73.1% IoU"
+    "\n• CT-SE(2) SOTA: 84.2% Dice | 73.1% IoU"
     "\n• Pixel-wise uncertainty thresholding at 0.80"
     "\n• Automated 3D Volumetric ROI calculation"
     "\n  (Tumor mL, Edema mL, Midline shift mm)"

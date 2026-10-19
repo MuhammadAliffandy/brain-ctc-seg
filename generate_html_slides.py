@@ -525,7 +525,7 @@ html_content = f"""<!DOCTYPE html>
     </div>
 
     <div class="s1-platform-box">
-        <div class="s1-p-title">Mod-Seg-SE(2) Consensus Platform</div>
+        <div class="s1-p-title">CT-SE(2) Consensus Platform</div>
         <div class="s1-p-sub">Equivariant Group Theory Backbone (C8 / N=8 Rotations) + 6-Model Consensus Engine</div>
         <div class="s1-pills">
             <div class="s1-pill">
@@ -534,7 +534,7 @@ html_content = f"""<!DOCTYPE html>
             </div>
             <div class="s1-pill">
                 <strong>6-Model Consensus Engine</strong>
-                <span>Combines Mod-Seg-SE(2), HarmonicNet, nnU-Net with calibrated 0.80 agreement threshold.</span>
+                <span>Combines CT-SE(2), HarmonicNet, nnU-Net with calibrated 0.80 agreement threshold.</span>
             </div>
             <div class="s1-pill">
                 <strong>Automated 3D Volumetry</strong>
@@ -606,7 +606,7 @@ html_content = f"""<!DOCTYPE html>
     <div class="slide-header">
         <div class="lab-logo"><img src="{logo_osl_b64}" alt="OSL Logo"></div>
         <div class="title-group">
-            <h2 class="slide-title">Advantage of Mod-Seg-SE(2)</h2>
+            <h2 class="slide-title">Advantage of CT-SE(2)</h2>
             <div class="slide-subtitle">Clinical Superiority Against Human Radiologists and Baseline CNNs</div>
         </div>
     </div>
@@ -654,7 +654,7 @@ html_content = f"""<!DOCTYPE html>
     <div class="slide-header">
         <div class="lab-logo"><img src="{logo_osl_b64}" alt="OSL Logo"></div>
         <div class="title-group">
-            <h2 class="slide-title">Mod-Seg-SE(2) Architecture & Pipeline Flow</h2>
+            <h2 class="slide-title">CT-SE(2) Architecture & Pipeline Flow</h2>
             <div class="slide-subtitle">Group Equivariant Convolutional Network (C8 / N=8 Rotations) with Multi-Model Consensus Engine</div>
         </div>
     </div>
@@ -716,8 +716,8 @@ html_content = f"""<!DOCTYPE html>
             <div class="bc-title" style="color:#15803d;">Multi-Model Consensus & 3D Volumetry</div>
             <ul>
                 <li>• 6 Benchmark Architectures Ensemble Voting</li>
-                <li>  (Mod-Seg-SE(2), HarmonicNet C4, nnU-Net, Attention U-Net)</li>
-                <li>• Mod-Seg-SE(2) SOTA: 84.2% Dice | 73.1% IoU on NCCT</li>
+                <li>  (CT-SE(2), HarmonicNet C4, nnU-Net, Attention U-Net)</li>
+                <li>• CT-SE(2) SOTA: 84.2% Dice | 73.1% IoU on NCCT</li>
                 <li>• Pixel-wise uncertainty agreement heatmap at 0.80 threshold</li>
                 <li>• Automated 3D Volumetry: Tumor (mL), Edema (mL), Sphericity</li>
             </ul>
