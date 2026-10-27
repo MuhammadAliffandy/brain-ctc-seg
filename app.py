@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import glob
+import time
 import math
 import numpy as np
 import pandas as pd
@@ -3143,9 +3144,17 @@ def main():
     # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
     st.subheader("1. Input Brain CT Scan & Case Selection")
     
+    init_progress_placeholder = st.empty()
+    is_initial_load = ("app_initialized" not in st.session_state) or st.session_state.get("force_deep_gpu", False)
+    if is_initial_load:
+        init_progress_placeholder.progress(15, text="⏳ [1/5] Memindai repositori scan CT & metadata pasien... (15%)")
+    
     # Fast 1-sample discovery on initial load to prevent long waiting times and avoid scanning entire disk/rclone drive
     discovered_nifti_cases = discover_dgx_nifti_cases(max_samples=1)
     discovered_cases = discover_dataset_cases(selected_dataset_name, max_samples=1)
+    
+    if is_initial_load:
+        init_progress_placeholder.progress(40, text="📁 [2/5] Memuat volume 3D CT scan & kalibrasi HU windowing... (40%)")
     
     # Available sources: DGX 3D NIfTI (top priority if on DGX), DGX Slices, Preset 3D, Upload
     sources = []
@@ -3379,6 +3388,8 @@ def main():
                             use_container_width=True
                         )
     if img_raw is None:
+        if is_initial_load:
+            init_progress_placeholder.empty()
         st.warning("Please select a valid case or upload a slice to begin.")
         return
 
@@ -3401,6 +3412,8 @@ def main():
         patient_z_active = min(patient_z_active, vol_3d.shape[0] - 1)
 
     risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+    if is_initial_load:
+        init_progress_placeholder.progress(70, text="📐 [3/5] Rekonstruksi irisan ortogonal 3D Slicer MPR (Axial, Coronal, Sagittal)... (70%)")
 
     # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
     st.markdown("---")
@@ -3462,8 +3475,11 @@ def main():
         elif is_deep_gpu:
             predictions_raw = {}
             with st.spinner(f"🧠 Running 6 Deep Learning Models on GPU (Slice z={selected_z})..."):
-                for meta in MODEL_METADATA:
+                for idx, meta in enumerate(MODEL_METADATA):
                     m_key = meta["key"]
+                    if is_initial_load:
+                        pct = 70 + int(((idx + 1) / len(MODEL_METADATA)) * 20)
+                        init_progress_placeholder.progress(pct, text=f"🧠 [4/5] Inferensi GPU Model {idx+1}/{len(MODEL_METADATA)}: {meta['label']}... ({pct}%)")
                     weight_candidates = current_cfg["weights"].get(m_key, [])
                     resolved_weight = find_first_existing(weight_candidates)
                     if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
@@ -3522,6 +3538,8 @@ def main():
             c_thresh = 0.50 if "Soft" in voting_mode else 0.50
             strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
             ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, c_thresh)
+            if is_initial_load and not is_deep_gpu:
+                init_progress_placeholder.progress(90, text="🤖 [4/5] Menginisialisasi CT-RAD Multi-Agent Framework (R-A-D)... (90%)")
             
             # --- Clinician Custom Edited Mask Check ---
             if "clinician_edited_masks" not in st.session_state:
@@ -3626,6 +3644,12 @@ def main():
                 st.plotly_chart(fig_3d, use_container_width=True)
             else:
                 st.info("Plotly is required for interactive 3D rotation.")
+
+    if is_initial_load:
+        init_progress_placeholder.progress(100, text="✅ [5/5] Analisis klinis siap! Menampilkan antarmuka... (100%)")
+        time.sleep(0.2)
+        init_progress_placeholder.empty()
+        st.session_state["app_initialized"] = True
 
     # ── SECTION 3: CT-RAD SKILL-BASED AGENTIC FRAMEWORK (R-A-D DECISION ENGINE) ──
     st.markdown("---")
