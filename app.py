@@ -2885,7 +2885,7 @@ def show_risk_flags_dialog(risk_metrics):
 @st.dialog("✏️ Clinician Margin Editor & PACS Sign-off", width="large")
 def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, slice_title, selected_z, reviewer_name, is_clinician_edited, consensus_meas):
     st.markdown(f"#### ✏️ Clinician Interactive Lesion Editor (Slice z = {selected_z})")
-    st.caption("Fasilitas koreksi interaktif untuk dokter: Tambah (Brush), Hapus (Eraser), Geser letak lesi, atau atur margin radial. Besaran lesi (mm², diameter, dan volume) akan diperbarui secara otomatis.")
+    st.caption("Interactive clinician correction tools: Add (Brush), Erase, Shift lesion position, or apply radial safety margins. Lesion metrics (mm², diameter, and volume) update automatically.")
     
     col_rev1, col_rev2 = st.columns([1.5, 1.0])
     with col_rev1:
@@ -3147,14 +3147,14 @@ def main():
     init_progress_placeholder = st.empty()
     is_initial_load = ("app_initialized" not in st.session_state) or st.session_state.get("force_deep_gpu", False)
     if is_initial_load:
-        init_progress_placeholder.progress(15, text="⏳ [1/5] Memindai repositori scan CT & metadata pasien... (15%)")
+        init_progress_placeholder.progress(15, text="⏳ [1/5] Scanning CT scan repositories & patient metadata... (15%)")
     
     # Fast 1-sample discovery on initial load to prevent long waiting times and avoid scanning entire disk/rclone drive
     discovered_nifti_cases = discover_dgx_nifti_cases(max_samples=1)
     discovered_cases = discover_dataset_cases(selected_dataset_name, max_samples=1)
     
     if is_initial_load:
-        init_progress_placeholder.progress(40, text="📁 [2/5] Memuat volume 3D CT scan & kalibrasi HU windowing... (40%)")
+        init_progress_placeholder.progress(40, text="📁 [2/5] Loading 3D CT volume & calibrating HU windowing... (40%)")
     
     # Available sources: DGX 3D NIfTI (top priority if on DGX), DGX Slices, Preset 3D, Upload
     sources = []
@@ -3365,7 +3365,7 @@ def main():
         
         # Helper download button for sample DICOM files
         with st.expander("📥 Download Sample Clinical Brain CT DICOM Files for Testing"):
-            st.caption("Gunakan sampel DICOM klinis ini untuk menguji fitur upload DICOM:")
+            st.caption("Use these clinical DICOM sample files to test the DICOM upload feature:")
             c_d1, c_d2 = st.columns(2)
             with c_d1:
                 if os.path.exists("sample_dicom/sample_brain_ct_slice.dcm"):
@@ -3413,7 +3413,7 @@ def main():
 
     risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
     if is_initial_load:
-        init_progress_placeholder.progress(70, text="📐 [3/5] Rekonstruksi irisan ortogonal 3D Slicer MPR (Axial, Coronal, Sagittal)... (70%)")
+        init_progress_placeholder.progress(70, text="📐 [3/5] Reconstructing 3D Slicer MPR orthogonal views (Axial, Coronal, Sagittal)... (70%)")
 
     # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
     st.markdown("---")
@@ -3421,11 +3421,11 @@ def main():
     col_hero_hdr1, col_hero_hdr2 = st.columns([1.8, 1.2])
     with col_hero_hdr1:
         st.markdown('<h3 style="margin: 0; color: #58a6ff;">3D Slicer MPR & Multi-Model Agreement / Disagreement</h3>', unsafe_allow_html=True)
-        st.caption("Deteksi per-slice potongan CT dari sisi Axial, Coronal, Sagittal, dan 3D Bounding Box dengan visualisasi batas kesepakatan (Agreement) dan ketidakpastian model (Disagreement).")
+        st.caption("Per-slice CT cross-sectional detection across Axial, Coronal, Sagittal, and 3D Bounding Box views with multi-model agreement and disagreement visualization.")
     with col_hero_hdr2:
         st.markdown(f"<div style='text-align: right; font-size: 12px; color: #8b949e; margin-bottom: 4px;'>Volume: <b style='color: #e6edf3;'>{vol_3d.shape[0]} slices</b> | Engine: <b style='color: {'#3fb950' if is_deep_gpu else '#58a6ff'};'>{'Deep GPU 6-Model' if is_deep_gpu else '⚡ Fast Realtime'}</b></div>", unsafe_allow_html=True)
         if not is_deep_gpu:
-            if st.button("🚀 Run Deep 6-Model GPU Inference", use_container_width=True, help="Jalankan inferensi neural network 6 model pada GPU untuk slice aktif ini"):
+            if st.button("🚀 Run Deep 6-Model GPU Inference", use_container_width=True, help="Run 6 deep neural network model inference on GPU for this active slice"):
                 st.session_state["force_deep_gpu"] = True
                 cache_key_del = f"{slice_title}_z{selected_z}"
                 if "cached_slice_preds" in st.session_state and cache_key_del in st.session_state["cached_slice_preds"]:
@@ -3479,7 +3479,7 @@ def main():
                     m_key = meta["key"]
                     if is_initial_load:
                         pct = 70 + int(((idx + 1) / len(MODEL_METADATA)) * 20)
-                        init_progress_placeholder.progress(pct, text=f"🧠 [4/5] Inferensi GPU Model {idx+1}/{len(MODEL_METADATA)}: {meta['label']}... ({pct}%)")
+                        init_progress_placeholder.progress(pct, text=f"🧠 [4/5] Running GPU Inference on Model {idx+1}/{len(MODEL_METADATA)}: {meta['label']}... ({pct}%)")
                     weight_candidates = current_cfg["weights"].get(m_key, [])
                     resolved_weight = find_first_existing(weight_candidates)
                     if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
@@ -3539,7 +3539,7 @@ def main():
             strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
             ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, c_thresh)
             if is_initial_load and not is_deep_gpu:
-                init_progress_placeholder.progress(90, text="🤖 [4/5] Menginisialisasi CT-RAD Multi-Agent Framework (R-A-D)... (90%)")
+                init_progress_placeholder.progress(90, text="🤖 [4/5] Initializing CT-RAD Multi-Agent Framework (R-A-D)... (90%)")
             
             # --- Clinician Custom Edited Mask Check ---
             if "clinician_edited_masks" not in st.session_state:
@@ -3646,7 +3646,7 @@ def main():
                 st.info("Plotly is required for interactive 3D rotation.")
 
     if is_initial_load:
-        init_progress_placeholder.progress(100, text="✅ [5/5] Analisis klinis siap! Menampilkan antarmuka... (100%)")
+        init_progress_placeholder.progress(100, text="✅ [5/5] Clinical analysis ready! Launching interface... (100%)")
         time.sleep(0.2)
         init_progress_placeholder.empty()
         st.session_state["app_initialized"] = True
@@ -3929,19 +3929,19 @@ def main():
     
     act_c1, act_c2, act_c3, act_c4, act_c5 = st.columns(5)
     with act_c1:
-        if st.button("📊 6 Model Cards", use_container_width=True, help="Skill 02: Buka rincian segmentasi 6 model individual"):
+        if st.button("📊 6 Model Cards", use_container_width=True, help="Skill 02: Open detailed segmentation cards for all 6 individual models"):
             show_models_dialog(MODEL_METADATA, predictions, img_gray, gt_mask)
             
     with act_c2:
-        if st.button("📈 Correlation Matrix", use_container_width=True, help="Skill 01: Buka matriks korelasi fitur dan kesepakatan spasial model"):
+        if st.button("📈 Correlation Matrix", use_container_width=True, help="Skill 01: Open feature correlation matrix and spatial agreement heatmaps"):
             show_correlation_dialog(MODEL_METADATA, predictions)
             
     with act_c3:
-        if st.button("⚠️ Risk Flags Table", use_container_width=True, help="Skill 06: Buka checklist diameter lesi per slice dan klasifikasi risiko WHO"):
+        if st.button("⚠️ Risk Flags Table", use_container_width=True, help="Skill 06: Open per-slice lesion diameter checklist and WHO risk classification"):
             show_risk_flags_dialog(risk_metrics)
             
     with act_c4:
-        if st.button("✏️ Margin & Sign-off", use_container_width=True, type="primary", help="Skill 04: Buka alat koreksi interaktif (Brush & Margin) serta validasi PACS"):
+        if st.button("✏️ Margin & Sign-off", use_container_width=True, type="primary", help="Skill 04: Open interactive clinician correction tools (Brush & Margin) and PACS validation"):
             show_margin_editor_dialog(
                 img_gray, active_consensus_mask, ensemble_data["ensemble_mask"],
                 slice_title, selected_z, st.session_state.get("reviewer_name", "Dr. XXXXX"),
@@ -3949,12 +3949,12 @@ def main():
             )
             
     with act_c5:
-        if st.button("ℹ️ Protocol & SOTA", use_container_width=True, help="Buka informasi protokol dataset dan equivariance CT-SE(2)"):
+        if st.button("ℹ️ Protocol & SOTA", use_container_width=True, help="Open dataset protocol specification and CT-SE(2) group equivariance benchmark"):
             show_protocol_dialog(selected_dataset_name, current_cfg)
 
     # 6. Formal 6-Skill Contract Library Reference Drawer
     with st.expander("📚 CT-RAD Domain Skill Contract Library (Skills 01 – 06 Formal Schema)"):
-        st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 12px;'>Katalog kontrak formal 6 Domain Skills. Klik tombol untuk menginspeksi kontrak dan aturan evaluasi skill tertentu:</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 12px;'>Formal contract catalog for the 6 Domain Skills. Click any button below to inspect contracts and evaluation rules:</div>", unsafe_allow_html=True)
         lib_c1, lib_c2, lib_c3 = st.columns(3)
         skill_ids_ordered = [1, 2, 3, 4, 5, 6]
         for l_idx, s_id in enumerate(skill_ids_ordered):
