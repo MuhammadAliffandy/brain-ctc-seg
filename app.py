@@ -690,10 +690,10 @@ MODEL_METADATA = [
 CROP_MARGIN = 40
 
 @st.cache_data(show_spinner=False)
-def discover_dataset_cases(dataset_key):
+def discover_dataset_cases(dataset_key, max_samples=1):
     """
-    Scans dataset directories on DGX server and ranks candidate slices by lesion size.
-    Strictly filters out skull base / scanner bed / headrest artifacts.
+    Fast 1-Sample Discovery: Finds 1 verified patient tumor case without heavy recursive scanning.
+    Immediately breaks on finding the first valid sample to ensure instant web startup.
     """
     cfg = DATASET_CONFIGS[dataset_key]
     candidates = []
@@ -701,16 +701,28 @@ def discover_dataset_cases(dataset_key):
     if cfg["source"] == "npy":
         for data_dir in DATA_SEARCH_DIRS:
             if not os.path.exists(data_dir): continue
-            for folder in sorted(os.listdir(data_dir)):
+            try:
+                folders = sorted(os.listdir(data_dir))
+            except Exception:
+                continue
+            for folder in folders:
                 if cfg["prefix"] and not folder.upper().startswith(cfg["prefix"].upper()):
                     continue
                 fpath = os.path.join(data_dir, folder)
                 if not os.path.isdir(fpath): continue
-                imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')],
-                              key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+                try:
+                    imgs = sorted([f for f in os.listdir(fpath) if f.endswith('_img.npy')],
+                                  key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
+                except Exception:
+                    continue
+                if not imgs: continue
                 
-                for i, fname in enumerate(imgs):
-                    # 1. Z-slice range check: Cerebrum intra-parenchymal tumors reside in z35 to z85 (exclude skull base z120+)
+                # Check middle cerebrum slices first (z40-z65 are most likely to contain parenchymal tumors)
+                mid_idx = len(imgs) // 2
+                ordered_indices = [mid_idx] + [i for i in range(len(imgs)) if i != mid_idx]
+
+                for i in ordered_indices:
+                    fname = imgs[i]
                     z_match = re.findall(r'z(\d+)', fname)
                     if z_match:
                         z_val = int(z_match[0])
@@ -720,7 +732,11 @@ def discover_dataset_cases(dataset_key):
                     img_path = os.path.join(fpath, fname)
                     mask_path = img_path.replace('_img.npy', '_mask.npy')
                     if not os.path.exists(mask_path): continue
-                    m = np.load(mask_path)
+                    
+                    try:
+                        m = np.load(mask_path)
+                    except Exception:
+                        continue
                     if m.max() > 1: m = (m > 0).astype(np.uint8)
                     n_px = int(np.sum(m > 0))
                     
@@ -745,17 +761,20 @@ def discover_dataset_cases(dataset_key):
                             "next": os.path.join(fpath, imgs[i_next]),
                             "mask": mask_path
                         })
+                        if len(candidates) >= max_samples:
+                            return candidates
+                if len(candidates) >= max_samples:
+                    return candidates
             if candidates: break
             
-    # Sort descending by confirmed tumor volume
-    candidates = sorted(candidates, key=lambda x: x["px"], reverse=True)
-    return candidates[:12]
+    return candidates[:max_samples]
 
 
 @st.cache_data(show_spinner=False)
-def discover_dgx_nifti_cases():
+def discover_dgx_nifti_cases(max_samples=1):
     """
-    Scans DGX server directories for full 3D NIfTI brain volumes (.nii.gz / .nii).
+    Fast 1-Sample Discovery: Finds 1 sample 3D NIfTI brain volume (.nii.gz / .nii).
+    Immediately breaks on first found case to prevent slow recursive network/disk scanning.
     """
     cases = []
     seen = set()
@@ -782,6 +801,8 @@ def discover_dgx_nifti_cases():
                         "img_path": img_path,
                         "mask_path": mask_path
                     })
+                    if len(cases) >= max_samples:
+                        return cases
                 continue
 
             try:
@@ -811,6 +832,12 @@ def discover_dgx_nifti_cases():
                     "img_path": img_path,
                     "mask_path": mask_path
                 })
+                if len(cases) >= max_samples:
+                    return cases
+            if len(cases) >= max_samples:
+                return cases
+        if cases:
+            return cases
     return cases
 
 
@@ -3043,8 +3070,9 @@ def main():
     # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
     st.subheader("1. Input Brain CT Scan & Case Selection")
     
-    discovered_nifti_cases = discover_dgx_nifti_cases()
-    discovered_cases = discover_dataset_cases(selected_dataset_name)
+    # Fast 1-sample discovery on initial load to prevent long waiting times and avoid scanning entire disk/rclone drive
+    discovered_nifti_cases = discover_dgx_nifti_cases(max_samples=1)
+    discovered_cases = discover_dataset_cases(selected_dataset_name, max_samples=1)
     
     # Available sources: DGX 3D NIfTI (top priority if on DGX), DGX Slices, Preset 3D, Upload
     sources = []
