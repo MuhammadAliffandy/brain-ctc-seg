@@ -1133,9 +1133,13 @@ def overlay_agreement_and_disagreement(
                 rgb
             )
 
+    # Confine contours strictly to intracranial brain tissue (exclude scanner bed and air artifacts)
+    brain_tissue = (cv2.GaussianBlur(base, (7, 7), 2.0) > 18).astype(np.uint8)
+
     # 2. Disagreement zone: 1 <= votes < threshold (Inter-model uncertainty band)
     if show_disagreement:
         disagree_m = ((agreement_counts > 0) & (agreement_counts < threshold)).astype(np.uint8)
+        disagree_m = (disagree_m * brain_tissue).astype(np.uint8)
         if np.any(disagree_m):
             amber_fill = np.array([249, 115, 22], dtype=np.uint8) # Coral / amber
             rgb = np.where(
@@ -1149,6 +1153,7 @@ def overlay_agreement_and_disagreement(
     # 3. Agreement zone: votes >= threshold (Consensus core lesion)
     if show_agreement:
         agree_m = (agreement_counts >= threshold).astype(np.uint8)
+        agree_m = (agree_m * brain_tissue).astype(np.uint8)
         if np.any(agree_m):
             green_fill = np.array([34, 197, 94], dtype=np.uint8) # Emerald green
             rgb = np.where(
@@ -1819,87 +1824,65 @@ def reconstruct_isotropic_mpr_volume(vol_aligned, mask_aligned=None):
     return vol_dense, mask_dense
 
 
-def generate_high_clarity_clinical_mpr(mask_axial, current_z, depth):
+def slice_real_mpr_orthogonal(vol_aligned, mask_aligned, current_z, yc=None, xc=None):
     """
-    Renders crystal-clear, high-definition Coronal and Sagittal brain CT views (256x256).
-    Maps the active lesion's exact spatial coordinates (X, Y, Z) and contours onto the
-    corresponding anatomical planes, eliminating all horizontal black gaps and stair-stepping.
+    Performs true orthogonal Multi-Planar Reconstruction (MPR) from the real 3D volume.
+    Extracts authentic CT cross-sections:
+    - Coronal: Sliced along Y axis (frontal plane), oriented with Superior at top.
+    - Sagittal: Sliced along X axis (lateral profile plane), oriented with Superior at top.
+    Resamples to isotropic 256x256 display with accurate slice intersection cross-hairs.
     """
-    H, W = 256, 256
-    y, x = np.mgrid[:H, :W]
-    cx, cy = 128, 120
+    depth, H, W = vol_aligned.shape
+    current_z = int(np.clip(current_z, 0, depth - 1))
     
-    pos = np.argwhere(mask_axial > 0)
-    has_lesion = len(pos) > 0
-    if has_lesion:
-        yc, xc = np.mean(pos, axis=0)
-        rx = max(7, int((np.max(pos[:, 1]) - np.min(pos[:, 1])) / 2.0))
-        ry = max(7, int((np.max(pos[:, 0]) - np.min(pos[:, 0])) / 2.0))
-        rz = max(6, int((rx + ry) / 2.0 * 0.85))
+    # 1. Determine cut coordinates: anchor to lesion centroid if tumor exists, else volume center
+    pos = np.argwhere(mask_aligned > 0)
+    if len(pos) > 0:
+        if yc is None: yc = int(round(np.mean(pos[:, 1])))
+        if xc is None: xc = int(round(np.mean(pos[:, 2])))
     else:
-        yc, xc = 128.0, 128.0
-        rx, ry, rz = 12, 12, 8
+        if yc is None: yc = H // 2
+        if xc is None: xc = W // 2
         
-    x_norm = xc / float(W)
-    y_norm = yc / float(H)
-    z_norm = float(current_z) / float(max(1, depth))
+    yc = int(np.clip(yc, 5, H - 6))
+    xc = int(np.clip(xc, 5, W - 6))
     
-    # In Coronal / Sagittal: Superior (vertex) is y ~ 45, Inferior (skull base) is y ~ 210
-    z_line_y = int(np.clip((1.0 - z_norm) * 165.0 + 45.0, 35, 220))
+    # 2. Coronal View: Slice across X-Z at row yc (vol_aligned[:, yc, :])
+    # Z increases inferior -> superior. To place Superior at the TOP: flip Z axis [::-1, :]
+    cor_raw = vol_aligned[:, yc, :] # shape: [depth, W]
+    cor_oriented = cor_raw[::-1, :]
+    cor_img = cv2.resize(cor_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)
+    cor_img = np.clip(cor_img, 0.0, 1.0)
     
-    # --- 1. CORONAL VIEW (X vs Z: Looking at brain from the front) ---
-    cranial_c = ((x - cx)**2 / (88.0**2) + (y - cy)**2 / (100.0**2) <= 1.0)
-    skull_c_outer = ((x - cx)**2 / (94.0**2) + (y - cy)**2 / (106.0**2) <= 1.0)
-    bone_c = skull_c_outer & (~cranial_c)
+    # Coronal tumor mask: slice through tumor with ±2 pixel slab to show volume intersection
+    y_lo = max(0, yc - 2)
+    y_hi = min(H, yc + 3)
+    cor_m_raw = np.max(mask_aligned[:, y_lo:y_hi, :], axis=1)
+    cor_m_oriented = cor_m_raw[::-1, :]
+    cor_mask = (cv2.resize(cor_m_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
     
-    cor_img = np.zeros((H, W), dtype=np.float32)
-    # Parenchyma tissue texture
-    cor_img[cranial_c] = 0.38 + 0.03 * np.sin(x[cranial_c] / 14.0) * np.cos(y[cranial_c] / 18.0)
-    # Falx cerebri (midline)
-    cor_img[cranial_c & (np.abs(x - cx) <= 1)] = 0.52
-    # Lateral ventricles
-    v_l = (((x - (cx - 15))**2 / (9**2) + (y - (cy + 5))**2 / (22**2) <= 1.0)) & cranial_c
-    v_r = (((x - (cx + 15))**2 / (9**2) + (y - (cy + 5))**2 / (22**2) <= 1.0)) & cranial_c
-    cor_img[v_l | v_r] = 0.12
-    # Skull base / petrous bone
-    cor_img[(y > cy + 65) & (y < cy + 115) & (np.abs(x - cx) < 85)] = 0.85
-    cor_img[bone_c] = 0.95
+    # 3. Sagittal View: Slice across Y-Z at col xc (vol_aligned[:, :, xc])
+    # Superior at top: flip Z axis [::-1, :]
+    # Patient facing right (Anterior at right, Posterior at left):
+    # In axial CT, Anterior is top (low y), Posterior is bottom (high y).
+    # To place Anterior on the RIGHT: flip Y axis [:, ::-1]
+    sag_raw = vol_aligned[:, :, xc] # shape: [depth, H]
+    sag_oriented = sag_raw[::-1, ::-1]
+    sag_img = cv2.resize(sag_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)
+    sag_img = np.clip(sag_img, 0.0, 1.0)
     
-    # Lesion on Coronal
-    tx_c = int(np.clip(x_norm * W, 42, W - 42))
-    ty_c = z_line_y
-    cor_mask = np.zeros((H, W), dtype=np.uint8)
-    if has_lesion:
-        cor_mask = (((x - tx_c)**2 / (rx**2) + (y - ty_c)**2 / (rz**2) <= 1.0)).astype(np.uint8)
-        
-    # --- 2. SAGITTAL VIEW (Looking at brain profile from the side, patient facing RIGHT) ---
-    cranial_s = ((x - (cx - 8))**2 / (90.0**2) + (y - cy)**2 / (100.0**2) <= 1.0)
-    nose = ((x - (cx + 80))**2 / (20.0**2) + (y - (cy + 15))**2 / (30.0**2) <= 1.0) & (x > cx + 60)
-    jaw = ((x - (cx + 65))**2 / (22.0**2) + (y - (cy + 60))**2 / (25.0**2) <= 1.0) & (x > cx + 45)
-    skull_s_outer = (((x - (cx - 8))**2 / (96.0**2) + (y - cy)**2 / (106.0**2) <= 1.0) | nose | jaw)
-    bone_s = skull_s_outer & (~cranial_s)
+    # Sagittal tumor mask with ±2 pixel slab
+    x_lo = max(0, xc - 2)
+    x_hi = min(W, xc + 3)
+    sag_m_raw = np.max(mask_aligned[:, :, x_lo:x_hi], axis=2)
+    sag_m_oriented = sag_m_raw[::-1, ::-1]
+    sag_mask = (cv2.resize(sag_m_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
     
-    sag_img = np.zeros((H, W), dtype=np.float32)
-    sag_img[cranial_s] = 0.38 + 0.03 * np.sin(x[cranial_s] / 16.0) * np.cos(y[cranial_s] / 16.0)
-    # Corpus callosum arch
-    cc = (((x - (cx - 5))**2 / (38.0**2) + (y - (cy - 12))**2 / (12.0**2) <= 1.0) & 
-          ((x - (cx - 5))**2 / (30.0**2) + (y - (cy - 10))**2 / (7.0**2) > 1.0)) & cranial_s
-    sag_img[cc] = 0.55
-    # Cerebellum on the LEFT (posterior)
-    cb = (((x - (cx - 38))**2 / (28.0**2) + (y - (cy + 42))**2 / (22.0**2) <= 1.0)) & cranial_s
-    sag_img[cb] = 0.42
-    # Skull base & bone
-    sag_img[(y > cy + 68) & (y < cy + 115) & (x < cx + 55)] = 0.85
-    sag_img[bone_s] = 0.95
+    # 4. Z Reference line (Axial cut indicator)
+    z_ratio = float(current_z) / float(max(1, depth - 1))
+    z_line_y = int(np.clip((1.0 - z_ratio) * float(H - 1), 4, H - 5))
     
-    # Lesion on Sagittal (anterior is right: high x; posterior is left: low x)
-    tx_s = int(np.clip((1.0 - y_norm) * W, 42, W - 42))
-    ty_s = z_line_y
-    sag_mask = np.zeros((H, W), dtype=np.uint8)
-    if has_lesion:
-        sag_mask = (((x - tx_s)**2 / (ry**2) + (y - ty_s)**2 / (rz**2) <= 1.0)).astype(np.uint8)
-        
-    return cor_img, cor_mask, sag_img, sag_mask, z_line_y
+    return cor_img, cor_mask, sag_img, sag_mask, z_line_y, yc, xc
 
 
 def generate_mpr_visualizations(
@@ -1970,17 +1953,26 @@ def generate_mpr_visualizations(
     y_mm = yc * PIXEL_SPACING_MM
     z_mm = current_z * SLICE_THICKNESS_MM
 
-    # 2 & 3: High-Clarity Pristine Clinical Coronal & Sagittal Views
-    # Delivers 100% visual clarity requested by client with accurate lesion coordinates
-    cor_img, cor_mask, sag_img, sag_mask, z_line_y = generate_high_clarity_clinical_mpr(
-        mask_aligned[current_z], current_z, depth
+    # 2 & 3: True Orthogonal Multi-Planar Reconstruction (Coronal & Sagittal directly from real 3D volume)
+    cor_img, cor_mask, sag_img, sag_mask, z_line_y, cut_y, cut_x = slice_real_mpr_orthogonal(
+        vol_aligned, mask_aligned, current_z, yc=yc, xc=xc
     )
     
     cor_display = overlay_mask_with_outline(cor_img, cor_mask, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
-    cv2.line(cor_display, (4, z_line_y), (251, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
-    
+    cv2.line(cor_display, (0, z_line_y), (255, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
+    cv2.putText(cor_display, f"CT Cor y={cut_y}", (6, 14), font_hud, 0.33, hud_color, 1, cv2.LINE_AA)
+    cv2.putText(cor_display, "S", (125, 14), font_hud, 0.35, (160, 220, 160), 1, cv2.LINE_AA)
+    cv2.putText(cor_display, "I", (125, 250), font_hud, 0.35, (160, 220, 160), 1, cv2.LINE_AA)
+    cv2.putText(cor_display, "R", (6, 130), font_hud, 0.35, (160, 220, 160), 1, cv2.LINE_AA)
+    cv2.putText(cor_display, "L", (244, 130), font_hud, 0.35, (160, 220, 160), 1, cv2.LINE_AA)
+
     sag_display = overlay_mask_with_outline(sag_img, sag_mask, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
-    cv2.line(sag_display, (4, z_line_y), (251, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
+    cv2.line(sag_display, (0, z_line_y), (255, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
+    cv2.putText(sag_display, f"CT Sag x={cut_x}", (6, 14), font_hud, 0.33, hud_color, 1, cv2.LINE_AA)
+    cv2.putText(sag_display, "S", (125, 14), font_hud, 0.35, (240, 220, 120), 1, cv2.LINE_AA)
+    cv2.putText(sag_display, "I", (125, 250), font_hud, 0.35, (240, 220, 120), 1, cv2.LINE_AA)
+    cv2.putText(sag_display, "P", (6, 130), font_hud, 0.35, (240, 220, 120), 1, cv2.LINE_AA)
+    cv2.putText(sag_display, "A", (244, 130), font_hud, 0.35, (240, 220, 120), 1, cv2.LINE_AA)
 
     # 4. 3D Brain & Tumor View (Global Cranial Volume & Active Slice Scroll Indicator)
     # Uses full 3D mask_aligned so the green tumor region is always visible wherever user scrolls
