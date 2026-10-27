@@ -430,96 +430,101 @@ class TransUNet(nn.Module):
         return self.out(x)
 
 if HAS_ESCNN:
-    class _EqConv(nn.Module):
-        def __init__(self, in_type, out_type):
+    class DoubleEquivariantConv(nn.Module):
+        def __init__(self, in_type, out_type, mid_type=None):
             super().__init__()
-            self.seq = enn.SequentialModule(
-                enn.R2Conv(in_type, out_type, 3, padding=1, bias=False),
-                enn.InnerBatchNorm(out_type),
-                enn.ReLU(out_type, inplace=True),
-                enn.R2Conv(out_type, out_type, 3, padding=1, bias=False),
-                enn.InnerBatchNorm(out_type),
-                enn.ReLU(out_type, inplace=True),
+            if not mid_type: mid_type = out_type
+            self.double_conv = enn.SequentialModule(
+                enn.R2Conv(in_type, mid_type, kernel_size=3, padding=1, bias=False),
+                enn.InnerBatchNorm(mid_type), enn.ReLU(mid_type, inplace=True),
+                enn.R2Conv(mid_type, out_type, kernel_size=3, padding=1, bias=False),
+                enn.InnerBatchNorm(out_type), enn.ReLU(out_type, inplace=True)
             )
-        def forward(self, x): return self.seq(x)
+        def forward(self, x): return self.double_conv(x)
 
-    class _EqDown(nn.Module):
+    class Down(nn.Module):
         def __init__(self, in_type, out_type):
             super().__init__()
-            self.seq = enn.SequentialModule(
-                enn.PointwiseMaxPool(in_type, 2),
-                _EqConv(in_type, out_type)
-            )
-        def forward(self, x): return self.seq(x)
+            self.pool = enn.PointwiseMaxPool(in_type, kernel_size=2)
+            self.conv = DoubleEquivariantConv(in_type, out_type)
+        def forward(self, x): return self.conv(self.pool(x))
+
+    class Up(nn.Module):
+        def __init__(self, in_type, out_type):
+            super().__init__()
+            self.up   = enn.R2Upsampling(in_type, scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = DoubleEquivariantConv(in_type + out_type, out_type)
+        def forward(self, x1, x2):
+            x1 = self.up(x1)
+            x  = enn.tensor_directsum([x2, x1])
+            return self.conv(x)
+
+    class OutConv(nn.Module):
+        def __init__(self, in_type, n_classes):
+            super().__init__()
+            gspace   = in_type.gspace
+            out_type = enn.FieldType(gspace, n_classes * [gspace.trivial_repr])
+            self.conv = enn.R2Conv(in_type, out_type, kernel_size=1)
+        def forward(self, x): return self.conv(x)
 
     class SE2_CNNET(nn.Module):
-        """CT-SE(2) [OURS]: N=8 Discrete Rotation Equivariance."""
+        """CT-SE(2) [OURS]: N=8 Discrete Rotation Equivariance (5-stage U-Net)."""
         def __init__(self, n_channels=3, n_classes=2, N=8, base_channels=24):
             super().__init__()
             self.r2_act = gspaces.rot2dOnR2(N=N)
-            self.in_type = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
-            
             c = base_channels
-            t1 = enn.FieldType(self.r2_act, c * [self.r2_act.regular_repr])
-            t2 = enn.FieldType(self.r2_act, (c*2) * [self.r2_act.regular_repr])
-            t3 = enn.FieldType(self.r2_act, (c*4) * [self.r2_act.regular_repr])
-            t4 = enn.FieldType(self.r2_act, (c*8) * [self.r2_act.regular_repr])
-            
-            self.inc = _EqConv(self.in_type, t1)
-            self.down1 = _EqDown(t1, t2)
-            self.down2 = _EqDown(t2, t3)
-            self.down3 = _EqDown(t3, t4)
-            
-            self.up1 = enn.R2Upsampling(t4, 2, mode='bilinear', align_corners=True)
-            self.c1 = _EqConv(t4 + t3, t3)
-            self.up2 = enn.R2Upsampling(t3, 2, mode='bilinear', align_corners=True)
-            self.c2 = _EqConv(t3 + t2, t2)
-            self.up3 = enn.R2Upsampling(t2, 2, mode='bilinear', align_corners=True)
-            self.c3 = _EqConv(t2 + t1, t1)
-            
-            self.out_type = enn.FieldType(self.r2_act, n_classes * [self.r2_act.trivial_repr])
-            self.outc = enn.R2Conv(t1, self.out_type, 1)
+            self.feat_type_in = enn.FieldType(self.r2_act, n_channels * [self.r2_act.trivial_repr])
+            self.feat_type_1  = enn.FieldType(self.r2_act, c      * [self.r2_act.regular_repr])
+            self.feat_type_2  = enn.FieldType(self.r2_act, (c*2)  * [self.r2_act.regular_repr])
+            self.feat_type_3  = enn.FieldType(self.r2_act, (c*4)  * [self.r2_act.regular_repr])
+            self.feat_type_4  = enn.FieldType(self.r2_act, (c*8)  * [self.r2_act.regular_repr])
+            self.feat_type_5  = enn.FieldType(self.r2_act, (c*16) * [self.r2_act.regular_repr])
+
+            self.inc   = DoubleEquivariantConv(self.feat_type_in, self.feat_type_1)
+            self.down1 = Down(self.feat_type_1, self.feat_type_2)
+            self.down2 = Down(self.feat_type_2, self.feat_type_3)
+            self.down3 = Down(self.feat_type_3, self.feat_type_4)
+            self.down4 = Down(self.feat_type_4, self.feat_type_5)
+            self.up1   = Up(self.feat_type_5, self.feat_type_4)
+            self.up2   = Up(self.feat_type_4, self.feat_type_3)
+            self.up3   = Up(self.feat_type_3, self.feat_type_2)
+            self.up4   = Up(self.feat_type_2, self.feat_type_1)
+            self.outc  = OutConv(self.feat_type_1, n_classes)
 
         def forward(self, x):
-            x_g = enn.GeometricTensor(x, self.in_type)
-            x1 = self.inc(x_g)
-            x2 = self.down1(x1)
-            x3 = self.down2(x2)
-            x4 = self.down3(x3)
-            
-            x = self.c1(enn.tensor_directsum([x3, self.up1(x4)]))
-            x = self.c2(enn.tensor_directsum([x2, self.up2(x)]))
-            x = self.c3(enn.tensor_directsum([x1, self.up3(x)]))
+            x_geom = enn.GeometricTensor(x, self.feat_type_in)
+            x1 = self.inc(x_geom)
+            x2 = self.down1(x1); x3 = self.down2(x2)
+            x4 = self.down3(x3); x5 = self.down4(x4)
+            x  = self.up1(x5, x4); x = self.up2(x, x3)
+            x  = self.up3(x, x2);  x = self.up4(x, x1)
             return self.outc(x).tensor
 
     class HarmonicNet(nn.Module):
-        """HarmonicNet (C4 Equivariant Baseline): N=4 Discrete Rotations."""
-        def __init__(self, n_channels=3, n_classes=2):
+        """HarmonicNet (C4 Equivariant Baseline): N=4 Discrete Rotations (5-stage U-Net)."""
+        def __init__(self, n_channels=3, n_classes=2, N=4, base_channels=32):
             super().__init__()
-            self.g = gspaces.rot2dOnR2(N=4)
-            t_in = enn.FieldType(self.g, n_channels*[self.g.trivial_repr])
-            t1 = enn.FieldType(self.g, 16*[self.g.regular_repr])
-            t2 = enn.FieldType(self.g, 32*[self.g.regular_repr])
-            t3 = enn.FieldType(self.g, 64*[self.g.regular_repr])
-            t4 = enn.FieldType(self.g, 128*[self.g.regular_repr])
-            self.inc = _EqConv(t_in, t1)
-            self.d1  = _EqDown(t1, t2); self.d2 = _EqDown(t2, t3); self.d3 = _EqDown(t3, t4)
-            self.u1  = enn.R2Upsampling(t4, 2, mode='bilinear', align_corners=True)
-            self.c1  = _EqConv(t4+t3, t3)
-            self.u2  = enn.R2Upsampling(t3, 2, mode='bilinear', align_corners=True)
-            self.c2  = _EqConv(t3+t2, t2)
-            self.u3  = enn.R2Upsampling(t2, 2, mode='bilinear', align_corners=True)
-            self.c3  = _EqConv(t2+t1, t1)
-            t_out = enn.FieldType(self.g, n_classes*[self.g.trivial_repr])
-            self.outc= enn.R2Conv(t1, t_out, 1)
+            self.act = gspaces.rot2dOnR2(N=N)
+            c = base_channels
+            def ft(n): return enn.FieldType(self.act, n * [self.act.regular_repr])
+            self.fin = enn.FieldType(self.act, n_channels * [self.act.trivial_repr])
+            f1, f2, f3, f4, f5 = ft(c), ft(c*2), ft(c*4), ft(c*8), ft(c*16)
+            self.inc   = DoubleEquivariantConv(self.fin, f1)
+            self.d1, self.d2, self.d3, self.d4 = Down(f1, f2), Down(f2, f3), Down(f3, f4), Down(f4, f5)
+            self.u1, self.u2, self.u3, self.u4 = Up(f5, f4), Up(f4, f3), Up(f3, f2), Up(f2, f1)
+            out_t = enn.FieldType(self.act, n_classes * [self.act.trivial_repr])
+            self.outc = enn.R2Conv(f1, out_t, 1)
+
         def forward(self, x):
-            x_g = enn.GeometricTensor(x, enn.FieldType(self.g, x.shape[1]*[self.g.trivial_repr]))
-            x1 = self.inc(x_g); x2 = self.d1(x1); x3 = self.d2(x2); x4 = self.d3(x3)
-            x  = self.c1(enn.tensor_directsum([x3, self.u1(x4)]))
-            x  = self.c2(enn.tensor_directsum([x2, self.u2(x)]))
-            x  = self.c3(enn.tensor_directsum([x1, self.u3(x)]))
+            g = enn.GeometricTensor(x, self.fin)
+            x1 = self.inc(g); x2 = self.d1(x1); x3 = self.d2(x2); x4 = self.d3(x3); x5 = self.d4(x4)
+            x  = self.u1(x5, x4); x = self.u2(x, x3); x = self.u3(x, x2); x = self.u4(x, x1)
             return self.outc(x).tensor
 else:
+    DoubleEquivariantConv = None
+    Down = None
+    Up = None
+    OutConv = None
     SE2_CNNET = None
     HarmonicNet = None
 
@@ -1025,19 +1030,60 @@ def load_cached_model(model_key, weight_file, device_str):
         
     ModelClass = meta["class"]
     try:
-        if meta["is_se2"]:
-            ckpt = torch.load(weight_file, map_location=device, weights_only=False)
-            base_channels = 24
-            for k, val in ckpt.items():
-                if 'batch_norm_[8].weight' in k and 'inc' in k:
-                    base_channels = val.shape[0]
+        raw_ckpt = torch.load(weight_file, map_location=device, weights_only=False)
+        ckpt = raw_ckpt
+        if isinstance(raw_ckpt, dict):
+            if "state_dict" in raw_ckpt:
+                ckpt = raw_ckpt["state_dict"]
+            elif "model_state_dict" in raw_ckpt:
+                ckpt = raw_ckpt["model_state_dict"]
+
+        clean_ckpt = {}
+        for k, v in ckpt.items():
+            clean_k = k.replace("module.", "")
+            clean_ckpt[clean_k] = v
+
+        if model_key == "se2":
+            detected_bc = 24
+            for k, val in clean_ckpt.items():
+                if 'inc' in k and 'batch_norm' in k and hasattr(val, 'shape') and len(val.shape) == 1:
+                    detected_bc = val.shape[0]
                     break
-            model = ModelClass(n_channels=3, n_classes=2, base_channels=base_channels).to(device)
-            model.load_state_dict(ckpt, strict=False)
+            model = None
+            for bc in [detected_bc, 24, 32]:
+                try:
+                    cand = ModelClass(n_channels=3, n_classes=2, N=8, base_channels=bc).to(device)
+                    cand.load_state_dict(clean_ckpt, strict=False)
+                    model = cand
+                    break
+                except Exception:
+                    continue
+            if model is None:
+                model = ModelClass(n_channels=3, n_classes=2).to(device)
+                model.load_state_dict(clean_ckpt, strict=False)
+
+        elif model_key == "harmonic":
+            detected_bc = 32
+            for k, val in clean_ckpt.items():
+                if 'inc' in k and 'batch_norm' in k and hasattr(val, 'shape') and len(val.shape) == 1:
+                    detected_bc = val.shape[0]
+                    break
+            model = None
+            for bc in [detected_bc, 32, 24]:
+                try:
+                    cand = ModelClass(n_channels=3, n_classes=2, N=4, base_channels=bc).to(device)
+                    cand.load_state_dict(clean_ckpt, strict=False)
+                    model = cand
+                    break
+                except Exception:
+                    continue
+            if model is None:
+                model = ModelClass(n_channels=3, n_classes=2).to(device)
+                model.load_state_dict(clean_ckpt, strict=False)
+
         else:
             model = ModelClass(n_channels=3, n_classes=2).to(device)
-            ckpt = torch.load(weight_file, map_location=device, weights_only=False)
-            model.load_state_dict(ckpt, strict=False)
+            model.load_state_dict(clean_ckpt, strict=False)
             
         model.eval()
         return model
