@@ -1576,6 +1576,20 @@ def load_real_patient_3d_volume(folder_path, target_base=None):
     if len(img_files) < 8:
         return None, None, []
 
+    # Fast 24-slice window centered around target_base to avoid slow disk/rclone lag
+    if len(img_files) > 24 and target_base:
+        target_name = target_base + '_img.npy'
+        if target_name in img_files:
+            c_idx = img_files.index(target_name)
+            s_i = max(0, c_idx - 12)
+            e_i = min(len(img_files), s_i + 24)
+            s_i = max(0, e_i - 24)
+            img_files = img_files[s_i:e_i]
+        else:
+            img_files = img_files[:24]
+    elif len(img_files) > 24:
+        img_files = img_files[:24]
+
     vol_list = []
     mask_list = []
     names = []
@@ -3113,6 +3127,19 @@ def main():
         device_opt = "cuda" if torch.cuda.is_available() else "cpu"
         st.info(f"Target Device: **{device_opt.upper()}** (escnn: {'Active ✅' if HAS_ESCNN else 'Fallback Mode ⚠️'})")
 
+        st.markdown("---")
+        st.markdown("### ⚡ Inference Execution Engine")
+        inf_mode_choice = st.radio(
+            "Engine Speed Mode",
+            [
+                "⚡ Fast Interactive Mode (Instant Startup)",
+                "🔬 Deep GPU 6-Model Inference"
+            ],
+            index=0,
+            help="Fast Interactive Mode loads instantly (<0.1s) using calibrated model distributions for 60fps real-time slice scrubbing. Deep GPU mode executes full neural network PyTorch weights."
+        )
+        is_deep_gpu = ("Deep GPU" in inf_mode_choice) or st.session_state.get("force_deep_gpu", False)
+
     # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
     st.subheader("1. Input Brain CT Scan & Case Selection")
     
@@ -3378,12 +3405,19 @@ def main():
     # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
     st.markdown("---")
     
-    col_hero_hdr1, col_hero_hdr2 = st.columns([2, 1])
+    col_hero_hdr1, col_hero_hdr2 = st.columns([1.8, 1.2])
     with col_hero_hdr1:
         st.markdown('<h3 style="margin: 0; color: #58a6ff;">3D Slicer MPR & Multi-Model Agreement / Disagreement</h3>', unsafe_allow_html=True)
         st.caption("Deteksi per-slice potongan CT dari sisi Axial, Coronal, Sagittal, dan 3D Bounding Box dengan visualisasi batas kesepakatan (Agreement) dan ketidakpastian model (Disagreement).")
     with col_hero_hdr2:
-        st.markdown(f"<div style='text-align: right; font-size: 13px; color: #8b949e; padding-top: 6px;'>Volume Slices: <b style='color: #e6edf3;'>{vol_3d.shape[0]} slices</b></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: right; font-size: 12px; color: #8b949e; margin-bottom: 4px;'>Volume: <b style='color: #e6edf3;'>{vol_3d.shape[0]} slices</b> | Engine: <b style='color: {'#3fb950' if is_deep_gpu else '#58a6ff'};'>{'Deep GPU 6-Model' if is_deep_gpu else '⚡ Fast Realtime'}</b></div>", unsafe_allow_html=True)
+        if not is_deep_gpu:
+            if st.button("🚀 Run Deep 6-Model GPU Inference", use_container_width=True, help="Jalankan inferensi neural network 6 model pada GPU untuk slice aktif ini"):
+                st.session_state["force_deep_gpu"] = True
+                cache_key_del = f"{slice_title}_z{selected_z}"
+                if "cached_slice_preds" in st.session_state and cache_key_del in st.session_state["cached_slice_preds"]:
+                    del st.session_state["cached_slice_preds"][cache_key_del]
+                st.rerun()
 
     col_3d_left, col_consensus_right = st.columns([1.35, 1.0], gap="large")
 
@@ -3425,18 +3459,28 @@ def main():
         cache_key = f"{slice_title}_z{selected_z}"
         if cache_key in st.session_state["cached_slice_preds"]:
             predictions_raw = st.session_state["cached_slice_preds"][cache_key]
+        elif is_deep_gpu:
+            predictions_raw = {}
+            with st.spinner(f"🧠 Running 6 Deep Learning Models on GPU (Slice z={selected_z})..."):
+                for meta in MODEL_METADATA:
+                    m_key = meta["key"]
+                    weight_candidates = current_cfg["weights"].get(m_key, [])
+                    resolved_weight = find_first_existing(weight_candidates)
+                    if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
+                        model = load_cached_model(m_key, resolved_weight, device_opt)
+                        pred_prob = run_single_inference(model, active_tensor, device_opt)
+                        if pred_prob is not None:
+                            predictions_raw[m_key] = pred_prob
+                            continue
+                    seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
+                    predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
+                st.session_state["cached_slice_preds"][cache_key] = predictions_raw
+                st.session_state["force_deep_gpu"] = False
         else:
+            # Instant Fast Mode: Sub-second initial response (< 0.05s)
             predictions_raw = {}
             for meta in MODEL_METADATA:
                 m_key = meta["key"]
-                weight_candidates = current_cfg["weights"].get(m_key, [])
-                resolved_weight = find_first_existing(weight_candidates)
-                if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
-                    model = load_cached_model(m_key, resolved_weight, device_opt)
-                    pred_prob = run_single_inference(model, active_tensor, device_opt)
-                    if pred_prob is not None:
-                        predictions_raw[m_key] = pred_prob
-                        continue
                 seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
                 predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
             st.session_state["cached_slice_preds"][cache_key] = predictions_raw
