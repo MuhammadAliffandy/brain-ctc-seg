@@ -929,6 +929,72 @@ def hex_to_rgb(hex_code):
     hex_code = hex_code.lstrip('#')
     return tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
 
+
+def overlay_agreement_and_disagreement(
+    img_gray, 
+    agreement_counts, 
+    threshold=3, 
+    num_models=6, 
+    show_agreement=True, 
+    show_disagreement=True, 
+    show_heatmap=False,
+    heatmap_alpha=0.6,
+    cmap_name="turbo"
+):
+    """
+    Overlays model agreement (consensus core) and disagreement (uncertainty/variance)
+    directly onto the active CT slice for clinical decision-making.
+    """
+    base = (np.clip(img_gray, 0, 1) * 255).astype(np.uint8) if img_gray.dtype != np.uint8 else img_gray.copy()
+    if base.ndim == 2:
+        rgb = cv2.cvtColor(base, cv2.COLOR_GRAY2RGB)
+    else:
+        rgb = base.copy()
+        
+    if agreement_counts is None or np.max(agreement_counts) == 0:
+        return rgb
+
+    # 1. Multi-model voting intensity heatmap (if toggled)
+    if show_heatmap:
+        active_heat = (agreement_counts >= 1)
+        if np.any(active_heat):
+            norm = np.clip(agreement_counts / float(max(1, num_models)), 0.0, 1.0)
+            cmap = getattr(plt.cm, cmap_name, plt.cm.turbo)
+            colored = (cmap(norm)[..., :3] * 255).astype(np.uint8)
+            rgb = np.where(
+                active_heat[..., None],
+                (rgb * (1.0 - heatmap_alpha) + colored * heatmap_alpha).astype(np.uint8),
+                rgb
+            )
+
+    # 2. Disagreement zone: 1 <= votes < threshold (Inter-model uncertainty band)
+    if show_disagreement:
+        disagree_m = ((agreement_counts > 0) & (agreement_counts < threshold)).astype(np.uint8)
+        if np.any(disagree_m):
+            amber_fill = np.array([249, 115, 22], dtype=np.uint8) # Coral / amber
+            rgb = np.where(
+                disagree_m[..., None] > 0,
+                (rgb * 0.65 + amber_fill * 0.35).astype(np.uint8),
+                rgb
+            )
+            contours_dis, _ = cv2.findContours(disagree_m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(rgb, contours_dis, -1, (251, 146, 60), 2, cv2.LINE_AA)
+
+    # 3. Agreement zone: votes >= threshold (Consensus core lesion)
+    if show_agreement:
+        agree_m = (agreement_counts >= threshold).astype(np.uint8)
+        if np.any(agree_m):
+            green_fill = np.array([34, 197, 94], dtype=np.uint8) # Emerald green
+            rgb = np.where(
+                agree_m[..., None] > 0,
+                (rgb * 0.55 + green_fill * 0.45).astype(np.uint8),
+                rgb
+            )
+            contours_agr, _ = cv2.findContours(agree_m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(rgb, contours_agr, -1, (74, 222, 128), 2, cv2.LINE_AA)
+
+    return rgb
+
 # ─────────────────────────────────────────────────────────────────
 # 7. PHYSICAL CALIBRATION & 3D MULTI-PLANAR RECONSTRUCTION (MPR)
 # ─────────────────────────────────────────────────────────────────
@@ -1670,10 +1736,23 @@ def generate_high_clarity_clinical_mpr(mask_axial, current_z, depth):
     return cor_img, cor_mask, sag_img, sag_mask, z_line_y
 
 
-def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
+def generate_mpr_visualizations(
+    vol_3d, 
+    mask_3d, 
+    current_z, 
+    rot_k=1, 
+    crop=40,
+    agreement_counts=None,
+    v_thresh=3,
+    show_agreement=True,
+    show_disagreement=True,
+    show_heatmap=False,
+    cmap_name="turbo",
+    heatmap_alpha=0.6
+):
     """
     Generates 4 views matching Wireframe Screenshot 2:
-    1. Ax {current_z}: Native high-resolution Axial slice with tumor outline
+    1. Ax {current_z}: Native high-resolution Axial slice with model agreement & disagreement contours
     2. Cor: Coronal view reconstructed from isotropic MPR (superior at top)
     3. Sag: Sagittal view reconstructed from isotropic MPR (superior at top)
     4. 3D · bounding box: 3D perspective wireframe rendering & Planar ROI box
@@ -1689,8 +1768,23 @@ def generate_mpr_visualizations(vol_3d, mask_3d, current_z, rot_k=1, crop=40):
     # Isolate focal lesion connected to active slice to ensure clean bounding box and contour
     mask_aligned = isolate_target_lesion(mask_aligned, current_z)
 
-    # 1. Native High-Resolution Axial View
-    ax_display = overlay_mask_with_outline(vol_aligned[current_z], mask_aligned[current_z], fill_color=(46, 160, 67), outline_color=(248, 81, 73))
+    # 1. Native High-Resolution Axial View with Agreement & Disagreement
+    if agreement_counts is not None:
+        agr_aligned = align_for_clinical_display(agreement_counts.astype(np.float32), crop=crop, rot_k=rot_k, is_mask=False)
+        agr_aligned = np.round(agr_aligned).astype(np.int32)
+        ax_display = overlay_agreement_and_disagreement(
+            vol_aligned[current_z],
+            agr_aligned,
+            threshold=v_thresh,
+            num_models=6,
+            show_agreement=show_agreement,
+            show_disagreement=show_disagreement,
+            show_heatmap=show_heatmap,
+            heatmap_alpha=heatmap_alpha,
+            cmap_name=cmap_name
+        )
+    else:
+        ax_display = overlay_mask_with_outline(vol_aligned[current_z], mask_aligned[current_z], fill_color=(46, 160, 67), outline_color=(248, 81, 73))
     
     # Authentic DICOM Viewport Corner HUD (matching hospital PACS workstations)
     font_hud = cv2.FONT_HERSHEY_SIMPLEX
@@ -1999,7 +2093,352 @@ def render_model_card(meta, predictions, img_gray, gt_mask):
 
 
 # ─────────────────────────────────────────────────────────────────
-# 8. MAIN INTERACTIVE APPLICATION
+# 8. CLINICAL POPUP DIALOGS (DECLUTTERED INTERFACE)
+# ─────────────────────────────────────────────────────────────────
+@st.dialog("📊 Individual 6-Model Segmentations", width="large")
+def show_models_dialog(model_metadata, predictions, img_gray, gt_mask):
+    st.markdown("#### Individual Model Segmentation Breakdown (6 Models)")
+    st.caption("Detailed architectural comparison on active slice. Each card highlights isolated model prediction, confidence area, and Dice concordance against reference.")
+    row1_models = model_metadata[:3]
+    row2_models = model_metadata[3:]
+    
+    r1_c1, r1_c2, r1_c3 = st.columns(3)
+    for idx, meta in enumerate(row1_models):
+        with [r1_c1, r1_c2, r1_c3][idx]:
+            render_model_card(meta, predictions, img_gray, gt_mask)
+            
+    r2_c1, r2_c2, r2_c3 = st.columns(3)
+    for idx, meta in enumerate(row2_models):
+        with [r2_c1, r2_c2, r2_c3][idx]:
+            render_model_card(meta, predictions, img_gray, gt_mask)
+
+
+@st.dialog("📈 Inter-Model Correlation & Feature Matrix", width="large")
+def show_correlation_dialog(model_metadata, predictions):
+    st.markdown("#### Inter-Model Feature & Segmentation Correlation Matrix")
+    st.caption("Pairwise statistical concordance and spatial segmentation overlap between equivariant and non-equivariant models.")
+    col_ctrl1, col_ctrl2 = st.columns([2, 1])
+    with col_ctrl1:
+        corr_metric = st.radio(
+            "Correlation Metric Mode:",
+            [
+                "Latent Feature Correlation (Pearson r on Probabilities)",
+                "Spatial Segmentation Agreement (Pairwise Dice Score)",
+                "Latent Feature Cosine Similarity"
+            ],
+            horizontal=True,
+            key="dlg_corr_mode"
+        )
+    with col_ctrl2:
+        matrix_cmap = st.selectbox("Correlation Colormap", ["Viridis", "Plasma", "Turbo", "Coolwarm", "RdBu_r"], index=0, key="dlg_cmap")
+
+    n_m = len(model_metadata)
+    corr_matrix = np.zeros((n_m, n_m), dtype=np.float32)
+    m_names = [m["name"] for m in model_metadata]
+    
+    for i in range(n_m):
+        for j in range(n_m):
+            if i == j:
+                corr_matrix[i, j] = 1.0
+            else:
+                p_i = predictions[model_metadata[i]["key"]]["prob"]
+                p_j = predictions[model_metadata[j]["key"]]["prob"]
+                m_i = predictions[model_metadata[i]["key"]]["mask"]
+                m_j = predictions[model_metadata[j]["key"]]["mask"]
+                
+                if "Pearson" in corr_metric:
+                    v_i, v_j = p_i.flatten(), p_j.flatten()
+                    std_i, std_j = np.std(v_i), np.std(v_j)
+                    corr_matrix[i, j] = float(np.clip(np.corrcoef(v_i, v_j)[0, 1] if std_i > 1e-6 and std_j > 1e-6 else 0.0, -1.0, 1.0))
+                elif "Cosine" in corr_metric:
+                    v_i, v_j = p_i.flatten(), p_j.flatten()
+                    norm_i, norm_j = np.linalg.norm(v_i), np.linalg.norm(v_j)
+                    corr_matrix[i, j] = float(np.clip(np.dot(v_i, v_j) / (norm_i * norm_j) if norm_i > 1e-6 and norm_j > 1e-6 else 0.0, 0.0, 1.0))
+                else:
+                    d_ij, _ = compute_dice_iou(m_i, m_j)
+                    corr_matrix[i, j] = d_ij if d_ij is not None else 0.0
+
+    col_mat1, col_mat2 = st.columns([1.3, 1.0], gap="large")
+    with col_mat1:
+        z_min = -0.2 if "Pearson" in corr_metric else 0.0
+        if HAS_PLOTLY:
+            import plotly.express as px
+            fig_corr = px.imshow(
+                corr_matrix, x=m_names, y=m_names, color_continuous_scale=matrix_cmap,
+                zmin=z_min, zmax=1.0, text_auto=".2f",
+                title=f"Pairwise Model Correlation ({corr_metric.split('(')[0].strip()})"
+            )
+            fig_corr.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=350, margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_corr, use_container_width=True)
+        else:
+            fig, ax = plt.subplots(figsize=(6, 4.5), facecolor='#161b22')
+            ax.set_facecolor('#161b22')
+            im = ax.imshow(corr_matrix, cmap=matrix_cmap.lower(), vmin=z_min, vmax=1.0)
+            ax.set_xticks(range(n_m)); ax.set_yticks(range(n_m))
+            ax.set_xticklabels(m_names, rotation=30, ha='right', color='#e6edf3', fontsize=8)
+            ax.set_yticklabels(m_names, color='#e6edf3', fontsize=8)
+            for i in range(n_m):
+                for j in range(n_m):
+                    ax.text(j, i, f"{corr_matrix[i, j]:.2f}", ha='center', va='center', color='white' if corr_matrix[i, j] < 0.65 else 'black', fontsize=8, fontweight='bold')
+            ax.set_title(f"Pairwise Model Correlation ({corr_metric.split('(')[0].strip()})", color='#58a6ff', fontsize=10, fontweight='bold')
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+    with col_mat2:
+        colors = [m["color"] for m in model_metadata]
+        model_areas = [predictions[m["key"]]["area"] for m in model_metadata]
+        model_areas_mm2 = [a * PIXEL_AREA_MM2 for a in model_areas]
+        if HAS_PLOTLY:
+            fig_bar = go.Figure(data=[
+                go.Bar(
+                    x=m_names, y=model_areas, marker_color=colors,
+                    text=[f"{a:,} px<br>({m:.1f} mm²)" for a, m in zip(model_areas, model_areas_mm2)],
+                    textposition='auto'
+                )
+            ])
+            fig_bar.update_layout(
+                title="Tumor Segment Area per Model (Pixels & mm²)", template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=350, margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            fig, ax = plt.subplots(figsize=(5, 4), facecolor='#161b22')
+            ax.set_facecolor('#161b22')
+            bars = ax.bar(m_names, model_areas, color=colors)
+            ax.bar_label(bars, fmt='%d px', color='#e6edf3', padding=3, fontsize=8)
+            ax.set_title("Tumor Segment Area per Model (Pixels)", color='#58a6ff', fontsize=10, fontweight='bold')
+            ax.tick_params(colors='#8b949e', labelsize=8)
+            plt.xticks(rotation=30, ha='right')
+            for sp in ax.spines.values(): sp.set_color('#30363d')
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+
+@st.dialog("⚠️ Size-Based Clinical Risk Flags & Recommendations", width="medium")
+def show_risk_flags_dialog(risk_metrics):
+    st.markdown("#### Size-Based Clinical Risk Flags")
+    st.markdown(f"""
+    <div class="risk-checklist">
+        <div class="check-item"><span class="check-box">☑</span> <b>Largest diameter:</b> &nbsp;<span class="highlight-val">{risk_metrics['max_diam_mm']:.1f} mm</span></div>
+        <div class="check-item"><span class="check-box">☑</span> <b>Smallest diameter:</b> &nbsp;<span class="highlight-val">{risk_metrics['min_diam_mm']:.1f} mm</span></div>
+        <div class="check-item"><span class="check-box">☑</span> <b>The lesion across the entire scan are:</b> &nbsp;<span class="highlight-val">{risk_metrics['active_slices']} slices ({risk_metrics['z_span_mm']:.1f} mm span)</span></div>
+        <div class="check-item"><span class="check-box">☑</span> <b>The lesion diameter in scans:</b></div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    scan_lines = []
+    for s in risk_metrics['slice_table']:
+        scan_lines.append(f"<div class='scan-slice-row'>Scan z = <b>{s['z']}</b>; diameter <b>{s['d_major']:.1f} mm</b>, <b>{s['d_minor']:.1f} mm</b> ({s['area_mm2']:.1f} mm²)</div>")
+    
+    st.markdown(f"""
+    <div style="max-height: 200px; overflow-y: auto; background: #0d1117; border-radius: 8px; padding: 8px 12px; margin: 8px 0; border: 1px solid #21262d;">
+        {''.join(scan_lines)}
+    </div>
+    <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #30363d;">
+        <span style="font-size: 14px; color: #8b949e;">Total Lesion Volume:</span>
+        <span style="font-size: 26px; font-weight: 700; color: #58a6ff; margin-left: 8px;">{risk_metrics['total_volume_ml']:.1f} mL</span>
+    </div>
+    <div style="margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(248, 81, 73, 0.12); border: 1px solid {risk_metrics['risk_color']}; color: {risk_metrics['risk_color']}; font-size: 13px;">
+        <b>⚠️ {risk_metrics['risk_label']}</b><br>{risk_metrics['risk_recommendation']}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+@st.dialog("✏️ Clinician Margin Editor & PACS Sign-off", width="large")
+def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, slice_title, selected_z, reviewer_name, is_clinician_edited, consensus_meas):
+    st.markdown(f"#### ✏️ Clinician Interactive Lesion Editor (Slice z = {selected_z})")
+    st.caption("Fasilitas koreksi interaktif untuk dokter: Tambah (Brush), Hapus (Eraser), Geser letak lesi, atau atur margin radial. Besaran lesi (mm², diameter, dan volume) akan diperbarui secara otomatis.")
+    
+    col_rev1, col_rev2 = st.columns([1.5, 1.0])
+    with col_rev1:
+        rev_name = st.text_input("Reviewed by:", value=reviewer_name, key=f"dlg_rev_{selected_z}")
+    with col_rev2:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        sign_check = st.checkbox("Accept agreement outline", value=st.session_state.get("outline_accepted", True), key=f"dlg_chk_{selected_z}")
+
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("✅ Confirm & Accept Outline", use_container_width=True, type="primary", key=f"dlg_acc_{selected_z}"):
+            st.session_state["outline_accepted"] = True
+            st.session_state["reviewer_name"] = rev_name
+            st.success(f"Outline accepted by {rev_name}.")
+    with b2:
+        if st.button("🚀 Transmit to PACS (PACS-NTUH-01)", use_container_width=True, key=f"dlg_pacs_{selected_z}"):
+            st.session_state["pacs_sent"] = True
+            st.info("DICOM-RT Structure Set transmitted to PACS server PACS-NTUH-01.")
+
+    st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+
+    slice_edit_key = f"{slice_title}_{selected_z}"
+    curr_target_mask = active_consensus_mask.copy()
+    orig_meas = compute_physical_measurements(orig_ai_mask)
+    
+    if np.sum(curr_target_mask > 0) > 0:
+        pos_y, pos_x = np.where(curr_target_mask > 0)
+        def_cx, def_cy = int(np.mean(pos_x)), int(np.mean(pos_y))
+        min_x, max_x = int(np.min(pos_x)), int(np.max(pos_x))
+        min_y, max_y = int(np.min(pos_y)), int(np.max(pos_y))
+    else:
+        def_cx, def_cy = 128, 128
+        min_x, max_x = 110, 146
+        min_y, max_y = 110, 146
+
+    col_brush_preview, col_brush_controls = st.columns([1.1, 1.3], gap="large")
+
+    with col_brush_controls:
+        tool_tab1, tool_tab2, tool_tab3 = st.tabs(["🖌️ Brush (Add/Delete)", "📐 Radial Margin & Shift", "⚡ Quick Presets & Reset"])
+        
+        with tool_tab1:
+            b_mode = st.radio("Brush Action", ["🟢 Add Lesion (Brush)", "🔴 Delete Lesion (Eraser)"], horizontal=True, key=f"dlg_bmode_{selected_z}")
+            action_key = "add" if "Add" in b_mode else "delete"
+            b_rad_mm = st.slider("Brush Diameter (mm)", 1.0, 25.0, 6.0, 0.5, key=f"dlg_brad_{selected_z}")
+            b_rad_px = max(1, int(round((b_rad_mm / 2.0) / PIXEL_SPACING_MM)))
+            
+            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-top: 8px;'>Target Location:</div>", unsafe_allow_html=True)
+            q1, q2, q3, q4, q5 = st.columns(5)
+            target_x = st.session_state.get(f"dlg_bx_{selected_z}", def_cx)
+            target_y = st.session_state.get(f"dlg_by_{selected_z}", def_cy)
+            with q1:
+                if st.button("🎯 Center", key=f"dlg_bc_{selected_z}", use_container_width=True):
+                    st.session_state[f"dlg_bx_{selected_z}"] = def_cx; st.session_state[f"dlg_by_{selected_z}"] = def_cy; st.rerun()
+            with q2:
+                if st.button("⬆️ Top", key=f"dlg_bt_{selected_z}", use_container_width=True):
+                    st.session_state[f"dlg_bx_{selected_z}"] = def_cx; st.session_state[f"dlg_by_{selected_z}"] = min_y; st.rerun()
+            with q3:
+                if st.button("⬇️ Bottom", key=f"dlg_bb_{selected_z}", use_container_width=True):
+                    st.session_state[f"dlg_bx_{selected_z}"] = def_cx; st.session_state[f"dlg_by_{selected_z}"] = max_y; st.rerun()
+            with q4:
+                if st.button("⬅️ Left", key=f"dlg_bl_{selected_z}", use_container_width=True):
+                    st.session_state[f"dlg_bx_{selected_z}"] = min_x; st.session_state[f"dlg_by_{selected_z}"] = def_cy; st.rerun()
+            with q5:
+                if st.button("➡️ Right", key=f"dlg_br_{selected_z}", use_container_width=True):
+                    st.session_state[f"dlg_bx_{selected_z}"] = max_x; st.session_state[f"dlg_by_{selected_z}"] = def_cy; st.rerun()
+            
+            col_bx, col_by = st.columns(2)
+            with col_bx:
+                b_x = st.slider("X Position (px)", 0, 255, int(target_x), key=f"dlg_bxslider_{selected_z}")
+            with col_by:
+                b_y = st.slider("Y Position (px)", 0, 255, int(target_y), key=f"dlg_byslider_{selected_z}")
+                
+            if st.button(f"🖌️ Apply Brush Stroke at ({b_x}, {b_y})", type="primary", use_container_width=True, key=f"dlg_apply_brush_{selected_z}"):
+                new_mask = apply_brush_stroke(curr_target_mask, b_x, b_y, b_rad_px, action=action_key)
+                st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                st.rerun()
+
+        with tool_tab2:
+            st.markdown("**1. Radial Safety Margin (Uniform Expansion/Contraction)**")
+            rad_margin = st.slider("Radial Margin (mm)", -4.0, 4.0, 0.0, 0.2, key=f"dlg_rad_margin_{selected_z}")
+            if st.button(f"📐 Apply Radial Margin ({rad_margin:+.1f} mm)", use_container_width=True, key=f"dlg_apply_rad_{selected_z}"):
+                new_mask = apply_radial_margin(curr_target_mask, rad_margin)
+                st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                st.session_state["safety_margin_mm"] = rad_margin
+                st.rerun()
+                
+            st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+            st.markdown("**2. Centroid Translation / Shift Location**")
+            col_sx, col_sy = st.columns(2)
+            with col_sx:
+                shift_x = st.slider("Shift X (mm)", -15.0, 15.0, 0.0, 0.5, key=f"dlg_shf_x_{selected_z}")
+            with col_sy:
+                shift_y = st.slider("Shift Y (mm)", -15.0, 15.0, 0.0, 0.5, key=f"dlg_shf_y_{selected_z}")
+            if st.button(f"🎯 Shift Lesion (ΔX={shift_x:+.1f}mm, ΔY={shift_y:+.1f}mm)", use_container_width=True, key=f"dlg_apply_shift_{selected_z}"):
+                new_mask = apply_mask_translation(curr_target_mask, shift_x, shift_y)
+                st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                st.rerun()
+
+        with tool_tab3:
+            p1, p2 = st.columns(2)
+            with p1:
+                if st.button("➕ Dilate (+1.0 mm)", use_container_width=True, key=f"dlg_qdil_{selected_z}"):
+                    new_mask = apply_radial_margin(curr_target_mask, 1.0)
+                    st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                    st.rerun()
+            with p2:
+                if st.button("➖ Erode (-1.0 mm)", use_container_width=True, key=f"dlg_qero_{selected_z}"):
+                    new_mask = apply_radial_margin(curr_target_mask, -1.0)
+                    st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                    st.rerun()
+                    
+            p3, p4 = st.columns(2)
+            with p3:
+                if st.button("🧹 Denoise & Clean Voids", use_container_width=True, key=f"dlg_qden_{selected_z}"):
+                    new_mask = apply_denoise_and_fill(curr_target_mask)
+                    st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                    st.rerun()
+            with p4:
+                if st.button("🗑️ Clear Slice Lesion", use_container_width=True, key=f"dlg_qclr_{selected_z}"):
+                    new_mask = np.zeros_like(curr_target_mask)
+                    st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
+                    st.rerun()
+                    
+            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+            if st.button("🔄 Reset to AI Model Consensus", type="secondary", use_container_width=True, key=f"dlg_reset_ai_{selected_z}"):
+                if slice_edit_key in st.session_state["clinician_edited_masks"]:
+                    del st.session_state["clinician_edited_masks"][slice_edit_key]
+                st.rerun()
+
+    with col_brush_preview:
+        preview_img = draw_brush_crosshair_preview(
+            img_gray,
+            curr_target_mask,
+            cx=b_x if 'b_x' in locals() else def_cx,
+            cy=b_y if 'b_y' in locals() else def_cy,
+            r_px=b_rad_px if 'b_rad_px' in locals() else 8,
+            action=action_key if 'action_key' in locals() else "add"
+        )
+        st.image(preview_img, caption=f"Axial Preview at ({b_x if 'b_x' in locals() else def_cx}, {b_y if 'b_y' in locals() else def_cy})", use_container_width=True)
+        
+        delta_area = consensus_meas['area_mm2'] - orig_meas['area_mm2']
+        delta_pct = (delta_area / max(1e-5, orig_meas['area_mm2'])) * 100.0 if orig_meas['area_mm2'] > 0 else 0.0
+        
+        st.markdown(f"""
+        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 13px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: #8b949e;">AI Initial Area:</span>
+                <b style="color: #c9d1d9;">{orig_meas['area_mm2']:.1f} mm² ({orig_meas['pixels']:,} px)</b>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: #8b949e;">Clinician Adjusted:</span>
+                <b style="color: #58a6ff;">{consensus_meas['area_mm2']:.1f} mm² ({consensus_meas['pixels']:,} px)</b>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: #8b949e;">Major × Minor Diam:</span>
+                <b style="color: #e6edf3;">{consensus_meas['major_diam_mm']:.1f} × {consensus_meas['minor_diam_mm']:.1f} mm</b>
+            </div>
+            <div style="display: flex; justify-content: space-between; border-top: 1px solid #21262d; padding-top: 6px; margin-top: 4px;">
+                <span style="color: #8b949e;">Net Margin Shift:</span>
+                <b style="color: {'#3fb950' if delta_area >= 0 else '#f85149'};">{delta_area:+.1f} mm² ({delta_pct:+.1f}%)</b>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+@st.dialog("ℹ️ Modality Protocol Context & SOTA Validation", width="medium")
+def show_protocol_dialog(selected_dataset_name, current_cfg):
+    r1, r2 = st.columns(2)
+    with r1:
+        st.markdown(f"""
+        **Modality Protocol Context**:
+        - **Target Dataset**: `{selected_dataset_name}`
+        - **Data Source**: `{current_cfg['description']}`
+        - **Zero-Leakage Policy**: Training strictly separates non-contrast and contrast modalities. No combined feature leakage across datasets.
+        - **Clinical Threshold**: Scientifically tuned at `0.80` for high lesion specificity, standard inference binarized at `0.50`.
+        """)
+    with r2:
+        st.markdown("""
+        **SOTA Validation Rationale**:
+        - **CT-SE(2)** provides exact planar rotation equivariance ($N=8$), maintaining boundary coherence regardless of patient head orientation.
+        - **HarmonicNet ($C_4$)** serves as the lower-order equivariant baseline.
+        - **nnU-Net & TransUNet** capture deep contextual dependencies but lack geometric guarantees against rotational variance.
+        - **Ensemble Consensus** mitigates individual false positives and enhances clinical diagnostic confidence.
+        """)
+
+
+# ─────────────────────────────────────────────────────────────────
+# 9. MAIN INTERACTIVE APPLICATION
 # ─────────────────────────────────────────────────────────────────
 def main():
     # ── Header ──
@@ -2083,13 +2522,63 @@ def main():
 
     elif input_source == "Upload Custom Scan":
         uploaded_file = st.file_uploader(
-            "Upload Brain CT Scan (DICOM .dcm / Series .zip / PNG / NPY)",
-            type=["dcm", "zip", "png", "jpg", "jpeg", "npy"]
+            "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPY / PNG)",
+            type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy"]
         )
         if uploaded_file is not None:
             slice_title = uploaded_file.name
             fname_lower = uploaded_file.name.lower()
-            if fname_lower.endswith(".dcm"):
+            if fname_lower.endswith(".nii") or fname_lower.endswith(".nii.gz") or fname_lower.endswith(".gz"):
+                try:
+                    import nibabel as nib
+                    import tempfile
+                    suffix = ".nii.gz" if fname_lower.endswith(".gz") else ".nii"
+                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                        tmp.write(uploaded_file.getbuffer())
+                        tmp_path = tmp.name
+                    nii_obj = nib.load(tmp_path)
+                    nii_data = nii_obj.get_fdata().astype(np.float32)
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+                    
+                    if nii_data.ndim == 4:
+                        nii_data = nii_data[..., 0]
+                    
+                    if nii_data.ndim == 3:
+                        if nii_data.shape[0] < nii_data.shape[2] and nii_data.shape[0] < nii_data.shape[1]:
+                            pass
+                        elif nii_data.shape[2] < nii_data.shape[0] and nii_data.shape[2] < nii_data.shape[1]:
+                            nii_data = np.transpose(nii_data, (2, 0, 1))
+                        else:
+                            nii_data = np.transpose(nii_data, (2, 0, 1))
+
+                        if np.nanmin(nii_data) < -100 or np.nanmax(nii_data) > 200:
+                            wc, ww = 40.0, 80.0
+                            w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
+                            norm_data = np.clip((nii_data - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+                        else:
+                            p1, p99 = np.percentile(nii_data, 1), np.percentile(nii_data, 99)
+                            if p99 > p1:
+                                norm_data = np.clip((nii_data - p1) / (p99 - p1 + 1e-5), 0.0, 1.0)
+                            else:
+                                norm_data = np.clip(nii_data, 0.0, 1.0)
+
+                        vol_resized = []
+                        for s_idx in range(len(norm_data)):
+                            sl = norm_data[s_idx]
+                            if sl.shape != (256, 256):
+                                sl = cv2.resize(sl, (256, 256), interpolation=cv2.INTER_LINEAR)
+                            vol_resized.append(sl)
+                        vol_3d = np.stack(vol_resized, axis=0) # [Depth, 256, 256]
+                        patient_z_active = len(vol_3d) // 2
+                        img_raw = vol_3d[patient_z_active]
+                        tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                        st.success(f"🧠 3D NIfTI Volume Loaded: **{vol_3d.shape[0]} slices** ({vol_3d.shape[0]} × {vol_3d.shape[1]} × {vol_3d.shape[2]})")
+                except Exception as e:
+                    st.error(f"Error reading NIfTI file: {e}")
+            elif fname_lower.endswith(".dcm"):
                 try:
                     import pydicom
                     ds = pydicom.dcmread(uploaded_file)
@@ -2151,6 +2640,16 @@ def main():
                 if arr.ndim == 3 and arr.shape[-1] == 3:
                     img_raw = arr[..., 1].astype(np.float32)
                     tensor_native = torch.from_numpy(arr.astype(np.float32)).permute(2, 0, 1).unsqueeze(0).float()
+                elif arr.ndim == 3 and arr.shape[-1] > 3:
+                    vol_3d = np.transpose(arr.astype(np.float32), (2, 0, 1))
+                    patient_z_active = len(vol_3d) // 2
+                    img_raw = vol_3d[patient_z_active]
+                    tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                elif arr.ndim == 3:
+                    vol_3d = arr.astype(np.float32)
+                    patient_z_active = len(vol_3d) // 2
+                    img_raw = vol_3d[patient_z_active]
+                    tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
                 else:
                     img_raw = arr.astype(np.float32)
                     tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
@@ -2199,43 +2698,9 @@ def main():
         st.warning("Please select a valid case or upload a slice to begin.")
         return
 
-    # ── Run Predictions for All 6 Models ──
-    predictions_raw = {}
-    with st.spinner("Running 6-Model Inference Pipeline..."):
-        for meta in MODEL_METADATA:
-            m_key = meta["key"]
-            weight_candidates = current_cfg["weights"].get(m_key, [])
-            resolved_weight = find_first_existing(weight_candidates)
-
-            if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
-                model = load_cached_model(m_key, resolved_weight, device_opt)
-                pred_prob = run_single_inference(model, tensor_native, device_opt)
-                if pred_prob is not None:
-                    predictions_raw[m_key] = pred_prob
-                    continue
-
-            # Fallback mock prediction for local testing
-            seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
-            predictions_raw[m_key] = generate_mock_prediction(mask_raw, img_raw, seed_offset=seed_offset)
-
-    # ── Apply Clinical Alignment Uniformly ──
-    img_gray = align_for_clinical_display(img_raw, crop=CROP_MARGIN, rot_k=active_rot_k)
-    gt_mask  = align_for_clinical_display(mask_raw, crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True) if mask_raw is not None else None
-
-    predictions = {}
-    for meta in MODEL_METADATA:
-        m_key = meta["key"]
-        p_raw = predictions_raw[m_key]
-        p_aligned = align_for_clinical_display(p_raw, crop=CROP_MARGIN, rot_k=active_rot_k)
-        mask_aligned = (p_aligned >= 0.50).astype(np.uint8)
-        predictions[m_key] = {
-            "prob": p_aligned,
-            "mask": mask_aligned,
-            "area": int(np.sum(mask_aligned > 0))
-        }
-
-    # ── Load Real 3D Patient Volume or Construct Anatomical 3D Volume ──
-    vol_3d = None
+    # ── Establish 3D Patient Volume & Lesion Mask Upfront ──
+    if 'vol_3d' not in locals() or vol_3d is None:
+        vol_3d = None
     mask_3d = None
     real_names = []
     
@@ -2256,13 +2721,93 @@ def main():
 
     risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
 
-    # ── SECTION 2: 3D LESION OUTLINE & CLINICAL CONSENSUS EVALUATION ──
+    # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
     st.markdown("---")
+    
+    col_hero_hdr1, col_hero_hdr2 = st.columns([2, 1])
+    with col_hero_hdr1:
+        st.markdown('<h3 style="margin: 0; color: #58a6ff;">3D Slicer MPR & Multi-Model Agreement / Disagreement</h3>', unsafe_allow_html=True)
+        st.caption("Deteksi per-slice potongan CT dari sisi Axial, Coronal, Sagittal, dan 3D Bounding Box dengan visualisasi batas kesepakatan (Agreement) dan ketidakpastian model (Disagreement).")
+    with col_hero_hdr2:
+        st.markdown(f"<div style='text-align: right; font-size: 13px; color: #8b949e; padding-top: 6px;'>Volume Slices: <b style='color: #e6edf3;'>{vol_3d.shape[0]} slices</b></div>", unsafe_allow_html=True)
+
     col_3d_left, col_consensus_right = st.columns([1.35, 1.0], gap="large")
 
-    with col_consensus_right:
-        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Clinical Consensus Evaluation</h4>', unsafe_allow_html=True)
+    with col_3d_left:
+        # Scrubbing and viewport orientation controls
+        col_slider, col_rot, col_bmode = st.columns([1.7, 1.2, 1.1])
+        with col_slider:
+            selected_z = st.slider(
+                "Select Z-Slice / Scrub Depth (3D Scroll & Multi-Angle Detection)",
+                min_value=0,
+                max_value=vol_3d.shape[0] - 1,
+                value=min(patient_z_active, vol_3d.shape[0] - 1),
+                step=1,
+                key="z_scrub_slider"
+            )
+        with col_rot:
+            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>Rotate Imaging</div>", unsafe_allow_html=True)
+            rot_choice_mpr = st.selectbox(
+                "Rotate",
+                options=["Standard (k=1)", "Rotated 180° (k=2)", "Rotated 270° (k=3)", "Native (k=0)"],
+                index=0 if active_rot_k == 1 else (1 if active_rot_k == 2 else (2 if active_rot_k == 3 else 3)),
+                key="mpr_rot_choice",
+                label_visibility="collapsed"
+            )
+            rot_map = {"Standard (k=1)": 1, "Rotated 180° (k=2)": 2, "Rotated 270° (k=3)": 3, "Native (k=0)": 0}
+            active_mpr_rot_k = rot_map[rot_choice_mpr]
+        with col_bmode:
+            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>3D View Style</div>", unsafe_allow_html=True)
+            box_style = st.radio("ROI Display", ["3D Bounding Box", "Planar (Axial)"], horizontal=True, key="roi_box_style", label_visibility="collapsed")
+
+        # Dynamic Per-Slice Inference for selected_z
+        active_slice_img = vol_3d[selected_z]
+        active_slice_mask = mask_3d[selected_z] if mask_3d is not None and selected_z < len(mask_3d) else None
+        active_tensor = torch.from_numpy(np.stack([active_slice_img]*3, axis=0)).unsqueeze(0).float()
+
+        if "cached_slice_preds" not in st.session_state:
+            st.session_state["cached_slice_preds"] = {}
         
+        cache_key = f"{slice_title}_z{selected_z}"
+        if cache_key in st.session_state["cached_slice_preds"]:
+            predictions_raw = st.session_state["cached_slice_preds"][cache_key]
+        else:
+            predictions_raw = {}
+            for meta in MODEL_METADATA:
+                m_key = meta["key"]
+                weight_candidates = current_cfg["weights"].get(m_key, [])
+                resolved_weight = find_first_existing(weight_candidates)
+                if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
+                    model = load_cached_model(m_key, resolved_weight, device_opt)
+                    pred_prob = run_single_inference(model, active_tensor, device_opt)
+                    if pred_prob is not None:
+                        predictions_raw[m_key] = pred_prob
+                        continue
+                seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
+                predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
+            st.session_state["cached_slice_preds"][cache_key] = predictions_raw
+
+        img_gray = align_for_clinical_display(active_slice_img, crop=CROP_MARGIN, rot_k=active_rot_k)
+        gt_mask = align_for_clinical_display(active_slice_mask, crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True) if active_slice_mask is not None else None
+
+        predictions = {}
+        for meta in MODEL_METADATA:
+            m_key = meta["key"]
+            p_raw = predictions_raw[m_key]
+            p_aligned = align_for_clinical_display(p_raw, crop=CROP_MARGIN, rot_k=active_rot_k)
+            mask_aligned = (p_aligned >= 0.50).astype(np.uint8)
+            predictions[m_key] = {
+                "prob": p_aligned,
+                "mask": mask_aligned,
+                "area": int(np.sum(mask_aligned > 0))
+            }
+
+    with col_consensus_right:
+        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Clinical Consensus & Agreement</h4>', unsafe_allow_html=True)
+        
+        # Calculate risk metrics
+        risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+
         with st.container(border=True):
             st.markdown("<div style='font-size: 13px; color: #8b949e;'>Lesion volume (agreement)</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='font-size: 34px; font-weight: 700; color: #58a6ff;'>{risk_metrics['total_volume_ml']:.1f} mL</div>", unsafe_allow_html=True)
@@ -2284,8 +2829,7 @@ def main():
             if "clinician_edited_masks" not in st.session_state:
                 st.session_state["clinician_edited_masks"] = {}
 
-            active_slice_z = st.session_state.get("z_scrub_slider", patient_z_active if patient_z_active < vol_3d.shape[0] else vol_3d.shape[0] // 2)
-            slice_edit_key = f"{slice_title}_{active_slice_z}"
+            slice_edit_key = f"{slice_title}_{selected_z}"
             is_clinician_edited = slice_edit_key in st.session_state["clinician_edited_masks"]
 
             if is_clinician_edited:
@@ -2296,71 +2840,68 @@ def main():
             consensus_meas = compute_physical_measurements(active_consensus_mask)
 
             # Sync clinician edits into 3D volume
-            if is_clinician_edited and active_slice_z < len(mask_3d):
+            if is_clinician_edited and selected_z < len(mask_3d):
                 mask_3d = mask_3d.copy()
-                mask_3d[active_slice_z] = active_consensus_mask
+                mask_3d[selected_z] = active_consensus_mask
                 risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
             
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
             
             if is_clinician_edited:
-                st.markdown("<div style='background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #86efac; margin-bottom: 8px;'>✏️ <b>Clinician Adjusted Mask Active</b> (Refined by Dr. XXXXX)</div>", unsafe_allow_html=True)
-            st.markdown("<div style='font-size: 13px; color: #8b949e;'>Consensus Tumor Area</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 26px; font-weight: 700; color: #e6edf3;'>{consensus_meas['pixels']:,} px</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 16px; font-weight: 600; color: #58a6ff;'>{consensus_meas['area_mm2']:.1f} mm² <span style='font-size: 12px; color: #8b949e;'>({consensus_meas['area_cm2']:.2f} cm²)</span></div>", unsafe_allow_html=True)
+                st.markdown("<div style='background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #86efac; margin-bottom: 8px;'>✏️ <b>Clinician Adjusted Mask Active</b></div>", unsafe_allow_html=True)
             
+            agr_px = int(np.sum(ensemble_data['agreement_counts'] >= v_thresh))
+            dis_px = int(np.sum((ensemble_data['agreement_counts'] > 0) & (ensemble_data['agreement_counts'] < v_thresh)))
+            
+            c_m1, c_m2 = st.columns(2)
+            with c_m1:
+                st.markdown(f"""
+                <div style="background: rgba(34, 197, 94, 0.12); border: 1px solid #22c55e; border-radius: 6px; padding: 6px 10px;">
+                    <div style="font-size: 11px; color: #86efac;">Agreement Core</div>
+                    <div style="font-size: 18px; font-weight: 700; color: #4ade80;">{agr_px:,} px</div>
+                    <div style="font-size: 11px; color: #86efac;">{agr_px * PIXEL_AREA_MM2:.1f} mm²</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with c_m2:
+                st.markdown(f"""
+                <div style="background: rgba(249, 115, 22, 0.12); border: 1px solid #f97316; border-radius: 6px; padding: 6px 10px;">
+                    <div style="font-size: 11px; color: #fdba74;">Disagreement Zone</div>
+                    <div style="font-size: 18px; font-weight: 700; color: #fb923c;">{dis_px:,} px</div>
+                    <div style="font-size: 11px; color: #fdba74;">{dis_px * PIXEL_AREA_MM2:.1f} mm²</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
             
-            st.markdown("<div style='font-size: 13px; color: #8b949e;'>Model Agreement Concordance</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-size: 13px; color: #8b949e;'>Model Concordance Ratio</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='font-size: 24px; font-weight: 700; color: #3fb950;'>{ensemble_data['consensus_ratio']*100:.1f}%</div>", unsafe_allow_html=True)
             
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-            
-            if gt_mask is not None:
-                ens_dice, ens_iou = compute_dice_iou(ensemble_data["ensemble_mask"], gt_mask)
-                st.markdown("<div style='font-size: 13px; color: #8b949e;'>Ensemble Dice Score</div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='font-size: 24px; font-weight: 700; color: #58a6ff;'>{ens_dice:.4f} <span style='font-size: 14px; color: #3fb950;'>↑ IoU: {ens_iou:.4f}</span></div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div style='font-size: 13px; color: #8b949e;'>Unanimous Pixels: <b style='color: #e6edf3;'>{ensemble_data['unanimous_pixels']:,} px</b></div>", unsafe_allow_html=True)
 
+            # Viewport Contour Toggles
+            st.markdown("<div style='font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 6px;'>🎯 Viewport Contours</div>", unsafe_allow_html=True)
+            show_agr_toggle = st.checkbox("Show Agreement Outline (Solid Green)", value=True, key="chk_show_agr")
+            show_dis_toggle = st.checkbox("Show Disagreement Band (Amber/Coral)", value=True, key="chk_show_dis")
+            show_heat_toggle = st.checkbox("Overlay Agreement Heatmap (1-6 Votes)", value=False, key="chk_show_heat")
+
+    # Render 4-Quadrant Views inside col_3d_left
     with col_3d_left:
-        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Lesion in 3D — agreement outline</h4>', unsafe_allow_html=True)
+        mpr = generate_mpr_visualizations(
+            vol_3d, mask_3d, selected_z,
+            rot_k=active_mpr_rot_k, crop=CROP_MARGIN,
+            agreement_counts=ensemble_data["agreement_counts"],
+            v_thresh=v_thresh,
+            show_agreement=show_agr_toggle,
+            show_disagreement=show_dis_toggle,
+            show_heatmap=show_heat_toggle,
+            cmap_name=cmap_choice,
+            heatmap_alpha=heatmap_alpha
+        )
         
-        col_slider, col_rot, col_bmode = st.columns([1.7, 1.2, 1.1])
-        with col_slider:
-            # Scrubbing slider
-            selected_z = st.slider(
-                "Select Z-Slice / Scrub Depth (3D Scroll)",
-                min_value=0,
-                max_value=vol_3d.shape[0] - 1,
-                value=patient_z_active if patient_z_active < vol_3d.shape[0] else vol_3d.shape[0] // 2,
-                step=1,
-                key="z_scrub_slider"
-            )
-        with col_rot:
-            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>Rotate Imaging</div>", unsafe_allow_html=True)
-            rot_choice_mpr = st.selectbox(
-                "Rotate",
-                options=["Standard (k=1)", "Rotated 180° (k=2)", "Rotated 270° (k=3)", "Native (k=0)"],
-                index=0 if active_rot_k == 1 else (1 if active_rot_k == 2 else (2 if active_rot_k == 3 else 3)),
-                key="mpr_rot_choice",
-                label_visibility="collapsed"
-            )
-            rot_map = {"Standard (k=1)": 1, "Rotated 180° (k=2)": 2, "Rotated 270° (k=3)": 3, "Native (k=0)": 0}
-            active_mpr_rot_k = rot_map[rot_choice_mpr]
-        with col_bmode:
-            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>3D View Style</div>", unsafe_allow_html=True)
-            box_style = st.radio("ROI Display", ["3D Bounding Box", "Planar (Axial)"], horizontal=True, key="roi_box_style", label_visibility="collapsed")
-        
-        # Generate 4-panel MPR views with selected rotation
-        mpr = generate_mpr_visualizations(vol_3d, mask_3d, selected_z, rot_k=active_mpr_rot_k, crop=CROP_MARGIN)
-        
-        # 3D Slicer exact 4-quadrant layout matching reference screenshot:
-        # Top-Left: Axial (Red) | Top-Right: 3D Bounding Box (Purple)
-        # Bottom-Left: Coronal (Green) | Bottom-Right: Sagittal (Yellow)
+        # 3D Slicer exact 4-quadrant layout
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown(f"<div class='mpr-label' style='border-left: 3px solid #ef4444; color: #fca5a5;'>Red · Ax {selected_z}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='mpr-label' style='border-left: 3px solid #ef4444; color: #fca5a5;'>Red · Ax {selected_z} (Agreement & Disagreement)</div>", unsafe_allow_html=True)
             st.image(mpr["ax_view"], use_container_width=True)
         with g2:
             st.markdown("<div class='mpr-label' style='border-left: 3px solid #c026d3; color: #f0abfc;'>Purple · 3D Bounding Box & Tumor</div>", unsafe_allow_html=True)
@@ -2388,446 +2929,53 @@ def main():
             else:
                 st.info("Plotly is required for interactive 3D rotation.")
 
-    # ── Optional Expander: 4-Panel Core Overview (Raw, GT, Ensemble, Heatmap) ──
-    with st.expander("🔍 Primary Diagnostic Overviews (Raw CT, Ground Truth, Ensemble Mask, Agreement Heatmap)"):
-        p1, p2, p3, p4 = st.columns(4)
-        with p1:
-            with st.container(border=True):
-                st.markdown("**1. Raw Brain CT Scan**")
-                st.image(img_gray, use_container_width=True, clamp=True)
-                st.caption("Native Axial Slice")
-        with p2:
-            with st.container(border=True):
-                st.markdown("**:blue[2. Ground Truth Annotation]**")
-                gt_overlay = overlay_mask(img_gray, gt_mask, color=(56, 139, 253), alpha=0.55) if gt_mask is not None else img_gray
-                st.image(gt_overlay, use_container_width=True)
-                st.caption(f"Tumor Area: **{int(np.sum(gt_mask > 0)):,} px** ({int(np.sum(gt_mask > 0))*PIXEL_AREA_MM2:.1f} mm²)" if gt_mask is not None else "No Ground Truth")
-        with p3:
-            with st.container(border=True):
-                st.markdown("**:green[3. Ensemble Consensus Mask]**")
-                ens_overlay = overlay_mask(img_gray, ensemble_data["ensemble_mask"], color=(63, 185, 80), alpha=0.55)
-                st.image(ens_overlay, use_container_width=True)
-                st.caption(f"Consensus: **{ensemble_data['tumor_pixels']:,} px** ({ensemble_data['tumor_pixels']*PIXEL_AREA_MM2:.1f} mm²)")
-        with p4:
-            with st.container(border=True):
-                st.markdown("**:orange[4. Agreement Heatmap]**")
-                heatmap_img = create_agreement_heatmap(
-                    img_gray,
-                    ensemble_data["agreement_counts"],
-                    ensemble_data["num_models"],
-                    alpha=heatmap_alpha,
-                    min_agreement=min_agreement_filter,
-                    cmap_name=cmap_choice
-                )
-                st.image(heatmap_img, use_container_width=True)
-                st.caption(f"Agreement Ratio: **{ensemble_data['consensus_ratio']*100:.1f}%**")
-
-    # ── SECTION 3: INDIVIDUAL MODEL BREAKDOWN (6 MODELS) & SIZE-BASED RISK FLAGS ──
+    # ── SECTION 3: CLINICAL DIAGNOSTIC ACTION BAR (DECLUTTERED POPUPS) ──
     st.markdown("---")
-    col_breakdown_left, col_risk_right = st.columns([1.4, 1.0], gap="large")
-
-    with col_breakdown_left:
-        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Individual Model Segmentation Breakdown (6 Models)</h4>', unsafe_allow_html=True)
-        
-        row1_models = MODEL_METADATA[:3]
-        row2_models = MODEL_METADATA[3:]
-        
-        # Row 1 (CT-SE(2), HarmonicNet, nnU-Net)
-        r1_c1, r1_c2, r1_c3 = st.columns(3)
-        for idx, meta in enumerate(row1_models):
-            with [r1_c1, r1_c2, r1_c3][idx]:
-                render_model_card(meta, predictions, img_gray, gt_mask)
-                
-        # Row 2 (Attention U-Net, TransUNet, Standard U-Net)
-        r2_c1, r2_c2, r2_c3 = st.columns(3)
-        for idx, meta in enumerate(row2_models):
-            with [r2_c1, r2_c2, r2_c3][idx]:
-                render_model_card(meta, predictions, img_gray, gt_mask)
-
-    with col_risk_right:
-        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Size-based risk flags</h4>', unsafe_allow_html=True)
-        
-        with st.container(border=True):
-            st.markdown(f"""
-            <div class="risk-checklist">
-                <div class="check-item"><span class="check-box">☑</span> <b>Largest diameter:</b> &nbsp;<span class="highlight-val">{risk_metrics['max_diam_mm']:.1f} mm</span></div>
-                <div class="check-item"><span class="check-box">☑</span> <b>Smallest diameter:</b> &nbsp;<span class="highlight-val">{risk_metrics['min_diam_mm']:.1f} mm</span></div>
-                <div class="check-item"><span class="check-box">☑</span> <b>The lesion across the entire scan are:</b> &nbsp;<span class="highlight-val">{risk_metrics['active_slices']} slices ({risk_metrics['z_span_mm']:.1f} mm span)</span></div>
-                <div class="check-item"><span class="check-box">☑</span> <b>The lesion diameter in scans:</b></div>
+    st.markdown(f"""
+    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px 18px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h4 style="margin: 0; color: #e6edf3;">🛠️ Clinical Diagnostic Tools & Reviews</h4>
+                <div style="font-size: 13px; color: #8b949e; margin-top: 2px;">
+                    Akses evaluasi mendalam per model, matriks korelasi, risk flags, dan koreksi margin klinis melalui dialog pop-up.
+                </div>
             </div>
-            """, unsafe_allow_html=True)
-            
-            scan_lines = []
-            for s in risk_metrics['slice_table']:
-                scan_lines.append(f"<div class='scan-slice-row'>Scan z = <b>{s['z']}</b>; diameter <b>{s['d_major']:.1f} mm</b>, <b>{s['d_minor']:.1f} mm</b> ({s['area_mm2']:.1f} mm²)</div>")
-            
-            st.markdown(f"""
-            <div style="max-height: 180px; overflow-y: auto; background: #0d1117; border-radius: 8px; padding: 8px 12px; margin: 8px 0; border: 1px solid #21262d;">
-                {''.join(scan_lines)}
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #30363d;">
-                <span style="font-size: 14px; color: #8b949e;">Volume:</span>
-                <span style="font-size: 26px; font-weight: 700; color: #58a6ff; margin-left: 8px;">{risk_metrics['total_volume_ml']:.1f} mL</span>
-            </div>
-            <div style="margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(248, 81, 73, 0.12); border: 1px solid {risk_metrics['risk_color']}; color: {risk_metrics['risk_color']}; font-size: 12px;">
-                <b>⚠️ {risk_metrics['risk_label']}</b><br>{risk_metrics['risk_recommendation']}
-            </div>
-            """, unsafe_allow_html=True)
-
-    # ── SECTION 4: INTER-MODEL FEATURE & PREDICTION CORRELATION MATRIX ──
-    st.markdown("---")
-    st.subheader("4. Inter-Model Feature & Segmentation Correlation Matrix")
-    
-    col_ctrl1, col_ctrl2 = st.columns([2, 1])
-    with col_ctrl1:
-        corr_metric = st.radio(
-            "Correlation Metric Mode:",
-            [
-                "Latent Feature Correlation (Pearson r on Probabilities)",
-                "Spatial Segmentation Agreement (Pairwise Dice Score)",
-                "Latent Feature Cosine Similarity"
-            ],
-            horizontal=True
-        )
-    with col_ctrl2:
-        matrix_cmap = st.selectbox("Correlation Colormap", ["Viridis", "Plasma", "Turbo", "Coolwarm", "RdBu_r"], index=0)
-
-    n_m = len(MODEL_METADATA)
-    corr_matrix = np.zeros((n_m, n_m), dtype=np.float32)
-    m_names = [m["name"] for m in MODEL_METADATA]
-    
-    for i in range(n_m):
-        for j in range(n_m):
-            if i == j:
-                corr_matrix[i, j] = 1.0
-            else:
-                p_i = predictions[MODEL_METADATA[i]["key"]]["prob"]
-                p_j = predictions[MODEL_METADATA[j]["key"]]["prob"]
-                m_i = predictions[MODEL_METADATA[i]["key"]]["mask"]
-                m_j = predictions[MODEL_METADATA[j]["key"]]["mask"]
-                
-                if "Pearson" in corr_metric:
-                    v_i = p_i.flatten()
-                    v_j = p_j.flatten()
-                    std_i = np.std(v_i)
-                    std_j = np.std(v_j)
-                    if std_i > 1e-6 and std_j > 1e-6:
-                        r = float(np.corrcoef(v_i, v_j)[0, 1])
-                    else:
-                        r = 0.0
-                    corr_matrix[i, j] = float(np.clip(r, -1.0, 1.0))
-                elif "Cosine" in corr_metric:
-                    v_i = p_i.flatten()
-                    v_j = p_j.flatten()
-                    norm_i = np.linalg.norm(v_i)
-                    norm_j = np.linalg.norm(v_j)
-                    if norm_i > 1e-6 and norm_j > 1e-6:
-                        cs = float(np.dot(v_i, v_j) / (norm_i * norm_j))
-                    else:
-                        cs = 0.0
-                    corr_matrix[i, j] = float(np.clip(cs, 0.0, 1.0))
-                else:
-                    d_ij, _ = compute_dice_iou(m_i, m_j)
-                    corr_matrix[i, j] = d_ij if d_ij is not None else 0.0
-
-    col_mat1, col_mat2 = st.columns([1.3, 1.0], gap="large")
-    with col_mat1:
-        z_min = -0.2 if "Pearson" in corr_metric else 0.0
-        if HAS_PLOTLY:
-            import plotly.express as px
-            fig_corr = px.imshow(
-                corr_matrix,
-                x=m_names,
-                y=m_names,
-                color_continuous_scale=matrix_cmap,
-                zmin=z_min,
-                zmax=1.0,
-                text_auto=".2f",
-                title=f"Pairwise Model Correlation ({corr_metric.split('(')[0].strip()})"
-            )
-            fig_corr.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                height=350,
-                margin=dict(l=20, r=20, t=40, b=20)
-            )
-            st.plotly_chart(fig_corr, use_container_width=True)
-        else:
-            fig, ax = plt.subplots(figsize=(6, 4.5), facecolor='#161b22')
-            ax.set_facecolor('#161b22')
-            im = ax.imshow(corr_matrix, cmap=matrix_cmap.lower(), vmin=z_min, vmax=1.0)
-            ax.set_xticks(range(n_m))
-            ax.set_yticks(range(n_m))
-            ax.set_xticklabels(m_names, rotation=30, ha='right', color='#e6edf3', fontsize=8)
-            ax.set_yticklabels(m_names, color='#e6edf3', fontsize=8)
-            for i in range(n_m):
-                for j in range(n_m):
-                    ax.text(j, i, f"{corr_matrix[i, j]:.2f}", ha='center', va='center', color='white' if corr_matrix[i, j] < 0.65 else 'black', fontsize=8, fontweight='bold')
-            ax.set_title(f"Pairwise Model Correlation ({corr_metric.split('(')[0].strip()})", color='#58a6ff', fontsize=10, fontweight='bold')
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-
-    with col_mat2:
-        colors = [m["color"] for m in MODEL_METADATA]
-        model_areas = [predictions[m["key"]]["area"] for m in MODEL_METADATA]
-        model_areas_mm2 = [a * PIXEL_AREA_MM2 for a in model_areas]
-        
-        if HAS_PLOTLY:
-            fig_bar = go.Figure(data=[
-                go.Bar(
-                    x=m_names, y=model_areas, marker_color=colors,
-                    text=[f"{a:,} px<br>({m:.1f} mm²)" for a, m in zip(model_areas, model_areas_mm2)],
-                    textposition='auto'
-                )
-            ])
-            fig_bar.update_layout(
-                title="Tumor Segment Area per Model (Pixels & mm²)", template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                height=350, margin=dict(l=20, r=20, t=40, b=20)
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
-        else:
-            fig, ax = plt.subplots(figsize=(5, 4), facecolor='#161b22')
-            ax.set_facecolor('#161b22')
-            bars = ax.bar(m_names, model_areas, color=colors)
-            ax.bar_label(bars, fmt='%d px', color='#e6edf3', padding=3, fontsize=8)
-            ax.set_title("Tumor Segment Area per Model (Pixels)", color='#58a6ff', fontsize=10, fontweight='bold')
-            ax.tick_params(colors='#8b949e', labelsize=8)
-            plt.xticks(rotation=30, ha='right')
-            for sp in ax.spines.values(): sp.set_color('#30363d')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-
-    # ── SECTION 5: SIGN-OFF AND EXPORT (SCREENSHOT 4) ──
-    st.markdown("---")
-    st.subheader("Sign-off and export")
-    
-    col_rev1, col_rev2 = st.columns([1.5, 1.0])
-    with col_rev1:
-        reviewer_name = st.text_input("Reviewed by:", value="Dr. XXXXX", help="Enter reviewing radiologist / neurosurgeon full title.")
-    with col_rev2:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        sign_off_check = st.checkbox("Accept agreement outline", value=True)
-
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
-    
-    if "outline_accepted" not in st.session_state: st.session_state["outline_accepted"] = False
-    if "pacs_sent" not in st.session_state: st.session_state["pacs_sent"] = False
-    if "edit_margin_active" not in st.session_state: st.session_state["edit_margin_active"] = False
-
-    with col_btn1:
-        if st.button("Accept agreement outline", use_container_width=True, type="primary"):
-            st.session_state["outline_accepted"] = True
-            st.success(f"✅ Agreement outline accepted and locked by **{reviewer_name}**. Verification hash: `DICOM-SR-OK`.")
-
-    with col_btn2:
-        if st.button("Edit margin", use_container_width=True):
-            st.session_state["edit_margin_active"] = not st.session_state["edit_margin_active"]
-
-    with col_btn3:
-        if st.button("Send to OR / PACS", use_container_width=True):
-            st.session_state["pacs_sent"] = True
-            st.info("🚀 DICOM-RT Structure Set transmitted to PACS server `PACS-NTUH-01` (Port 104, AE: BRAIN_CTC_AI).")
-
-    safety_margin_mm = 0.0
-    if st.session_state["edit_margin_active"]:
-        slice_edit_key = f"{slice_title}_{selected_z}"
-        with st.container(border=True):
-            st.markdown(f"""
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                <h4 style="margin: 0; color: #58a6ff;">✏️ Clinician Interactive Lesion Editor (Margin & Brush)</h4>
-                <span style="font-size: 12px; color: {'#86efac' if is_clinician_edited else '#8b949e'}; background: #161b22; padding: 4px 10px; border-radius: 6px; border: 1px solid {'#22c55e' if is_clinician_edited else '#30363d'};">
-                    Slice <b>z = {selected_z}</b> {'(Modified ✍️)' if is_clinician_edited else '(AI Original)'}
+            <div>
+                <span style="font-size: 12px; background: rgba(56, 139, 253, 0.15); border: 1px solid #388bfd; border-radius: 6px; padding: 4px 10px; color: #58a6ff;">
+                    Slice <b>z = {selected_z}</b> Active
                 </span>
             </div>
-            <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">
-                Fasilitas koreksi interaktif untuk dokter: Tambah (Brush), Hapus (Eraser), Geser letak lesi, atau atur margin radial. Besaran lesi (mm², diameter, dan volume) akan diperbarui secara otomatis sebelum diekspor ke laporan Word.
-            </p>
-            """, unsafe_allow_html=True)
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    btn_c1, btn_c2, btn_c3, btn_c4, btn_c5 = st.columns(5)
+    
+    with btn_c1:
+        if st.button("📊 6 Model Cards", use_container_width=True, help="Buka rincian segmentasi 6 model individual"):
+            show_models_dialog(MODEL_METADATA, predictions, img_gray, gt_mask)
             
-            curr_target_mask = active_consensus_mask.copy()
-            orig_ai_mask = ensemble_data["ensemble_mask"]
-            orig_meas = compute_physical_measurements(orig_ai_mask)
+    with btn_c2:
+        if st.button("📈 Correlation Matrix", use_container_width=True, help="Buka matriks korelasi fitur dan kesepakatan spasial model"):
+            show_correlation_dialog(MODEL_METADATA, predictions)
             
-            if np.sum(curr_target_mask > 0) > 0:
-                pos_y, pos_x = np.where(curr_target_mask > 0)
-                def_cx, def_cy = int(np.mean(pos_x)), int(np.mean(pos_y))
-                min_x, max_x = int(np.min(pos_x)), int(np.max(pos_x))
-                min_y, max_y = int(np.min(pos_y)), int(np.max(pos_y))
-            else:
-                def_cx, def_cy = 128, 128
-                min_x, max_x = 110, 146
-                min_y, max_y = 110, 146
+    with btn_c3:
+        if st.button("⚠️ Risk Flags Table", use_container_width=True, help="Buka checklist diameter lesi per slice dan klasifikasi risiko WHO"):
+            show_risk_flags_dialog(risk_metrics)
+            
+    with btn_c4:
+        if st.button("✏️ Margin & Sign-off", use_container_width=True, type="primary", help="Buka alat koreksi interaktif (Brush & Margin) serta validasi PACS"):
+            show_margin_editor_dialog(
+                img_gray, active_consensus_mask, ensemble_data["ensemble_mask"],
+                slice_title, selected_z, st.session_state.get("reviewer_name", "Dr. XXXXX"),
+                is_clinician_edited, consensus_meas
+            )
+            
+    with btn_c5:
+        if st.button("ℹ️ Protocol & SOTA", use_container_width=True, help="Buka informasi protokol dataset dan equivariance CT-SE(2)"):
+            show_protocol_dialog(selected_dataset_name, current_cfg)
 
-            col_brush_preview, col_brush_controls = st.columns([1.1, 1.3], gap="large")
-
-            with col_brush_controls:
-                tool_tab1, tool_tab2, tool_tab3 = st.tabs(["🖌️ Brush (Add/Delete)", "📐 Radial Margin & Shift", "⚡ Quick Presets & Reset"])
-                
-                with tool_tab1:
-                    b_mode = st.radio(
-                        "Brush Action",
-                        ["🟢 Add Lesion (Brush)", "🔴 Delete Lesion (Eraser)"],
-                        horizontal=True,
-                        key=f"b_mode_{selected_z}"
-                    )
-                    action_key = "add" if "Add" in b_mode else "delete"
-                    
-                    b_rad_mm = st.slider(
-                        "Brush Diameter (mm)",
-                        min_value=1.0,
-                        max_value=25.0,
-                        value=6.0,
-                        step=0.5,
-                        key=f"b_rad_mm_{selected_z}"
-                    )
-                    b_rad_px = max(1, int(round((b_rad_mm / 2.0) / PIXEL_SPACING_MM)))
-                    st.caption(f"Brush radius: **{b_rad_mm:.1f} mm** (~{b_rad_px * 2} px diameter)")
-                    
-                    st.markdown("<div style='font-size: 13px; color: #8b949e; margin-top: 8px;'>Target Location:</div>", unsafe_allow_html=True)
-                    
-                    q1, q2, q3, q4, q5 = st.columns(5)
-                    target_x = st.session_state.get(f"bx_{selected_z}", def_cx)
-                    target_y = st.session_state.get(f"by_{selected_z}", def_cy)
-                    
-                    with q1:
-                        if st.button("🎯 Center", key=f"btn_c_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = def_cx
-                            st.session_state[f"by_{selected_z}"] = def_cy
-                            st.rerun()
-                    with q2:
-                        if st.button("⬆️ Top", key=f"btn_t_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = def_cx
-                            st.session_state[f"by_{selected_z}"] = min_y
-                            st.rerun()
-                    with q3:
-                        if st.button("⬇️ Bottom", key=f"btn_b_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = def_cx
-                            st.session_state[f"by_{selected_z}"] = max_y
-                            st.rerun()
-                    with q4:
-                        if st.button("⬅️ Left", key=f"btn_l_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = min_x
-                            st.session_state[f"by_{selected_z}"] = def_cy
-                            st.rerun()
-                    with q5:
-                        if st.button("➡️ Right", key=f"btn_r_{selected_z}", use_container_width=True):
-                            st.session_state[f"bx_{selected_z}"] = max_x
-                            st.session_state[f"by_{selected_z}"] = def_cy
-                            st.rerun()
-                    
-                    col_bx, col_by = st.columns(2)
-                    with col_bx:
-                        b_x = st.slider("X Position (px)", 0, 255, int(target_x), key=f"bx_slider_{selected_z}")
-                    with col_by:
-                        b_y = st.slider("Y Position (px)", 0, 255, int(target_y), key=f"by_slider_{selected_z}")
-                        
-                    if st.button(f"🖌️ Apply Brush Stroke at ({b_x}, {b_y})", type="primary", use_container_width=True, key=f"apply_brush_{selected_z}"):
-                        new_mask = apply_brush_stroke(curr_target_mask, b_x, b_y, b_rad_px, action=action_key)
-                        st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                        st.rerun()
-
-                with tool_tab2:
-                    st.markdown("**1. Radial Safety Margin (Uniform Expansion/Contraction)**")
-                    rad_margin = st.slider(
-                        "Radial Margin Adjustment (mm)",
-                        -4.0, 4.0, 0.0, 0.2,
-                        key=f"rad_margin_slider_{selected_z}",
-                        help="Nilai positif memperluas batas lesi (+mm); nilai negatif menyusutkan batas lesi (-mm)."
-                    )
-                    if st.button(f"📐 Apply Radial Margin ({rad_margin:+.1f} mm)", use_container_width=True, key=f"apply_rad_{selected_z}"):
-                        new_mask = apply_radial_margin(curr_target_mask, rad_margin)
-                        st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                        safety_margin_mm = rad_margin
-                        st.rerun()
-                        
-                    st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-                    st.markdown("**2. Centroid Translation / Shift Location**")
-                    col_sx, col_sy = st.columns(2)
-                    with col_sx:
-                        shift_x = st.slider("Shift X (mm)", -15.0, 15.0, 0.0, 0.5, key=f"shf_x_{selected_z}")
-                    with col_sy:
-                        shift_y = st.slider("Shift Y (mm)", -15.0, 15.0, 0.0, 0.5, key=f"shf_y_{selected_z}")
-                    if st.button(f"🎯 Shift Lesion Location (ΔX={shift_x:+.1f}mm, ΔY={shift_y:+.1f}mm)", use_container_width=True, key=f"apply_shift_{selected_z}"):
-                        new_mask = apply_mask_translation(curr_target_mask, shift_x, shift_y)
-                        st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                        st.rerun()
-
-                with tool_tab3:
-                    p1, p2 = st.columns(2)
-                    with p1:
-                        if st.button("➕ Dilate (+1.0 mm)", use_container_width=True, key=f"quick_dil_{selected_z}"):
-                            new_mask = apply_radial_margin(curr_target_mask, 1.0)
-                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                            st.rerun()
-                    with p2:
-                        if st.button("➖ Erode (-1.0 mm)", use_container_width=True, key=f"quick_ero_{selected_z}"):
-                            new_mask = apply_radial_margin(curr_target_mask, -1.0)
-                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                            st.rerun()
-                            
-                    p3, p4 = st.columns(2)
-                    with p3:
-                        if st.button("🧹 Denoise & Clean Voids", use_container_width=True, key=f"quick_den_{selected_z}"):
-                            new_mask = apply_denoise_and_fill(curr_target_mask)
-                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                            st.rerun()
-                    with p4:
-                        if st.button("🗑️ Clear Slice Lesion", use_container_width=True, key=f"quick_clr_{selected_z}"):
-                            new_mask = np.zeros_like(curr_target_mask)
-                            st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
-                            st.rerun()
-                            
-                    st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-                    if st.button("🔄 Reset to AI Model Consensus", type="secondary", use_container_width=True, key=f"reset_ai_{selected_z}"):
-                        if slice_edit_key in st.session_state["clinician_edited_masks"]:
-                            del st.session_state["clinician_edited_masks"][slice_edit_key]
-                        st.rerun()
-
-            with col_brush_preview:
-                preview_img = draw_brush_crosshair_preview(
-                    img_gray,
-                    curr_target_mask,
-                    cx=b_x if 'b_x' in locals() else def_cx,
-                    cy=b_y if 'b_y' in locals() else def_cy,
-                    r_px=b_rad_px if 'b_rad_px' in locals() else 8,
-                    action=action_key if 'action_key' in locals() else "add"
-                )
-                st.image(preview_img, caption=f"Axial Preview with Brush Crosshair at ({b_x if 'b_x' in locals() else def_cx}, {b_y if 'b_y' in locals() else def_cy})", use_container_width=True)
-                
-                # Live Comparison Card
-                delta_area = consensus_meas['area_mm2'] - orig_meas['area_mm2']
-                delta_pct = (delta_area / max(1e-5, orig_meas['area_mm2'])) * 100.0 if orig_meas['area_mm2'] > 0 else 0.0
-                
-                st.markdown(f"""
-                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 13px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                        <span style="color: #8b949e;">AI Initial Area:</span>
-                        <b style="color: #c9d1d9;">{orig_meas['area_mm2']:.1f} mm² ({orig_meas['pixels']:,} px)</b>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                        <span style="color: #8b949e;">Clinician Adjusted:</span>
-                        <b style="color: #58a6ff;">{consensus_meas['area_mm2']:.1f} mm² ({consensus_meas['pixels']:,} px)</b>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                        <span style="color: #8b949e;">Major × Minor Diam:</span>
-                        <b style="color: #e6edf3;">{consensus_meas['major_diam_mm']:.1f} × {consensus_meas['minor_diam_mm']:.1f} mm</b>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; border-top: 1px solid #21262d; padding-top: 6px; margin-top: 4px;">
-                        <span style="color: #8b949e;">Net Margin Shift:</span>
-                        <b style="color: {'#3fb950' if delta_area >= 0 else '#f85149'};">{delta_area:+.1f} mm² ({delta_pct:+.1f}%)</b>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    # ── Word Report (.docx) Download Button ──
+    # Word Report (.docx) Download Button
     model_rows_data = []
     for meta in MODEL_METADATA:
         m_key = meta["key"]
@@ -2844,7 +2992,7 @@ def main():
             "area_mm2": p["area"] * PIXEL_AREA_MM2
         })
 
-    ens_dice_str = f"{ens_dice:.4f} (IoU: {ens_iou:.4f})" if gt_mask is not None else "N/A"
+    ens_dice_str = f"{ens_dice:.4f} (IoU: {ens_iou:.4f})" if 'ens_dice' in locals() and gt_mask is not None else "N/A"
     consensus_metrics_dict = {
         "volume_ml": risk_metrics["total_volume_ml"],
         "spread_min": risk_metrics["spread_min_ml"],
@@ -2861,13 +3009,13 @@ def main():
         case_name=slice_title,
         modality_name=selected_dataset_name,
         active_z=selected_z,
-        reviewer_name=reviewer_name,
+        reviewer_name=st.session_state.get("reviewer_name", "Dr. XXXXX"),
         consensus_metrics=consensus_metrics_dict,
         risk_flags=risk_metrics,
         model_rows=model_rows_data,
-        outline_accepted=st.session_state["outline_accepted"],
-        safety_margin_mm=safety_margin_mm,
-        pacs_dispatched=st.session_state["pacs_sent"],
+        outline_accepted=st.session_state.get("outline_accepted", False),
+        safety_margin_mm=st.session_state.get("safety_margin_mm", 0.0),
+        pacs_dispatched=st.session_state.get("pacs_sent", False),
         clinician_edited=is_clinician_edited
     )
 
@@ -2880,26 +3028,6 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         use_container_width=True
     )
-
-    # ── SECTION 6: CLINICAL PROTOCOL & VALIDATION REVIEWS ──
-    with st.expander("Modality Protocol Context & SOTA Validation Rationale"):
-        r1, r2 = st.columns(2)
-        with r1:
-            st.markdown(f"""
-            **Modality Protocol Context**:
-            - **Target Dataset**: `{selected_dataset_name}`
-            - **Data Source**: `{current_cfg['description']}`
-            - **Zero-Leakage Policy**: Training strictly separates non-contrast and contrast modalities. No combined feature leakage across datasets.
-            - **Clinical Threshold**: Scientifically tuned at `0.80` for high lesion specificity, standard inference binarized at `0.50`.
-            """)
-        with r2:
-            st.markdown("""
-            **SOTA Validation Rationale**:
-            - **CT-SE(2)** provides exact planar rotation equivariance ($N=8$), maintaining boundary coherence regardless of patient head orientation.
-            - **HarmonicNet ($C_4$)** serves as the lower-order equivariant baseline.
-            - **nnU-Net & TransUNet** capture deep contextual dependencies but lack geometric guarantees against rotational variance.
-            - **Ensemble Consensus** mitigates individual false positives and enhances clinical diagnostic confidence.
-            """)
 
     # ── Footer ──
     st.markdown("""
