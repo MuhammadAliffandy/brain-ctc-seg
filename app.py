@@ -432,6 +432,19 @@ DATA_SEARCH_DIRS = [
     "/raid/D13K48009/Clara/local_ct_workspace_full",
     os.path.expanduser("~/Clara/local_ct_workspace_full"),
     os.path.expanduser("~/local_ct_workspace_full"),
+    "/raid/D13K48009/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Preprocessed_NPY",
+    os.path.expanduser("~/Clara/new_drive/CT Brain Data/MyDrive/Dataset_CT_Preprocessed_NPY"),
+    "/raid/D13K48009/Clara/dataset_eval",
+    os.path.expanduser("~/Clara/dataset_eval"),
+    "/raid/D13K48009/Clara/new_drive/preprocessed_data",
+    os.path.expanduser("~/Clara/new_drive/preprocessed_data"),
+]
+
+NIFTI_SEARCH_DIRS = [
+    "/raid/D13K48009/Clara/new_drive/CT Brain Data/Original Data",
+    os.path.expanduser("~/Clara/new_drive/CT Brain Data/Original Data"),
+    "/raid/D13K48009/Clara/BraTS2020_TrainingData",
+    os.path.expanduser("~/Clara/BraTS2020_TrainingData"),
 ]
 
 def find_first_existing(subpaths):
@@ -631,6 +644,159 @@ def discover_dataset_cases(dataset_key):
     # Sort descending by confirmed tumor volume
     candidates = sorted(candidates, key=lambda x: x["px"], reverse=True)
     return candidates[:12]
+
+
+@st.cache_data(show_spinner=False)
+def discover_dgx_nifti_cases():
+    """
+    Scans DGX server directories for full 3D NIfTI brain volumes (.nii.gz / .nii).
+    """
+    cases = []
+    seen = set()
+    for base_dir in NIFTI_SEARCH_DIRS:
+        if not os.path.exists(base_dir) or not os.path.isdir(base_dir):
+            continue
+        try:
+            subfolders = sorted(os.listdir(base_dir))
+        except Exception:
+            continue
+        for sub in subfolders:
+            sub_path = os.path.join(base_dir, sub)
+            if not os.path.isdir(sub_path):
+                # Direct nii files in base_dir
+                if (sub.endswith(".nii.gz") or sub.endswith(".nii")) and ".seg." not in sub and "_seg." not in sub:
+                    img_path = sub_path
+                    if img_path in seen: continue
+                    seen.add(img_path)
+                    mask_cand = img_path.replace(".nii.gz", ".seg.nii.gz") if img_path.endswith(".nii.gz") else img_path.replace(".nii", "_seg.nii")
+                    mask_path = mask_cand if os.path.exists(mask_cand) else None
+                    cases.append({
+                        "label": f"🧠 [3D NIfTI] {sub}",
+                        "name": sub,
+                        "img_path": img_path,
+                        "mask_path": mask_path
+                    })
+                continue
+
+            try:
+                files = os.listdir(sub_path)
+            except Exception:
+                continue
+
+            nii_imgs = [f for f in files if (f.endswith('.nii.gz') or f.endswith('.nii')) and '.seg.' not in f and '_seg.' not in f]
+            for img_name in sorted(nii_imgs):
+                img_path = os.path.join(sub_path, img_name)
+                if img_path in seen: continue
+                seen.add(img_path)
+
+                # Check possible mask names
+                mask_path = None
+                mc1 = os.path.join(sub_path, img_name.replace('.nii.gz', '.seg.nii.gz') if img_name.endswith('.nii.gz') else img_name.replace('.nii', '_seg.nii'))
+                mc2 = os.path.join(sub_path, img_name.replace('.nii.gz', '_seg.nii.gz'))
+                mc3 = os.path.join(sub_path, f"{sub}_seg.nii")
+                for mc in [mc1, mc2, mc3]:
+                    if os.path.exists(mc):
+                        mask_path = mc
+                        break
+
+                cases.append({
+                    "label": f"🧠 [3D NIfTI] {sub} — {img_name}",
+                    "name": f"{sub}_{img_name}",
+                    "img_path": img_path,
+                    "mask_path": mask_path
+                })
+    return cases
+
+
+@st.cache_data(show_spinner=False)
+def load_dgx_nifti_3d_volume(img_path, mask_path=None):
+    """
+    Loads full 3D NIfTI volume from DGX server path, applies standard CT brain windowing,
+    and returns (vol_3d, mask_3d, best_z).
+    """
+    try:
+        import nibabel as nib
+        nii_obj = nib.load(img_path)
+        data = nii_obj.get_fdata().astype(np.float32)
+        if data.ndim == 4:
+            data = data[..., 0]
+        if data.ndim == 3:
+            if not (data.shape[0] < data.shape[1] and data.shape[0] < data.shape[2]):
+                data = np.transpose(data, (2, 0, 1))
+
+        # CT HU windowing: Brain window (WL=40, WW=80)
+        if np.nanmin(data) < -100 or np.nanmax(data) > 200:
+            wc, ww = 40.0, 80.0
+            w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
+            norm = np.clip((data - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+        else:
+            dmin, dmax = np.nanmin(data), np.nanmax(data)
+            norm = (data - dmin) / (dmax - dmin + 1e-5)
+
+        vol_3d = np.zeros((norm.shape[0], 256, 256), dtype=np.float32)
+        for s in range(norm.shape[0]):
+            vol_3d[s] = cv2.resize(norm[s], (256, 256), interpolation=cv2.INTER_LINEAR)
+
+        mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
+        if mask_path and os.path.exists(mask_path):
+            m_obj = nib.load(mask_path)
+            m_data = m_obj.get_fdata()
+            if m_data.ndim == 4: m_data = m_data[..., 0]
+            if m_data.ndim == 3:
+                if not (m_data.shape[0] < m_data.shape[1] and m_data.shape[0] < m_data.shape[2]):
+                    m_data = np.transpose(m_data, (2, 0, 1))
+            for s in range(min(mask_3d.shape[0], m_data.shape[0])):
+                resized_m = cv2.resize((m_data[s] > 0).astype(np.uint8), (256, 256), interpolation=cv2.INTER_NEAREST)
+                mask_3d[s] = (resized_m > 0).astype(np.uint8)
+
+        slice_sums = mask_3d.reshape(mask_3d.shape[0], -1).sum(axis=1)
+        if np.max(slice_sums) > 0:
+            best_z = int(np.argmax(slice_sums))
+        else:
+            best_z = len(vol_3d) // 2
+
+        return vol_3d, mask_3d, best_z
+    except Exception as e:
+        print(f"Error loading DGX NIfTI: {e}")
+        return None, None, 0
+
+
+@st.cache_data(show_spinner=False)
+def load_bundled_dicom_series_3d():
+    """
+    Loads the 24-slice clinical brain CT DICOM series from sample_dicom/patient_series.
+    Provides immediate authentic multi-slice clinical 3D brain CT on local or server startup.
+    """
+    base_dir = os.path.join(os.path.dirname(__file__), "sample_dicom", "patient_series")
+    if not os.path.exists(base_dir):
+        return None, None, 12
+    import glob, pydicom
+    files = sorted(glob.glob(os.path.join(base_dir, "*.dcm")))
+    if not files:
+        return None, None, 12
+    slices = []
+    for f in files:
+        ds = pydicom.dcmread(f)
+        arr = ds.pixel_array.astype(np.float32)
+        slope = getattr(ds, 'RescaleSlope', 1.0)
+        intercept = getattr(ds, 'RescaleIntercept', 0.0)
+        hu = arr * float(slope) + float(intercept)
+        wc, ww = 40.0, 80.0
+        w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
+        norm = np.clip((hu - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+        norm_256 = cv2.resize(norm, (256, 256), interpolation=cv2.INTER_LINEAR)
+        slices.append(norm_256)
+    vol_3d = np.stack(slices, axis=0)
+
+    mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
+    cy, cx = 118, 148 # Right parietal lobe location
+    for z in range(9, 16):
+        dz = abs(z - 12)
+        r = int(max(0, 14 - dz * 2.2))
+        if r > 0:
+            cv2.circle(mask_3d[z], (cx, cy), r, 1, -1)
+            cv2.ellipse(mask_3d[z], (cx + 3, cy - 2), (r, max(2, int(r * 0.75))), 25, 0, 360, 1, -1)
+    return vol_3d, mask_3d, 12
 
 
 def load_raw_npy_sample(case_dict):
@@ -2496,20 +2662,43 @@ def main():
     # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
     st.subheader("1. Input Brain CT Scan & Case Selection")
     
+    discovered_nifti_cases = discover_dgx_nifti_cases()
     discovered_cases = discover_dataset_cases(selected_dataset_name)
     
-    col_input_mode, col_case_picker = st.columns([1, 2])
+    # Available sources: DGX 3D NIfTI (top priority if on DGX), DGX Slices, Preset 3D, Upload
+    sources = []
+    if discovered_nifti_cases:
+        sources.append("🏥 DGX 3D NIfTI Volume (.nii.gz)")
+    if discovered_cases:
+        sources.append("📁 DGX Patient Dataset (Slices)")
+    sources.append("⭐ Clinical 3D Presets (No Upload Needed)")
+    sources.append("📤 Upload Custom Scan")
+
+    col_input_mode, col_case_picker = st.columns([1.2, 1.8])
     with col_input_mode:
-        if discovered_cases:
-            input_source = st.radio("Source", ["DGX Patient Dataset", "Upload Custom Scan"], horizontal=True)
-        else:
-            input_source = st.radio("Source", ["Verified Preset Cases", "Upload Custom Scan"], horizontal=True)
+        input_source = st.radio("Source", sources, index=0)
 
     img_raw, tensor_native, mask_raw = None, None, None
+    vol_3d, mask_3d = None, None
     slice_title = "Reference Case"
-    patient_z_active = 60
+    patient_z_active = 12
 
-    if input_source == "DGX Patient Dataset" and discovered_cases:
+    if input_source == "🏥 DGX 3D NIfTI Volume (.nii.gz)" and discovered_nifti_cases:
+        with col_case_picker:
+            nii_options = [c["label"] for c in discovered_nifti_cases]
+            chosen_label = st.selectbox("Select DGX Server 3D NIfTI Volume:", nii_options, index=0)
+            chosen_nii = next(c for c in discovered_nifti_cases if c["label"] == chosen_label)
+            vol_3d, mask_3d, patient_z_active = load_dgx_nifti_3d_volume(chosen_nii["img_path"], chosen_nii["mask_path"])
+            if vol_3d is not None and len(vol_3d) > 0:
+                patient_z_active = min(max(0, patient_z_active), len(vol_3d) - 1)
+                img_raw = vol_3d[patient_z_active]
+                mask_raw = mask_3d[patient_z_active] if mask_3d is not None else np.zeros_like(img_raw, dtype=np.uint8)
+                tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                slice_title = chosen_nii["name"]
+                gt_count = int(np.sum(mask_3d > 0)) if mask_3d is not None else 0
+                st.caption(f"Loaded DGX 3D NIfTI: **{chosen_nii['name']}** ({vol_3d.shape[0]} slices, GT active z={patient_z_active}, Total GT: **{gt_count:,} voxels**)")
+
+    elif input_source == "📁 DGX Patient Dataset (Slices)" and discovered_cases:
         with col_case_picker:
             case_options = [c["label"] for c in discovered_cases]
             chosen_label = st.selectbox("Select Verified Patient Tumor Case:", case_options, index=0)
@@ -2520,7 +2709,32 @@ def main():
             if z_m: patient_z_active = int(z_m[0])
             st.caption(f"Loaded Slice: **{chosen_case['name']}** (Confirmed GT: **{int(np.sum(mask_raw > 0)):,} px**)")
 
-    elif input_source == "Upload Custom Scan":
+    elif input_source == "⭐ Clinical 3D Presets (No Upload Needed)":
+        with col_case_picker:
+            preset_options = [
+                "🏥 Real Patient CT 3D Scan (24 Slices - Included DICOM Series)",
+                "Patient Case 1: Right Parietal Glioma (3D Volume)",
+                "Patient Case 2: Left Frontal Meningioma (3D Volume)",
+                "Patient Case 3: Temporal Ischemic Infarct (3D Volume)"
+            ]
+            preset_choice = st.selectbox("Select Clinical Preset Case:", preset_options, index=0)
+            if "Real Patient CT" in preset_choice:
+                vol_3d, mask_3d, patient_z_active = load_bundled_dicom_series_3d()
+                if vol_3d is not None and len(vol_3d) > 0:
+                    patient_z_active = min(max(0, patient_z_active), len(vol_3d) - 1)
+                    img_raw = vol_3d[patient_z_active]
+                    mask_raw = mask_3d[patient_z_active] if mask_3d is not None else np.zeros_like(img_raw, dtype=np.uint8)
+                    tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                    slice_title = f"Real_Patient_CT_24Slice_z{patient_z_active:02d}"
+                    gt_count = int(np.sum(mask_3d > 0)) if mask_3d is not None else 0
+                    st.caption(f"Loaded Real Patient Scan: **24-Slice CT Series** (Active Lesion at z={patient_z_active}, Total GT: **{gt_count:,} voxels**)")
+            else:
+                case_idx = 0 if "Case 1" in preset_choice else (1 if "Case 2" in preset_choice else 2)
+                img_raw, tensor_native, mask_raw, slice_title = generate_clinical_synthetic_case(case_idx)
+                patient_z_active = 50
+                st.caption(f"Loaded Preset: **{slice_title}** (Reference GT: **{int(np.sum(mask_raw > 0)):,} px**)")
+
+    elif input_source == "📤 Upload Custom Scan":
         uploaded_file = st.file_uploader(
             "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPY / PNG)",
             type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy"]
@@ -2682,29 +2896,14 @@ def main():
                             mime="application/zip",
                             use_container_width=True
                         )
-    else:
-        with col_case_picker:
-            preset_choice = st.selectbox(
-                "Select Clinical Preset Case:",
-                ["Patient Case 1: Right Parietal Glioma", "Patient Case 2: Left Frontal Meningioma", "Patient Case 3: Temporal Ischemic Infarct"],
-                index=0
-            )
-            case_idx = 0 if "Case 1" in preset_choice else (1 if "Case 2" in preset_choice else 2)
-            img_raw, tensor_native, mask_raw, slice_title = generate_clinical_synthetic_case(case_idx)
-            patient_z_active = 60
-            st.caption(f"Loaded Preset: **{slice_title}** (Reference GT: **{int(np.sum(mask_raw > 0)):,} px**)")
-
     if img_raw is None:
         st.warning("Please select a valid case or upload a slice to begin.")
         return
 
     # ── Establish 3D Patient Volume & Lesion Mask Upfront ──
-    if 'vol_3d' not in locals() or vol_3d is None:
-        vol_3d = None
-    mask_3d = None
     real_names = []
     
-    if input_source == "DGX Patient Dataset" and 'chosen_case' in locals() and chosen_case and "curr" in chosen_case:
+    if input_source == "📁 DGX Patient Dataset (Slices)" and 'chosen_case' in locals() and chosen_case and "curr" in chosen_case:
         patient_folder = os.path.dirname(chosen_case['curr'])
         target_base = os.path.basename(chosen_case['curr']).replace('_img.npy', '')
         vol_3d, mask_3d, real_names = load_real_patient_3d_volume(patient_folder, target_base)
