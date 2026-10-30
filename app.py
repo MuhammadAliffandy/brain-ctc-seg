@@ -1406,6 +1406,21 @@ def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, 
     - scan-by-scan diameter list
     - total 3D volume in mL and reader spread
     """
+    if mask_3d is None or len(mask_3d) == 0:
+        return {
+            "max_diam_mm": 0.0,
+            "min_diam_mm": 0.0,
+            "active_slices": 0,
+            "z_span_mm": 0.0,
+            "total_volume_ml": 0.0,
+            "spread_min_ml": 0.0,
+            "spread_max_ml": 0.0,
+            "slice_table": [],
+            "risk_label": "No Focal Lesion Detected",
+            "risk_color": "#3fb950",
+            "risk_recommendation": "Normal brain parenchyma. No mass effect observed."
+        }
+
     depth = mask_3d.shape[0]
     slice_data = []
     
@@ -3235,52 +3250,55 @@ def main():
             fname_lower = uploaded_file.name.lower()
             if fname_lower.endswith(".nii") or fname_lower.endswith(".nii.gz") or fname_lower.endswith(".gz"):
                 try:
-                    import nibabel as nib
-                    import tempfile
-                    suffix = ".nii.gz" if fname_lower.endswith(".gz") else ".nii"
-                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                        tmp.write(uploaded_file.getbuffer())
-                        tmp_path = tmp.name
-                    nii_obj = nib.load(tmp_path)
-                    nii_data = nii_obj.get_fdata().astype(np.float32)
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
-                    
-                    if nii_data.ndim == 4:
-                        nii_data = nii_data[..., 0]
-                    
-                    if nii_data.ndim == 3:
-                        if nii_data.shape[0] < nii_data.shape[2] and nii_data.shape[0] < nii_data.shape[1]:
+                    with st.spinner(f"⏳ Reading and windowing 3D NIfTI scan ({uploaded_file.name})..."):
+                        import nibabel as nib
+                        import tempfile
+                        suffix = ".nii.gz" if fname_lower.endswith(".gz") else ".nii"
+                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                            tmp.write(uploaded_file.getbuffer())
+                            tmp_path = tmp.name
+                        nii_obj = nib.load(tmp_path)
+                        nii_data = nii_obj.get_fdata().astype(np.float32)
+                        try:
+                            os.unlink(tmp_path)
+                        except Exception:
                             pass
-                        elif nii_data.shape[2] < nii_data.shape[0] and nii_data.shape[2] < nii_data.shape[1]:
-                            nii_data = np.transpose(nii_data, (2, 0, 1))
-                        else:
-                            nii_data = np.transpose(nii_data, (2, 0, 1))
-
-                        if np.nanmin(nii_data) < -100 or np.nanmax(nii_data) > 200:
-                            wc, ww = 40.0, 80.0
-                            w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
-                            norm_data = np.clip((nii_data - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
-                        else:
-                            p1, p99 = np.percentile(nii_data, 1), np.percentile(nii_data, 99)
-                            if p99 > p1:
-                                norm_data = np.clip((nii_data - p1) / (p99 - p1 + 1e-5), 0.0, 1.0)
+                        
+                        if nii_data.ndim == 4:
+                            nii_data = nii_data[..., 0]
+                        
+                        if nii_data.ndim == 3:
+                            if nii_data.shape[0] < nii_data.shape[2] and nii_data.shape[0] < nii_data.shape[1]:
+                                pass
+                            elif nii_data.shape[2] < nii_data.shape[0] and nii_data.shape[2] < nii_data.shape[1]:
+                                nii_data = np.transpose(nii_data, (2, 0, 1))
                             else:
-                                norm_data = np.clip(nii_data, 0.0, 1.0)
+                                nii_data = np.transpose(nii_data, (2, 0, 1))
 
-                        vol_resized = []
-                        for s_idx in range(len(norm_data)):
-                            sl = norm_data[s_idx]
-                            if sl.shape != (256, 256):
-                                sl = cv2.resize(sl, (256, 256), interpolation=cv2.INTER_LINEAR)
-                            vol_resized.append(sl)
-                        vol_3d = np.stack(vol_resized, axis=0) # [Depth, 256, 256]
-                        patient_z_active = len(vol_3d) // 2
-                        img_raw = vol_3d[patient_z_active]
-                        tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
-                        st.success(f"🧠 3D NIfTI Volume Loaded: **{vol_3d.shape[0]} slices** ({vol_3d.shape[0]} × {vol_3d.shape[1]} × {vol_3d.shape[2]})")
+                            if np.nanmin(nii_data) < -100 or np.nanmax(nii_data) > 200:
+                                wc, ww = 40.0, 80.0
+                                w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
+                                norm_data = np.clip((nii_data - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+                            else:
+                                p1, p99 = np.percentile(nii_data, 1), np.percentile(nii_data, 99)
+                                if p99 > p1:
+                                    norm_data = np.clip((nii_data - p1) / (p99 - p1 + 1e-5), 0.0, 1.0)
+                                else:
+                                    norm_data = np.clip(nii_data, 0.0, 1.0)
+
+                            vol_resized = []
+                            for s_idx in range(len(norm_data)):
+                                sl = norm_data[s_idx]
+                                if sl.shape != (256, 256):
+                                    sl = cv2.resize(sl, (256, 256), interpolation=cv2.INTER_LINEAR)
+                                vol_resized.append(sl)
+                            vol_3d = np.stack(vol_resized, axis=0) # [Depth, 256, 256]
+                            mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
+                            patient_z_active = len(vol_3d) // 2
+                            img_raw = vol_3d[patient_z_active]
+                            mask_raw = mask_3d[patient_z_active]
+                            tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                            st.success(f"🧠 3D NIfTI Volume Loaded: **{vol_3d.shape[0]} slices** ({vol_3d.shape[0]} × {vol_3d.shape[1]} × {vol_3d.shape[2]})")
                 except Exception as e:
                     st.error(f"Error reading NIfTI file: {e}")
             elif fname_lower.endswith(".dcm"):
@@ -3332,8 +3350,10 @@ def main():
                     if dcm_slices:
                         dcm_slices.sort(key=lambda s: s[0])
                         vol_3d = np.stack([s[2] for s in dcm_slices], axis=0) # [Depth, H, W]
+                        mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
                         patient_z_active = len(vol_3d) // 2
                         img_raw = vol_3d[patient_z_active]
+                        mask_raw = mask_3d[patient_z_active]
                         tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
                         st.success(f"🏥 Full 3D DICOM Series Loaded: **{len(dcm_slices)} slices** (3D Volume active: {vol_3d.shape[0]}x{vol_3d.shape[1]}x{vol_3d.shape[2]})")
                     else:
@@ -3347,13 +3367,17 @@ def main():
                     tensor_native = torch.from_numpy(arr.astype(np.float32)).permute(2, 0, 1).unsqueeze(0).float()
                 elif arr.ndim == 3 and arr.shape[-1] > 3:
                     vol_3d = np.transpose(arr.astype(np.float32), (2, 0, 1))
+                    mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
                     patient_z_active = len(vol_3d) // 2
                     img_raw = vol_3d[patient_z_active]
+                    mask_raw = mask_3d[patient_z_active]
                     tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
                 elif arr.ndim == 3:
                     vol_3d = arr.astype(np.float32)
+                    mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
                     patient_z_active = len(vol_3d) // 2
                     img_raw = vol_3d[patient_z_active]
+                    mask_raw = mask_3d[patient_z_active]
                     tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
                 else:
                     img_raw = arr.astype(np.float32)
@@ -3410,6 +3434,10 @@ def main():
     if vol_3d is None or len(vol_3d) < 8:
         vol_3d, mask_3d = construct_anatomical_3d_volume(img_raw, mask_raw, active_z=min(patient_z_active, 65), total_depth=70)
         patient_z_active = min(patient_z_active, vol_3d.shape[0] - 1)
+    elif mask_3d is None:
+        mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
+        if mask_raw is not None and patient_z_active < len(mask_3d):
+            mask_3d[patient_z_active] = mask_raw
 
     risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
     if is_initial_load:
