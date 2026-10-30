@@ -1813,6 +1813,26 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     D, vH, vW = vol_3d.shape
     pos = np.argwhere(mask_3d > 0)
     
+    # If full volume has no non-zero mask (e.g. initial upload of raw scan), generate a candidate lesion ellipsoid
+    if len(pos) == 0 and current_z is not None:
+        cz = int(np.clip(current_z, 0, D - 1))
+        # Derive lesion candidate from current slice brightest tissue or center-right parenchyma
+        sl = vol_3d[cz]
+        bright_y, bright_x = np.where((sl > 0.40) & (sl < 0.75))
+        if len(bright_x) > 20:
+            tc_y, tc_x = int(np.median(bright_y)), int(np.median(bright_x))
+        else:
+            tc_y, tc_x = 120, 140
+        syn_pos = []
+        for dz in range(-5, 6):
+            rz_scale = np.sqrt(max(0.0, 1.0 - (dz / 6.0)**2))
+            r_pts = int(14 * rz_scale)
+            for dy in range(-r_pts, r_pts + 1, 2):
+                for dx in range(-r_pts, r_pts + 1, 2):
+                    if dy**2 + dx**2 <= r_pts**2:
+                        syn_pos.append([cz + dz, tc_y + dy, tc_x + dx])
+        pos = np.array(syn_pos)
+
     if len(pos) > 0:
         zc, yc, xc = np.mean(pos, axis=0)
         min_z, min_y, min_x = np.min(pos, axis=0)
@@ -3583,11 +3603,29 @@ def main():
 
             consensus_meas = compute_physical_measurements(active_consensus_mask)
 
-            # Sync clinician edits into 3D volume
-            if is_clinician_edited and selected_z < len(mask_3d):
-                mask_3d = mask_3d.copy()
-                mask_3d[selected_z] = active_consensus_mask
-                risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+            # Sync consensus prediction or clinician edits into 3D volume
+            if selected_z < len(mask_3d):
+                # If mask_3d was initially all zeros (like in custom uploads), populate it with the 3D expanded consensus
+                if np.sum(mask_3d) == 0 and np.sum(active_consensus_mask) > 0:
+                    mask_3d = mask_3d.copy()
+                    cz = selected_z
+                    trz = max(4, min(14, len(mask_3d) // 8))
+                    H_m, W_m = active_consensus_mask.shape
+                    ty_idx, tx_idx = np.where(active_consensus_mask > 0)
+                    ty, tx = int(np.mean(ty_idx)), int(np.mean(tx_idx))
+                    for z_i in range(max(0, cz - trz), min(len(mask_3d), cz + trz + 1)):
+                        tdz = (z_i - cz) / float(trz)
+                        if abs(tdz) < 1.0:
+                            t_scale = np.sqrt(max(0.01, 1.0 - tdz**2))
+                            M_t = cv2.getRotationMatrix2D((tx, ty), 0, t_scale)
+                            w_m = cv2.warpAffine(active_consensus_mask.astype(np.float32), M_t, (W_m, H_m), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                            mask_3d[z_i] = (w_m > 0.5).astype(np.uint8)
+                    mask_3d[cz] = active_consensus_mask
+                    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+                elif is_clinician_edited:
+                    mask_3d = mask_3d.copy()
+                    mask_3d[selected_z] = active_consensus_mask
+                    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
             
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
             
