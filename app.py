@@ -3779,6 +3779,8 @@ def main():
         st.session_state["ctrad_selected_skill"] = None
     if "ctrad_scenario" not in st.session_state:
         st.session_state["ctrad_scenario"] = "standard"  # "standard" or "ambiguity"
+    if "ctrad_is_playing" not in st.session_state:
+        st.session_state["ctrad_is_playing"] = False
 
     ctrad_skills, ctrad_steps = get_ctrad_definitions()
     
@@ -3922,24 +3924,50 @@ def main():
             ):
                 st.session_state["ctrad_current_step"] = s_i
                 st.session_state["ctrad_selected_skill"] = None
+                st.session_state["ctrad_is_playing"] = False
                 st.rerun()
 
+    # Active Simulation Auto-play Status Banner (when playing)
+    if st.session_state.get("ctrad_is_playing", False):
+        st.markdown(f"""
+        <div style="background: rgba(88, 166, 255, 0.12); border: 1px solid #58a6ff; border-radius: 8px; padding: 7px 14px; margin-top: 6px; margin-bottom: 8px; font-size: 12px; color: #58a6ff; display: flex; align-items: center; justify-content: space-between;">
+            <span>▶ <b>Auto-Simulation Active:</b> Executing step {current_step_idx + 1} of 9 ({current_step_obj['label']})...</span>
+            <span style="font-size: 11px; color: #8b949e;">Click '⏸ Pause Simulation' to halt</span>
+        </div>
+        """, unsafe_allow_html=True)
+
     # Navigation Controls Bar
-    nav_c1, nav_c2, nav_c3, nav_c4 = st.columns([2, 2, 3, 3])
+    nav_c1, nav_play, nav_c2, nav_c3, nav_c4 = st.columns([1.6, 2.4, 1.6, 2.2, 3.4])
     with nav_c1:
-        if st.button("◀ Previous Step", disabled=(current_step_idx == 0), use_container_width=True):
+        if st.button("◀ Previous", disabled=(current_step_idx == 0), use_container_width=True):
             st.session_state["ctrad_current_step"] = max(0, current_step_idx - 1)
             st.session_state["ctrad_selected_skill"] = None
+            st.session_state["ctrad_is_playing"] = False
             st.rerun()
+    with nav_play:
+        is_playing = st.session_state.get("ctrad_is_playing", False)
+        if is_playing:
+            if st.button("⏸ Pause Simulation", type="secondary", use_container_width=True, help="Pause continuous auto-play"):
+                st.session_state["ctrad_is_playing"] = False
+                st.rerun()
+        else:
+            if st.button("▶ Play Simulation", type="primary", use_container_width=True, help="Automatically iterate through all 9 clinical pipeline steps"):
+                if current_step_idx >= 8:
+                    st.session_state["ctrad_current_step"] = 0
+                st.session_state["ctrad_selected_skill"] = None
+                st.session_state["ctrad_is_playing"] = True
+                st.rerun()
     with nav_c2:
-        if st.button("Next Step ▶", disabled=(current_step_idx == 8), use_container_width=True):
+        if st.button("Next ▶", disabled=(current_step_idx == 8), use_container_width=True):
             st.session_state["ctrad_current_step"] = min(8, current_step_idx + 1)
             st.session_state["ctrad_selected_skill"] = None
+            st.session_state["ctrad_is_playing"] = False
             st.rerun()
     with nav_c3:
-        if st.button("🔄 Reset to Step 0 (Intake)", use_container_width=True):
+        if st.button("🔄 Reset (Step 0)", use_container_width=True):
             st.session_state["ctrad_current_step"] = 0
             st.session_state["ctrad_selected_skill"] = None
+            st.session_state["ctrad_is_playing"] = False
             st.rerun()
     with nav_c4:
         scenario_choice = st.selectbox(
@@ -3951,6 +3979,7 @@ def main():
         new_scenario = "standard" if "Scenario A" in scenario_choice else "ambiguity"
         if new_scenario != st.session_state["ctrad_scenario"]:
             st.session_state["ctrad_scenario"] = new_scenario
+            st.session_state["ctrad_is_playing"] = False
             st.rerun()
 
     st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
@@ -4094,7 +4123,19 @@ def main():
                     matching_step = next((step_idx for step_idx, step in enumerate(ctrad_steps) if step["skill_id"] == s_id), 0)
                     st.session_state["ctrad_current_step"] = matching_step
                     st.session_state["ctrad_selected_skill"] = s_id
+                    st.session_state["ctrad_is_playing"] = False
                     st.rerun()
+
+    # ── Simulation Auto-Play Continuous Runner ──
+    if st.session_state.get("ctrad_is_playing", False):
+        if st.session_state["ctrad_current_step"] < 8:
+            time.sleep(1.8)
+            st.session_state["ctrad_current_step"] += 1
+            st.session_state["ctrad_selected_skill"] = None
+            st.rerun()
+        else:
+            st.session_state["ctrad_is_playing"] = False
+            st.rerun()
 
     # Word Report (.docx) Download Button
     model_rows_data = []
