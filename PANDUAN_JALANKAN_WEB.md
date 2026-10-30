@@ -16,10 +16,12 @@ cd /raid/D13K48009/Clara/brain-ctc-seg
 *(Opsional jika ingin menentukan GPU, misal GPU 5: `./start_web_background.sh 8501 5`)*
 
 Skrip di atas otomatis:
-1. Menjalankan Streamlit di background (`nohup`) dan menyimpan log ke `logs/streamlit_8501.log`.
-2. Menjalankan Ngrok di background (`nohup`) dengan config `--config ~/.config/ngrok/ngrok2.yml` dan menyimpan log ke `logs/ngrok_8501.log`.
-3. Menampilkan URL publik Ngrok langsung di layar terminal.
-4. Tetap menyala meskipun terminal SSH ditutup/disconnect.
+1. **Mengaktifkan conda environment `brain_env`** secara otomatis (atau fallback jika belum aktif).
+2. **Mendeteksi apakah `ngrok` sudah terinstall**: jika belum, skrip akan mengunduh binary `ngrok` secara lokal (tanpa perlu sudo) atau menggunakan `pyngrok` otomatis.
+3. Menjalankan **Streamlit** di background (`nohup`) dan menyimpan log ke `logs/streamlit_8501.log`.
+4. Menjalankan **Ngrok** di background (`nohup`) dengan config `--config ~/.config/ngrok/ngrok2.yml` dan menyimpan log ke `logs/ngrok_8501.log`.
+5. Menampilkan URL publik Ngrok langsung di layar terminal.
+6. Tetap menyala meskipun terminal SSH ditutup/disconnect.
 
 ### 🔍 Melihat URL Ngrok atau Status Kapan Saja:
 ```bash
