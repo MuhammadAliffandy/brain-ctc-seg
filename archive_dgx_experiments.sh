@@ -323,12 +323,16 @@ echo ""
 # PANDUAN PEMINDAHAN DATA (RCLONE & SCP/RSYNC)
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}======================================================================${NC}"
-echo -e "${YELLOW}CARA MEMINDAHKAN DATA INI KE CLOUD / LAPTOP:${NC}"
+echo -e "${YELLOW}CARA MEMINDAHKAN DATA INI KE GOOGLE DRIVE / LAPTOP:${NC}"
 echo -e "${YELLOW}======================================================================${NC}"
 echo ""
-echo -e "${GREEN}OPSI A (TERCEPAT): Upload ke Google Drive via rclone${NC}"
-echo -e "Jalankan di server DGX:"
-echo -e "  ${CYAN}rclone copy ${BACKUP_DIR}/ clara_drive:Backup_Brain_CTC_Seg_${TIMESTAMP}/ -P${NC}"
+echo -e "${GREEN}OPSI A (OTOMATIS): Upload ke Google Drive (clara_drive:backup-brain-ctc-seg)${NC}"
+echo -e "Jalankan perintah ini di server DGX (atau skrip terpisah):"
+echo -e "  ${CYAN}./transfer_backup_to_drive.sh ${BACKUP_DIR}${NC}"
+echo ""
+echo -e "Perintah manual rclone jika diinginkan:"
+echo -e "  ${CYAN}rclone mkdir clara_drive:backup-brain-ctc-seg${NC}"
+echo -e "  ${CYAN}rclone copy ${BACKUP_DIR}/ clara_drive:backup-brain-ctc-seg/ -P --transfers 4 --checkers 8${NC}"
 echo ""
 echo -e "${GREEN}OPSI B: Download Langsung ke Laptop Lokal via rsync / scp${NC}"
 echo -e "Jalankan di terminal laptop Anda:"
@@ -339,3 +343,18 @@ echo ""
 echo -e "${GREEN}OPSI C: Validasi Integritas File di Tempat Tujuan${NC}"
 echo -e "  ${CYAN}cd ./backup_brain_ctc_${TIMESTAMP} && sha256sum -c checksums_sha256.txt${NC}"
 echo -e "${CYAN}======================================================================${NC}"
+echo ""
+
+# Opsi interaktif jika terminal dijalankan oleh user secara langsung
+if [ -t 0 ]; then
+    read -p "Apakah Anda ingin langsung membuat folder 'backup-brain-ctc-seg' dan mengunggah ke Google Drive sekarang? [y/N]: " run_upload
+    case "$run_upload" in
+        [yY][eE][sS]|[yY])
+            echo ""
+            "$PROJECT_DIR/transfer_backup_to_drive.sh" "$BACKUP_DIR"
+            ;;
+        *)
+            echo -e "${BLUE}Upload dilewati. Anda dapat menjalankannya nanti dengan: ${CYAN}./transfer_backup_to_drive.sh${NC}"
+            ;;
+    esac
+fi

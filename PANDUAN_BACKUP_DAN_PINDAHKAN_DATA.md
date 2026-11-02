@@ -55,19 +55,31 @@ backup_brain_ctc_20261102_XXXXXX/
 
 Ada 2 metode utama yang dapat Anda pilih:
 
-### 🟢 METODE A: Upload Langsung ke Google Drive via `rclone` (SANGAT DIREKOMENDASIKAN)
-*Keuntungan: Sangat cepat (100–300 MB/s menggunakan bandwidth datacenter DGX), tidak membebani memori laptop Anda, dan langsung aman di cloud.*
+### 🟢 METODE A: Upload ke Google Drive via `rclone` (ke folder `backup-brain-ctc-seg`)
+*Keuntungan: Sangat cepat (100–300 MB/s menggunakan bandwidth datacenter DGX), langsung masuk ke cloud storage acuan dataset kita tanpa membebani memori laptop Anda.*
 
-Koneksi `rclone` dengan remote `clara_drive:` sudah terkonfigurasi di server DGX. Cukup jalankan perintah berikut di terminal DGX:
+Folder `backup-brain-ctc-seg` di Google Drive (`clara_drive:`) akan dibuat otomatis oleh skrip.
 
+#### Cara 1-Baris (Otomatis):
 ```bash
-# Ganti <FOLDER_BACKUP> dengan nama folder hasil eksekusi langkah 2
-cd /raid/D13K48009/Clara
+cd /raid/D13K48009/Clara/brain-ctc-seg
 
-rclone copy ./backup_brain_ctc_XXXXXXXX_XXXXXX/ clara_drive:Backup_Brain_CTC_Seg/ -P
+./transfer_backup_to_drive.sh
 ```
 
-*(Flag `-P` akan menampilkan progress bar kecepatan dan persentase upload secara real-time).*
+#### Cara Manual (Jika ingin ketik sendiri):
+```bash
+# 1. Buat folder 'backup-brain-ctc-seg' di Google Drive
+rclone mkdir clara_drive:backup-brain-ctc-seg
+
+# 2. Upload seluruh file backup ke folder tersebut
+cd /raid/D13K48009/Clara
+rclone copy ./backup_brain_ctc_*/ clara_drive:backup-brain-ctc-seg/ -P --transfers 4 --checkers 8
+
+# 3. Cek hasil upload di Google Drive
+rclone ls clara_drive:backup-brain-ctc-seg/
+```
+*(Flag `-P` menampilkan progress bar kecepatan dan persentase upload secara real-time).*
 
 ---
 
