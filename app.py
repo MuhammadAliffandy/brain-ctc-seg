@@ -17,6 +17,7 @@ import sys
 import glob
 import time
 import math
+import html
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -67,12 +68,9 @@ st.set_page_config(
 CUSTOM_CSS = """
 <style>
     .main-header {
-        background: #161b22;
-        padding: 20px 24px;
-        border-radius: 8px;
-        border: 1px solid #30363d;
-        border-left: 4px solid #3fb950;
-        margin-bottom: 18px;
+        padding: 2px 0 14px;
+        border-bottom: 1px solid #30363d;
+        margin-bottom: 12px;
     }
     .main-header h1 {
         color: #e6edf3;
@@ -86,10 +84,14 @@ CUSTOM_CSS = """
         font-size: 14px;
         margin: 0;
     }
-    .main .block-container {
+    .main .block-container,
+    div[data-testid="stMainBlockContainer"] {
         max-width: 1600px;
         padding-top: 1.4rem;
         padding-bottom: 2rem;
+    }
+    header[data-testid="stHeader"] {
+        display: none;
     }
     section[data-testid="stSidebar"], button[data-testid="collapsedControl"] {
         display: none;
@@ -101,6 +103,79 @@ CUSTOM_CSS = """
     .stButton > button {
         border-radius: 6px;
         min-height: 42px;
+    }
+    .case-context {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(8rem, 0.65fr) minmax(8rem, 0.65fr);
+        gap: 1px;
+        background: #30363d;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        overflow: hidden;
+        margin: 12px 0 4px;
+    }
+    .case-context > div {
+        background: #161b22;
+        padding: 10px 14px;
+        color: #aab4bd;
+        font-size: 0.78rem;
+    }
+    .case-context strong {
+        color: #e6edf3;
+        display: block;
+        font-size: 0.9rem;
+        margin-bottom: 1px;
+    }
+    .stButton > button:focus-visible,
+    div[data-baseweb="select"]:focus-within,
+    input:focus-visible {
+        outline: 3px solid #79d98b !important;
+        outline-offset: 2px;
+    }
+    div[data-testid="stAlert"] {
+        border-radius: 6px;
+        border: 1px solid #6f621f;
+    }
+    div[data-testid="stMetric"] {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        padding: 14px 16px;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #e6edf3;
+        font-variant-numeric: tabular-nums;
+    }
+    @media (max-width: 1100px) {
+        .main .block-container,
+        div[data-testid="stMainBlockContainer"] {
+            padding-left: 1.25rem;
+            padding-right: 1.25rem;
+        }
+    }
+    @media (max-width: 700px) {
+        .main .block-container,
+        div[data-testid="stMainBlockContainer"] {
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
+            padding-top: 0.8rem;
+        }
+        .main-header h1 {
+            font-size: clamp(1.25rem, 7vw, 1.65rem);
+        }
+        .main-header p {
+            font-size: 0.88rem;
+        }
+        .stButton > button,
+        div[data-baseweb="select"] {
+            min-height: 44px;
+        }
+        .case-context {
+            grid-template-columns: 1fr 1fr;
+        }
+        .case-context > div:first-child {
+            grid-column: 1 / -1;
+        }
     }
     .main-header p {
         color: #8b949e;
@@ -3186,53 +3261,30 @@ def show_protocol_dialog(selected_dataset_name, current_cfg):
 def main():
     # ── Header ──
     st.markdown("""
-    <div class="main-header" style="padding: 16px 22px; margin-bottom: 20px;">
-        <h1 style="margin: 0; font-size: 25px; font-weight: 700; color: #e6edf3;">
+    <div class="main-header">
+        <h1>
             Brain CT Lesion Review
         </h1>
-        <p>Inspect the scan, verify the contour, then review the measurements.</p>
+        <p>Select a case, inspect the contour, then confirm or adjust the finding.</p>
     </div>
     """, unsafe_allow_html=True)
 
     # Review defaults keep technical settings out of the primary workflow.
-    heatmap_alpha = 0.65
-    cmap_choice = "turbo"
+    heatmap_alpha = st.session_state.get("overlay_opacity", 0.65)
+    cmap_choice = st.session_state.get("heatmap_palette", "turbo")
     min_agreement_filter = 1
-    active_rot_k = 1
     device_opt = "cuda" if torch.cuda.is_available() else "cpu"
     is_deep_gpu = st.session_state.get("force_deep_gpu", False)
 
     # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
-    if not is_deep_gpu:
-        st.warning("Preview mode uses simulated masks. Run model inference and verify the contour before interpreting measurements.")
-
-    with st.expander("Review settings", expanded=False):
-        setting_a, setting_b, setting_c = st.columns(3)
-        with setting_a:
-            rot_choice = st.selectbox(
-                "Image orientation",
-                ["Standard anterior", "Rotated 180°", "Rotated 270°", "Native scanner view"],
-                index=0,
-                key="review_orientation"
-            )
-        active_rot_k = {
-            "Standard anterior": 1,
-            "Rotated 180°": 2,
-            "Rotated 270°": 3,
-            "Native scanner view": 0,
-        }[rot_choice]
-        with setting_b:
-            heatmap_alpha = st.slider("Overlay opacity", 0.2, 1.0, 0.65, 0.05)
-        with setting_c:
-            cmap_choice = st.selectbox("Heatmap palette", ["turbo", "viridis", "plasma", "inferno"], index=0)
-        st.caption(f"Inference device: {device_opt.upper()} · Equivariant layers: {'available' if HAS_ESCNN else 'unavailable'}")
-
-    selected_dataset_name = st.selectbox(
-        "Imaging dataset",
-        list(DATASET_CONFIGS.keys()),
-        index=0,
-        help="Choose the scan dataset for case discovery and model weights."
-    )
+    case_panel = st.expander("Change case or scan source", expanded=False)
+    with case_panel:
+        selected_dataset_name = st.selectbox(
+            "Imaging dataset",
+            list(DATASET_CONFIGS.keys()),
+            index=0,
+            help="Choose the scan dataset for case discovery and model weights."
+        )
     current_cfg = DATASET_CONFIGS[selected_dataset_name]
 
     init_progress_placeholder = st.empty()
@@ -3256,7 +3308,7 @@ def main():
     sources.append("Clinical 3D Presets")
     sources.append("Upload Custom Scan")
 
-    col_input_mode, col_case_picker = st.columns([1.1, 2.9])
+    col_input_mode, col_case_picker = case_panel.columns([1.1, 2.9])
     with col_input_mode:
         input_source = st.selectbox("Scan source", sources, index=0)
 
@@ -3317,10 +3369,11 @@ def main():
                 st.caption(f"Loaded Preset: **{slice_title}** (Reference GT: **{int(np.sum(mask_raw > 0)):,} px**)")
 
     elif input_source == "Upload Custom Scan":
-        uploaded_file = st.file_uploader(
-            "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPY / PNG)",
-            type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy"]
-        )
+        with col_case_picker:
+            uploaded_file = st.file_uploader(
+                "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPY / PNG)",
+                type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy"]
+            )
         if uploaded_file is not None:
             slice_title = uploaded_file.name
             fname_lower = uploaded_file.name.lower()
@@ -3493,6 +3546,20 @@ def main():
         st.warning("Please select a valid case or upload a slice to begin.")
         return
 
+    case_name_text = re.sub(r"_z(\d+)$", r" · slice \1", slice_title)
+    case_name_text = re.sub(r"(\d+)Slice", r"\1-slice", case_name_text).replace("_", " ")
+    case_name = html.escape(case_name_text)
+    source_name = html.escape(input_source.replace(" (.nii.gz)", ""))
+    volume_label = f"{len(vol_3d)} slices" if vol_3d is not None else "Single slice"
+    review_state = "Model output" if is_deep_gpu else "Preview"
+    st.markdown(f"""
+    <div class="case-context" aria-label="Current case context">
+        <div><span>Current case</span><strong>{case_name}</strong></div>
+        <div><span>Source</span><strong>{source_name}</strong></div>
+        <div><span>Review state</span><strong>{volume_label} · {review_state}</strong></div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── Establish 3D Patient Volume & Lesion Mask Upfront ──
     real_names = []
 
@@ -3520,8 +3587,6 @@ def main():
         init_progress_placeholder.progress(70, text="Preparing scan views (70%)")
 
     # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
-    st.markdown("---")
-
     col_hero_hdr1, col_hero_hdr2 = st.columns([1.8, 1.2])
     with col_hero_hdr1:
         st.markdown('<h3 style="margin: 0; color: #e6edf3;">Scan</h3>', unsafe_allow_html=True)
@@ -3555,7 +3620,7 @@ def main():
             rot_choice_mpr = st.selectbox(
                 "Orientation",
                 options=["Standard", "180°", "270°", "Native"],
-                index=0 if active_rot_k == 1 else (1 if active_rot_k == 2 else (2 if active_rot_k == 3 else 3)),
+                index=0,
                 key="mpr_rot_choice",
                 label_visibility="collapsed"
             )
@@ -3619,14 +3684,14 @@ def main():
         if simulated_models and is_deep_gpu:
             st.warning("Simulated masks are included for: " + ", ".join(simulated_models) + ". Do not treat the consensus as model-verified.")
 
-        img_gray = align_for_clinical_display(active_slice_img, crop=CROP_MARGIN, rot_k=active_rot_k)
-        gt_mask = align_for_clinical_display(active_slice_mask, crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True) if active_slice_mask is not None else None
+        img_gray = align_for_clinical_display(active_slice_img, crop=CROP_MARGIN, rot_k=active_mpr_rot_k)
+        gt_mask = align_for_clinical_display(active_slice_mask, crop=CROP_MARGIN, rot_k=active_mpr_rot_k, is_mask=True) if active_slice_mask is not None else None
 
         predictions = {}
         for meta in MODEL_METADATA:
             m_key = meta["key"]
             p_raw = predictions_raw[m_key]
-            p_aligned = align_for_clinical_display(p_raw, crop=CROP_MARGIN, rot_k=active_rot_k)
+            p_aligned = align_for_clinical_display(p_raw, crop=CROP_MARGIN, rot_k=active_mpr_rot_k)
             mask_aligned = (p_aligned >= 0.50).astype(np.uint8)
             predictions[m_key] = {
                 "prob": p_aligned,
@@ -3636,6 +3701,9 @@ def main():
 
     with col_consensus_right:
         st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Lesion estimate</h4>', unsafe_allow_html=True)
+
+        if not is_deep_gpu:
+            st.warning("Preview only: masks are simulated. Run model inference before clinical interpretation.")
 
         # Calculate risk metrics
         risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
@@ -3674,6 +3742,18 @@ def main():
                 slice_title, selected_z, st.session_state.get("reviewer_name", "Clinician"),
                 is_clinician_edited, consensus_meas
             )
+
+        with st.expander("Display settings", expanded=False):
+            heatmap_alpha = st.slider(
+                "Overlay opacity", 0.2, 1.0, 0.65, 0.05,
+                key="overlay_opacity"
+            )
+            cmap_choice = st.selectbox(
+                "Heatmap palette", ["turbo", "viridis", "plasma", "inferno"],
+                index=["turbo", "viridis", "plasma", "inferno"].index(cmap_choice),
+                key="heatmap_palette"
+            )
+            st.caption(f"Inference device: {device_opt.upper()} · Equivariant layers: {'available' if HAS_ESCNN else 'unavailable'}")
 
         # Sync consensus prediction or clinician edits into 3D volume
         if selected_z < len(mask_3d):
@@ -3825,17 +3905,17 @@ def main():
 
         # 1. Framework Banner
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #161b22 0%, #0d1117 100%); border: 1px solid #30363d; border-radius: 12px; padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+        <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 18px 22px; margin-bottom: 18px;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                 <div>
                     <div style="display: flex; align-items: center; gap: 10px;">
-                        <h3 style="margin: 0; color: #58a6ff; font-size: 20px;">🤖 CT-RAD Skill-Based Agentic Framework</h3>
-                        <span style="background: rgba(56, 139, 253, 0.15); border: 1px solid #388bfd; border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; color: #58a6ff;">
-                            R-A-D MULTI-AGENT
+                        <h3 style="margin: 0; color: #e6edf3; font-size: 20px;">CT-RAD skilled agent workflow</h3>
+                        <span style="background: #21262d; border: 1px solid #30363d; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 700; color: #aab4bd;">
+                            Review · Assess · Document
                         </span>
                     </div>
                     <div style="font-size: 13px; color: #8b949e; margin-top: 4px;">
-                        Cognitive medical decision engine: 3 Specialized Autonomous Agents + 6 Domain Skills with Human-in-the-Loop oversight.
+                        Three specialized agents use six domain skills with clinician oversight.
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
