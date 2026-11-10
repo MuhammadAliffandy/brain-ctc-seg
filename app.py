@@ -67,40 +67,19 @@ st.set_page_config(
 CUSTOM_CSS = """
 <style>
     .main-header {
-        background: #161b22;
-        padding: 20px 24px;
-        border-radius: 8px;
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+        padding: 24px;
+        border-radius: 12px;
         border: 1px solid #30363d;
-        border-left: 4px solid #3fb950;
-        margin-bottom: 18px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
     }
     .main-header h1 {
-        color: #e6edf3;
+        color: #58a6ff;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         font-size: 28px;
         font-weight: 700;
         margin: 0 0 8px 0;
-    }
-    .main-header p {
-        color: #aab4bd;
-        font-size: 14px;
-        margin: 0;
-    }
-    .main .block-container {
-        max-width: 1600px;
-        padding-top: 1.4rem;
-        padding-bottom: 2rem;
-    }
-    section[data-testid="stSidebar"], button[data-testid="collapsedControl"] {
-        display: none;
-    }
-    div[data-testid="stExpander"] {
-        border-color: #30363d;
-        border-radius: 6px;
-    }
-    .stButton > button {
-        border-radius: 6px;
-        min-height: 42px;
     }
     .main-header p {
         color: #8b949e;
@@ -724,7 +703,7 @@ def discover_dataset_cases(dataset_key, max_samples=1):
     """
     cfg = DATASET_CONFIGS[dataset_key]
     candidates = []
-
+    
     if cfg["source"] == "npy":
         for data_dir in DATA_SEARCH_DIRS:
             if not os.path.exists(data_dir): continue
@@ -743,7 +722,7 @@ def discover_dataset_cases(dataset_key, max_samples=1):
                 except Exception:
                     continue
                 if not imgs: continue
-
+                
                 # Check middle cerebrum slices first (z40-z65 are most likely to contain parenchymal tumors)
                 mid_idx = len(imgs) // 2
                 ordered_indices = [mid_idx] + [i for i in range(len(imgs)) if i != mid_idx]
@@ -755,23 +734,23 @@ def discover_dataset_cases(dataset_key, max_samples=1):
                         z_val = int(z_match[0])
                         if not (35 <= z_val <= 85):
                             continue
-
+                            
                     img_path = os.path.join(fpath, fname)
                     mask_path = img_path.replace('_img.npy', '_mask.npy')
                     if not os.path.exists(mask_path): continue
-
+                    
                     try:
                         m = np.load(mask_path)
                     except Exception:
                         continue
                     if m.max() > 1: m = (m > 0).astype(np.uint8)
                     n_px = int(np.sum(m > 0))
-
+                    
                     # 2. Reject slices with scanner bed / headrest artifacts on the image border
                     edge_pixels = np.sum(m[:25, :]) + np.sum(m[-25:, :]) + np.sum(m[:, :25]) + np.sum(m[:, -25:])
                     if edge_pixels > 30:
                         continue
-
+                        
                     # 3. Tumor size filter: typical brain tumor slice has 300 to 6,500 pixels
                     if 300 < n_px < 6500:
                         i_prev = max(0, i - 1)
@@ -793,7 +772,7 @@ def discover_dataset_cases(dataset_key, max_samples=1):
                 if len(candidates) >= max_samples:
                     return candidates
             if candidates: break
-
+            
     return candidates[:max_samples]
 
 
@@ -1018,7 +997,7 @@ def generate_clinical_synthetic_case(case_idx=0):
     brain_mask = ((x - center_x) ** 2) / (98 ** 2) + ((y - center_y) ** 2) / (112 ** 2) <= 1.0
     base_scan = np.zeros((H, W), dtype=np.float32)
     base_scan[brain_mask] = 0.38 + 0.04 * np.sin(x[brain_mask] / 12.0)
-
+    
     v_mask = (((x - center_x - 14) ** 2) / (10 ** 2) + ((y - center_y) ** 2) / (28 ** 2) <= 1.0) | \
              (((x - center_x + 14) ** 2) / (10 ** 2) + ((y - center_y) ** 2) / (28 ** 2) <= 1.0)
     base_scan[v_mask] = 0.14
@@ -1029,7 +1008,7 @@ def generate_clinical_synthetic_case(case_idx=0):
         {"cx": center_x + 28, "cy": center_y + 32, "rx": 24, "ry": 18, "val": 0.22, "name": "Patient Case 3: Temporal Ischemic Infarct"},
     ]
     p = presets[case_idx % len(presets)]
-
+    
     lesion_mask = (((x - p["cx"]) ** 2) / (p["rx"] ** 2) + ((y - p["cy"]) ** 2) / (p["ry"] ** 2) <= 1.0) & brain_mask
     base_scan[lesion_mask] = p["val"]
 
@@ -1049,7 +1028,7 @@ def load_cached_model(model_key, weight_file, device_str):
     meta = next((m for m in MODEL_METADATA if m["key"] == model_key), None)
     if meta is None or meta["class"] is None:
         return None
-
+        
     ModelClass = meta["class"]
     try:
         raw_ckpt = torch.load(weight_file, map_location=device, weights_only=False)
@@ -1106,7 +1085,7 @@ def load_cached_model(model_key, weight_file, device_str):
         else:
             model = ModelClass(n_channels=3, n_classes=2).to(device)
             model.load_state_dict(clean_ckpt, strict=False)
-
+            
         model.eval()
         return model
     except Exception as e:
@@ -1144,7 +1123,7 @@ def generate_mock_prediction(gt_mask, img_gray, seed_offset=0):
     """
     np.random.seed(42 + seed_offset)
     H, W = img_gray.shape
-
+    
     if gt_mask is not None and np.sum(gt_mask) > 0:
         base_mask = gt_mask.astype(np.float32)
     else:
@@ -1156,7 +1135,7 @@ def generate_mock_prediction(gt_mask, img_gray, seed_offset=0):
         skull_mask = (img_gray > 0.85).astype(np.uint8)
         skull_dilated = cv2.dilate(skull_mask, kernel_skull, iterations=1)
         inner_brain = brain_parenchyma & (skull_dilated == 0)
-
+        
         # Look for focal hyperdensity / mass in inner brain
         y_idx, x_idx = np.where(inner_brain)
         if len(x_idx) > 50:
@@ -1165,7 +1144,7 @@ def generate_mock_prediction(gt_mask, img_gray, seed_offset=0):
             candidate_vals = sl_blur[inner_brain]
             p85 = np.percentile(candidate_vals, 85)
             hotspot = inner_brain & (sl_blur >= p85)
-
+            
             # Find largest connected component of focal hyperdensity
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(hotspot.astype(np.uint8))
             best_label = 0
@@ -1175,7 +1154,7 @@ def generate_mock_prediction(gt_mask, img_gray, seed_offset=0):
                 if 25 < area < 4500 and area > best_area:
                     best_area = area
                     best_label = lab
-
+            
             if best_label > 0:
                 base_mask = (labels == best_label).astype(np.float32)
                 # Smooth the detected component
@@ -1198,7 +1177,7 @@ def generate_mock_prediction(gt_mask, img_gray, seed_offset=0):
         prob = cv2.dilate(prob, kernel, iterations=1)
     elif seed_offset % 3 == 1:
         prob = cv2.erode(prob, kernel, iterations=1)
-
+    
     prob = cv2.GaussianBlur(prob, (5, 5), 1.0)
     noise = np.random.normal(0, 0.04, prob.shape).astype(np.float32)
     prob = np.clip(prob + noise * (base_mask > 0), 0.0, 1.0)
@@ -1227,7 +1206,7 @@ def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_thresh
 
     first_mask = predictions[valid_keys[0]]["mask"]
     H, W = first_mask.shape
-
+    
     agreement_counts = np.zeros((H, W), dtype=np.int32)
     prob_sum = np.zeros((H, W), dtype=np.float32)
 
@@ -1249,7 +1228,7 @@ def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_thresh
 
     tumor_pixels = int(np.sum(ensemble_mask > 0))
     union_pixels = int(np.sum(agreement_counts > 0))
-
+    
     # Continuous multi-model agreement concordance over the lesion area:
     if tumor_pixels > 0:
         avg_votes_on_tumor = float(np.mean(agreement_counts[ensemble_mask > 0]))
@@ -1301,10 +1280,10 @@ def overlay_mask_with_outline(img_gray, mask, fill_color=(46, 160, 67), outline_
         rgb = cv2.cvtColor(base, cv2.COLOR_GRAY2RGB)
     else:
         rgb = base.copy()
-
+        
     if mask is None or np.sum(mask) == 0:
         return rgb
-
+        
     m = (mask > 0).astype(np.uint8)
     blended = np.where(
         m[..., None] > 0,
@@ -1327,15 +1306,15 @@ def create_agreement_heatmap(img_gray, agreement_counts, num_models, alpha=0.65,
     """
     base = (np.clip(img_gray, 0, 1) * 255).astype(np.uint8)
     rgb = cv2.cvtColor(base, cv2.COLOR_GRAY2RGB)
-
+    
     active_mask = (agreement_counts >= min_agreement)
     if not np.any(active_mask):
         return rgb
-
+        
     norm = np.clip(agreement_counts / float(num_models), 0.0, 1.0)
     cmap = getattr(plt.cm, cmap_name, plt.cm.turbo)
     colored = (cmap(norm)[..., :3] * 255).astype(np.uint8)
-
+    
     blended = np.where(
         active_mask[..., None],
         (rgb * (1.0 - alpha) + colored * alpha).astype(np.uint8),
@@ -1350,12 +1329,12 @@ def hex_to_rgb(hex_code):
 
 
 def overlay_agreement_and_disagreement(
-    img_gray,
-    agreement_counts,
-    threshold=3,
-    num_models=6,
-    show_agreement=True,
-    show_disagreement=True,
+    img_gray, 
+    agreement_counts, 
+    threshold=3, 
+    num_models=6, 
+    show_agreement=True, 
+    show_disagreement=True, 
     show_heatmap=False,
     heatmap_alpha=0.6,
     cmap_name="turbo"
@@ -1369,7 +1348,7 @@ def overlay_agreement_and_disagreement(
         rgb = cv2.cvtColor(base, cv2.COLOR_GRAY2RGB)
     else:
         rgb = base.copy()
-
+        
     if agreement_counts is None or np.max(agreement_counts) == 0:
         return rgb
 
@@ -1440,11 +1419,11 @@ def compute_physical_measurements(mask, pixel_spacing=PIXEL_SPACING_MM):
             "minor_diam_mm": 0.0,
             "mean_diam_mm": 0.0,
         }
-
+    
     pixels = int(np.sum(mask > 0))
     area_mm2 = pixels * (pixel_spacing ** 2)
     area_cm2 = area_mm2 / 100.0
-
+    
     mask_u8 = (mask > 0).astype(np.uint8) * 255
     contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
@@ -1459,7 +1438,7 @@ def compute_physical_measurements(mask, pixel_spacing=PIXEL_SPACING_MM):
         radius = math.sqrt(pixels / math.pi)
         major_mm = 2.0 * radius * pixel_spacing
         minor_mm = major_mm
-
+        
     return {
         "pixels": pixels,
         "area_mm2": float(area_mm2),
@@ -1496,7 +1475,7 @@ def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, 
 
     depth = mask_3d.shape[0]
     slice_data = []
-
+    
     for z in range(depth):
         m = mask_3d[z]
         px = int(np.sum(m > 0))
@@ -1509,7 +1488,7 @@ def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, 
                 "d_major": m_meas["major_diam_mm"],
                 "d_minor": m_meas["minor_diam_mm"]
             })
-
+            
     if not slice_data:
         return {
             "max_diam_mm": 0.0,
@@ -1524,19 +1503,19 @@ def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, 
             "risk_color": "#3fb950",
             "risk_recommendation": "Normal brain parenchyma. No mass effect observed."
         }
-
+        
     all_majors = [s["d_major"] for s in slice_data]
     all_minors = [s["d_minor"] for s in slice_data]
     max_diam = max(all_majors)
     min_diam = min(all_minors)
-
+    
     active_slices = len(slice_data)
     z_span_mm = active_slices * slice_thickness
     total_volume_ml = sum(s["area_mm2"] * slice_thickness for s in slice_data) / 1000.0
-
+    
     spread_min = total_volume_ml * 0.89
     spread_max = total_volume_ml * 1.21
-
+    
     if total_volume_ml > 15.0:
         risk_label = "High Mass-Effect Risk"
         risk_color = "#f85149"
@@ -1549,7 +1528,7 @@ def calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, 
         risk_label = "Focal / Minimal Mass Effect"
         risk_color = "#3fb950"
         risk_recommendation = "Focal lesion (< 5 mL). Discrete margins without significant ventricular compression."
-
+        
     return {
         "max_diam_mm": max_diam,
         "min_diam_mm": min_diam,
@@ -1575,7 +1554,7 @@ def isolate_target_lesion(mask_3d, active_z):
     if mask_3d is None or mask_3d.sum() == 0:
         return mask_3d
     active_z = int(np.clip(active_z, 0, mask_3d.shape[0] - 1))
-
+    
     # If active slice has no lesion, anchor to the slice with the largest tumor area
     if mask_3d[active_z].sum() == 0:
         slice_sums = mask_3d.reshape(mask_3d.shape[0], -1).sum(axis=1)
@@ -1592,7 +1571,7 @@ def isolate_target_lesion(mask_3d, active_z):
             filtered = np.isin(labels, active_labels).astype(np.uint8)
         else:
             filtered = mask_3d.copy()
-
+            
         # Constrain Z-span to contiguous slices around active_z (prevent stray noise across whole brain)
         z_has = np.where(filtered.reshape(filtered.shape[0], -1).sum(axis=1) > 0)[0]
         if len(z_has) > 0 and (z_has[-1] - z_has[0] > 10):
@@ -1686,7 +1665,7 @@ def load_real_patient_3d_volume(folder_path, target_base=None):
     for f in img_files:
         ipath = os.path.join(folder_path, f)
         mpath = ipath.replace('_img.npy', '_mask.npy')
-
+        
         arr = np.load(ipath)
         if arr.ndim == 3 and arr.shape[-1] == 3:
             arr = arr[..., 1]
@@ -1709,7 +1688,7 @@ def load_real_patient_3d_volume(folder_path, target_base=None):
             mask_list.append(m)
         else:
             mask_list.append(np.zeros((256, 256), dtype=np.uint8))
-
+            
         names.append(f.replace('_img.npy', ''))
 
     vol_3d = np.stack(vol_list, axis=0)
@@ -1727,10 +1706,10 @@ def construct_anatomical_3d_volume(img_raw, mask_raw, active_z=50, total_depth=7
     H, W = 256, 256
     img_256 = cv2.resize(img_raw, (W, H)) if img_raw.shape != (H, W) else img_raw.copy()
     mask_256 = (cv2.resize(mask_raw.astype(np.float32), (W, H), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8) if mask_raw is not None else np.zeros((H, W), dtype=np.uint8)
-
+    
     vol_3d = np.zeros((total_depth, H, W), dtype=np.float32)
     mask_3d = np.zeros((total_depth, H, W), dtype=np.uint8)
-
+    
     head_mask = (img_256 > 0.15)
     if np.sum(head_mask) > 100:
         y_idx, x_idx = np.where(head_mask)
@@ -1739,10 +1718,10 @@ def construct_anatomical_3d_volume(img_raw, mask_raw, active_z=50, total_depth=7
         rx = max(40, (np.max(x_idx) - np.min(x_idx)) // 2)
     else:
         cy, cx, ry, rx = 128, 128, 95, 85
-
+        
     cz = active_z
     rz = max(15, total_depth // 2 - 4)
-
+    
     if np.sum(mask_256) > 0:
         ty_idx, tx_idx = np.where(mask_256 > 0)
         ty, tx = int(np.mean(ty_idx)), int(np.mean(tx_idx))
@@ -1751,9 +1730,9 @@ def construct_anatomical_3d_volume(img_raw, mask_raw, active_z=50, total_depth=7
         trz = max(4, int(min(try_, trx) * 0.8))
     else:
         ty, tx, try_, trx, trz = cy + 20, cx + 20, 15, 15, 6
-
+        
     y, x = np.mgrid[:H, :W]
-
+    
     for z in range(total_depth):
         dz = (z - cz) / float(rz)
         if abs(dz) < 1.0:
@@ -1761,28 +1740,28 @@ def construct_anatomical_3d_volume(img_raw, mask_raw, active_z=50, total_depth=7
             cur_rx = rx * scale_z
             cur_ry = ry * scale_z
             dist_head = ((x - cx)**2 / (cur_rx**2 + 1e-5) + (y - cy)**2 / (cur_ry**2 + 1e-5))
-
+            
             brain = (dist_head <= 1.0)
             skull = (dist_head <= 1.0) & (dist_head >= 0.88)
-
+            
             M_h = cv2.getRotationMatrix2D((cx, cy), 0, scale_z)
             w_img = cv2.warpAffine(img_256, M_h, (W, H), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-
+            
             base_synth = np.zeros((H, W), dtype=np.float32)
             base_synth[brain] = 0.38 + 0.03 * np.sin(x[brain]/10.0)
             base_synth[skull] = 0.92
-
+            
             # Smooth Gaussian blend near active slice
             w_dist = np.exp(-((z - cz) / 5.0)**2)
             vol_3d[z] = w_img * w_dist + base_synth * (1.0 - w_dist)
-
+            
         tdz = (z - cz) / float(trz)
         if abs(tdz) < 1.0 and np.sum(mask_256) > 0:
             t_scale = np.sqrt(max(0.0, 1.0 - tdz**2))
             M_t = cv2.getRotationMatrix2D((tx, ty), 0, t_scale)
             w_m = cv2.warpAffine(mask_256.astype(np.float32), M_t, (W, H), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             mask_3d[z] = (w_m > 0.5).astype(np.uint8)
-
+            
     vol_3d[active_z] = img_256
     mask_3d[active_z] = mask_256
     return vol_3d, mask_3d
@@ -1800,18 +1779,18 @@ def create_3d_bounding_box_canvas(vol_3d, mask_3d, rot_k=1, crop=40):
         zc = depth // 2
     proj_vol = vol_3d[zc]
     proj_mask = np.max(mask_3d, axis=0)
-
+    
     vol_aligned = align_for_clinical_display(proj_vol, crop=crop, rot_k=rot_k)
     mask_aligned = align_for_clinical_display(proj_mask, crop=crop, rot_k=rot_k, is_mask=True)
     canvas = overlay_mask_with_outline(vol_aligned, mask_aligned, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
-
+    
     if np.sum(mask_aligned > 0) > 0:
         pos_y, pos_x = np.where(mask_aligned > 0)
         bx1 = max(4, int(np.min(pos_x)) - 8)
         by1 = max(4, int(np.min(pos_y)) - 8)
         bx2 = min(canvas.shape[1] - 4, int(np.max(pos_x)) + 8)
         by2 = min(canvas.shape[0] - 4, int(np.max(pos_y)) + 8)
-
+        
         dash_len = 6
         color = (255, 193, 7) # Amber gold in RGB
         for x in range(bx1, bx2, dash_len * 2):
@@ -1820,7 +1799,7 @@ def create_3d_bounding_box_canvas(vol_3d, mask_3d, rot_k=1, crop=40):
         for y in range(by1, by2, dash_len * 2):
             cv2.line(canvas, (bx1, y), (bx1, min(y + dash_len, by2)), color, 2)
             cv2.line(canvas, (bx2, y), (bx2, min(y + dash_len, by2)), color, 2)
-
+            
     return canvas
 
 
@@ -1835,7 +1814,7 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     """
     H, W = size, size
     canvas = np.zeros((H, W, 3), dtype=np.uint8)
-
+    
     # 1. 3D Slicer-style purple/slate gradient background
     for y in range(H):
         ratio = y / float(H)
@@ -1843,7 +1822,7 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
         g = int(118 * (1.0 - ratio) + 32 * ratio)
         b = int(158 * (1.0 - ratio) + 52 * ratio)
         canvas[y, :] = (b, g, r) # OpenCV BGR
-
+        
     # 2. 3D Perspective Bounding Box matching Image 1
     # Front face (large outer rectangle)
     fx0, fx1 = 44, 212
@@ -1851,28 +1830,28 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     # Back face (smaller inner rectangle in perspective)
     bx0, bx1 = 82, 174
     by0, by1 = 64, 192
-
+    
     bbox_color = (205, 40, 190)      # Magenta/purple in BGR
     bbox_back_color = (165, 30, 150) # Slightly darker for depth
-
+    
     # Draw back face rectangle
     cv2.rectangle(canvas, (bx0, by0), (bx1, by1), bbox_back_color, 1, cv2.LINE_AA)
-
+    
     # Draw 4 corner depth connector lines (front to back)
     cv2.line(canvas, (fx0, fy0), (bx0, by0), bbox_color, 2, cv2.LINE_AA)
     cv2.line(canvas, (fx1, fy0), (bx1, by0), bbox_color, 2, cv2.LINE_AA)
     cv2.line(canvas, (fx1, fy1), (bx1, by1), bbox_color, 2, cv2.LINE_AA)
     cv2.line(canvas, (fx0, fy1), (bx0, by1), bbox_color, 2, cv2.LINE_AA)
-
+    
     # Draw front face rectangle
     cv2.rectangle(canvas, (fx0, fy0), (fx1, fy1), bbox_color, 2, cv2.LINE_AA)
-
+    
     # 3. Orientation Letters directly matching Image 1
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.52
     txt_col = (255, 255, 255)
     thick = 2
-
+    
     # 'S' centered above top edge
     cv2.putText(canvas, 'S', (123, 26), font, font_scale, txt_col, thick, cv2.LINE_AA)
     # 'I' centered below bottom edge
@@ -1881,11 +1860,11 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     cv2.putText(canvas, 'R', (20, 134), font, font_scale, txt_col, thick, cv2.LINE_AA)
     # 'L' centered to right of right edge
     cv2.putText(canvas, 'L', (224, 134), font, font_scale, txt_col, thick, cv2.LINE_AA)
-
+    
     # 4. Realistic 3D Green Tumor Model in the center of the box
     D, vH, vW = vol_3d.shape
     pos = np.argwhere(mask_3d > 0)
-
+    
     # If full volume has no non-zero mask (e.g. initial upload of raw scan), generate a candidate lesion ellipsoid
     if len(pos) == 0 and current_z is not None:
         cz = int(np.clip(current_z, 0, D - 1))
@@ -1913,48 +1892,48 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
         span_x = max(1, max_x - min_x)
         span_y = max(1, max_y - min_y)
         span_z = max(1, max_z - min_z)
-
+        
         target_radius = 32.0
         step = max(1, len(pos) // 900)
         sub_pts = pos[::step]
-
+        
         light = np.array([0.4, -0.6, 0.7])
         light = light / np.linalg.norm(light)
-
+        
         rendered_pts = []
         for p in sub_pts:
             zv, yv, xv = p
             rx = (xv - xc) / (span_x / 2.0 + 1e-5)
             ry = (yv - yc) / (span_y / 2.0 + 1e-5)
             rz = (zv - zc) / (span_z / 2.0 + 1e-5)
-
+            
             depth_factor = 1.0 - 0.22 * rz
             sx = int(128 + rx * target_radius * depth_factor)
             sy = int(128 + ry * target_radius * depth_factor * 0.95 - rz * 8.0)
             depth_sort = rz * 0.7 + ry * 0.3
             rendered_pts.append((depth_sort, sx, sy, rx, ry, rz))
-
+            
         rendered_pts.sort(key=lambda x: x[0])
-
+        
         tumor_layer = canvas.copy()
         for depth_sort, sx, sy, rx, ry, rz in rendered_pts:
             if 10 <= sx < W - 10 and 10 <= sy < H - 10:
                 norm = np.array([rx, ry, rz]) + np.random.normal(0, 0.12, 3)
                 norm = norm / (np.linalg.norm(norm) + 1e-5)
-
+                
                 diff = max(0.25, float(np.dot(norm, light)))
                 refl = 2.0 * diff * norm - light
                 spec = max(0.0, float(refl[2])) ** 8
-
+                
                 g = int(np.clip(55 + 150 * diff + 60 * spec, 35, 250))
                 r = int(np.clip(20 + 80 * diff + 80 * spec, 15, 170))
                 b = int(np.clip(25 + 75 * diff + 70 * spec, 15, 165))
-
+                
                 rad = int(np.clip(4 * (1.0 + 0.15 * rz), 2, 6))
                 cv2.circle(tumor_layer, (sx, sy), rad, (b, g, r), -1)
-
+                
         cv2.addWeighted(tumor_layer, 0.96, canvas, 0.04, 0, canvas)
-
+        
     # 5. Active slice depth indicator
     if current_z is not None and 0 <= current_z < D:
         z_ratio = current_z / float(max(1, D - 1))
@@ -1962,7 +1941,7 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
         cv2.line(canvas, (fx0, py_slice), (fx1, py_slice), (255, 220, 100), 1, cv2.LINE_AA)
         cv2.putText(canvas, f"Ax {current_z}", (fx0 + 4, max(fy0 + 12, py_slice - 4)),
                     font, 0.32, (255, 220, 100), 1, cv2.LINE_AA)
-
+        
     return canvas
 
 
@@ -1977,13 +1956,13 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
     D, H, W = vol_3d.shape
     px = PIXEL_SPACING_MM
     pz = SLICE_THICKNESS_MM
-
+    
     fig = go.Figure()
-
+    
     x_min, x_max = 0, W * px
     y_min, y_max = 0, H * px
     z_min, z_max = 0, D * pz
-
+    
     # 12 edges of the 3D bounding box
     cube_edges = [
         ([x_min, x_max], [y_min, y_min], [z_min, z_min]),
@@ -2007,11 +1986,11 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             showlegend=False,
             hoverinfo='skip'
         ))
-
+        
     mid_x = (x_min + x_max) / 2.0
     mid_y = (y_min + y_max) / 2.0
     mid_z = (z_min + z_max) / 2.0
-
+    
     labels_pos = [
         ("S", mid_x, mid_y, z_max + 12),
         ("I", mid_x, mid_y, z_min - 12),
@@ -2027,7 +2006,7 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             showlegend=False,
             hoverinfo='skip'
         ))
-
+        
     pos = np.argwhere(mask_3d > 0)
     if len(pos) > 0:
         step = max(1, len(pos) // 600)
@@ -2040,7 +2019,7 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             marker=dict(size=5.5, color='#22c55e', opacity=0.92),
             name='3D Green Tumor Model'
         ))
-
+        
     if current_z is not None and 0 <= current_z < D:
         fig.add_trace(go.Mesh3d(
             x=[x_min, x_max, x_max, x_min],
@@ -2051,7 +2030,7 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             opacity=0.25,
             name=f'Active Slice Ax {current_z}'
         ))
-
+        
     fig.update_layout(
         template='plotly_dark',
         scene=dict(
@@ -2113,11 +2092,11 @@ def reconstruct_isotropic_mpr_volume(vol_aligned, mask_aligned=None):
     # Step 2: Dense Isotropic Z-Resampling to 256 slices
     target_d = 256
     scale_z = target_d / float(depth)
-
+    
     # 1D smoothing along Z axis to blend discrete scanner slice seams
     vol_z_smooth = ndi.gaussian_filter1d(vol_reg, sigma=0.60, axis=0)
     vol_dense = ndi.zoom(vol_z_smooth, (scale_z, 1.0, 1.0), order=1)
-
+    
     mask_dense = None
     if mask_reg is not None:
         mask_z = ndi.zoom(mask_reg.astype(np.float32), (scale_z, 1.0, 1.0), order=1)
@@ -2136,7 +2115,7 @@ def slice_real_mpr_orthogonal(vol_aligned, mask_aligned, current_z, yc=None, xc=
     """
     depth, H, W = vol_aligned.shape
     current_z = int(np.clip(current_z, 0, depth - 1))
-
+    
     # 1. Determine cut coordinates: anchor to lesion centroid if tumor exists, else volume center
     pos = np.argwhere(mask_aligned > 0)
     if len(pos) > 0:
@@ -2145,24 +2124,24 @@ def slice_real_mpr_orthogonal(vol_aligned, mask_aligned, current_z, yc=None, xc=
     else:
         if yc is None: yc = H // 2
         if xc is None: xc = W // 2
-
+        
     yc = int(np.clip(yc, 5, H - 6))
     xc = int(np.clip(xc, 5, W - 6))
-
+    
     # 2. Coronal View: Slice across X-Z at row yc (vol_aligned[:, yc, :])
     # Z increases inferior -> superior. To place Superior at the TOP: flip Z axis [::-1, :]
     cor_raw = vol_aligned[:, yc, :] # shape: [depth, W]
     cor_oriented = cor_raw[::-1, :]
     cor_img = cv2.resize(cor_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)
     cor_img = np.clip(cor_img, 0.0, 1.0)
-
+    
     # Coronal tumor mask: slice through tumor with ±2 pixel slab to show volume intersection
     y_lo = max(0, yc - 2)
     y_hi = min(H, yc + 3)
     cor_m_raw = np.max(mask_aligned[:, y_lo:y_hi, :], axis=1)
     cor_m_oriented = cor_m_raw[::-1, :]
     cor_mask = (cv2.resize(cor_m_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
-
+    
     # 3. Sagittal View: Slice across Y-Z at col xc (vol_aligned[:, :, xc])
     # Superior at top: flip Z axis [::-1, :]
     # Patient facing right (Anterior at right, Posterior at left):
@@ -2172,26 +2151,26 @@ def slice_real_mpr_orthogonal(vol_aligned, mask_aligned, current_z, yc=None, xc=
     sag_oriented = sag_raw[::-1, ::-1]
     sag_img = cv2.resize(sag_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)
     sag_img = np.clip(sag_img, 0.0, 1.0)
-
+    
     # Sagittal tumor mask with ±2 pixel slab
     x_lo = max(0, xc - 2)
     x_hi = min(W, xc + 3)
     sag_m_raw = np.max(mask_aligned[:, :, x_lo:x_hi], axis=2)
     sag_m_oriented = sag_m_raw[::-1, ::-1]
     sag_mask = (cv2.resize(sag_m_oriented.astype(np.float32), (W, H), interpolation=cv2.INTER_NEAREST) > 0.5).astype(np.uint8)
-
+    
     # 4. Z Reference line (Axial cut indicator)
     z_ratio = float(current_z) / float(max(1, depth - 1))
     z_line_y = int(np.clip((1.0 - z_ratio) * float(H - 1), 4, H - 5))
-
+    
     return cor_img, cor_mask, sag_img, sag_mask, z_line_y, yc, xc
 
 
 def generate_mpr_visualizations(
-    vol_3d,
-    mask_3d,
-    current_z,
-    rot_k=1,
+    vol_3d, 
+    mask_3d, 
+    current_z, 
+    rot_k=1, 
     crop=40,
     agreement_counts=None,
     v_thresh=3,
@@ -2211,11 +2190,11 @@ def generate_mpr_visualizations(
     """
     depth, H, W = vol_3d.shape
     current_z = int(np.clip(current_z, 0, depth - 1))
-
+    
     # Pre-align slices so all axes match the clinical orientation
     vol_aligned = np.stack([align_for_clinical_display(vol_3d[z], crop=crop, rot_k=rot_k) for z in range(depth)], axis=0)
     mask_aligned = np.stack([align_for_clinical_display(mask_3d[z], crop=crop, rot_k=rot_k, is_mask=True) for z in range(depth)], axis=0)
-
+    
     # Isolate focal lesion connected to active slice to ensure clean bounding box and contour
     mask_aligned = isolate_target_lesion(mask_aligned, current_z)
 
@@ -2236,7 +2215,7 @@ def generate_mpr_visualizations(
         )
     else:
         ax_display = overlay_mask_with_outline(vol_aligned[current_z], mask_aligned[current_z], fill_color=(46, 160, 67), outline_color=(248, 81, 73))
-
+    
     # Authentic DICOM Viewport Corner HUD (matching hospital PACS workstations)
     font_hud = cv2.FONT_HERSHEY_SIMPLEX
     hud_color = (210, 220, 235)
@@ -2244,13 +2223,13 @@ def generate_mpr_visualizations(
     cv2.putText(ax_display, f"Thk:{SLICE_THICKNESS_MM:.1f}mm", (180, 14), font_hud, 0.33, hud_color, 1, cv2.LINE_AA)
     cv2.putText(ax_display, "W:80 L:40", (6, 250), font_hud, 0.31, (150, 165, 185), 1, cv2.LINE_AA)
     cv2.putText(ax_display, f"{PIXEL_SPACING_MM:.2f}mm", (195, 250), font_hud, 0.31, (150, 165, 185), 1, cv2.LINE_AA)
-
+    
     pos = np.argwhere(mask_aligned > 0)
     if len(pos) > 0:
         zc, yc, xc = [int(v) for v in np.mean(pos, axis=0)]
     else:
         zc, yc, xc = current_z, 128, 128
-
+        
     x_mm = xc * PIXEL_SPACING_MM
     y_mm = yc * PIXEL_SPACING_MM
     z_mm = current_z * SLICE_THICKNESS_MM
@@ -2259,7 +2238,7 @@ def generate_mpr_visualizations(
     cor_img, cor_mask, sag_img, sag_mask, z_line_y, cut_y, cut_x = slice_real_mpr_orthogonal(
         vol_aligned, mask_aligned, current_z, yc=yc, xc=xc
     )
-
+    
     cor_display = overlay_mask_with_outline(cor_img, cor_mask, fill_color=(46, 160, 67), outline_color=(248, 81, 73))
     cv2.line(cor_display, (0, z_line_y), (255, z_line_y), (88, 166, 255), 1, cv2.LINE_AA)
     cv2.putText(cor_display, f"CT Cor y={cut_y}", (6, 14), font_hud, 0.33, hud_color, 1, cv2.LINE_AA)
@@ -2280,7 +2259,7 @@ def generate_mpr_visualizations(
     # Uses full 3D mask_aligned so the green tumor region is always visible wherever user scrolls
     bbox_img = render_3d_brain_whole(vol_aligned, mask_aligned, current_z=current_z, size=256)
     planar_bbox_img = create_3d_bounding_box_canvas(vol_3d, mask_aligned, rot_k=rot_k, crop=crop)
-
+    
     return {
         "ax_view": ax_display,
         "cor_view": cor_display,
@@ -2384,7 +2363,7 @@ def generate_clinical_docx_report(
     import datetime
 
     doc = docx.Document()
-
+    
     for s in doc.sections:
         s.top_margin = Inches(0.7)
         s.bottom_margin = Inches(0.7)
@@ -2543,7 +2522,7 @@ def render_model_card(meta, predictions, img_gray, gt_mask):
             st.metric("Dice Score", f"{d:.3f}", delta=f"IoU: {iou:.3f}")
         else:
             st.metric("Detected Area", f"{px_count:,} px")
-
+            
         st.markdown(f"""
         <div style="font-size: 13px; color: #8b949e; margin-top: 4px;">
             Area: <b style="color: #e6edf3;">{px_count:,} px</b><br>
@@ -2694,7 +2673,7 @@ def get_ctrad_definitions():
             "route": "Approved → PACS Archival & Patient Record. Rejected → Return to Skill 04 Brush Editor.",
         }
     }
-
+    
     steps = [
         {"idx": 0, "skill_id": 0, "label": "0. Intake", "short": "Intake", "agent": "input", "phase": "INPUT", "color": "#94a8c1"},
         {"idx": 1, "skill_id": 7, "label": "1. Baseline", "short": "Baseline", "agent": "tool", "phase": "INFERENCE", "color": "#94a8c1"},
@@ -2722,7 +2701,7 @@ def compute_ctrad_live_telemetry(img_slice, active_mask, predictions, ensemble_d
     sobelx = cv2.Sobel(img_float, cv2.CV_32F, 1, 0, ksize=3)
     sobely = cv2.Sobel(img_float, cv2.CV_32F, 0, 1, ksize=3)
     grad_mag = np.sqrt(sobelx**2 + sobely**2)
-
+    
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     dilated = cv2.dilate(active_mask.astype(np.uint8), kernel, iterations=1)
     eroded = cv2.erode(active_mask.astype(np.uint8), kernel, iterations=1)
@@ -2844,12 +2823,12 @@ def show_models_dialog(model_metadata, predictions, img_gray, gt_mask):
     st.caption("Detailed architectural comparison on active slice. Each card highlights isolated model prediction, confidence area, and Dice concordance against reference.")
     row1_models = model_metadata[:3]
     row2_models = model_metadata[3:]
-
+    
     r1_c1, r1_c2, r1_c3 = st.columns(3)
     for idx, meta in enumerate(row1_models):
         with [r1_c1, r1_c2, r1_c3][idx]:
             render_model_card(meta, predictions, img_gray, gt_mask)
-
+            
     r2_c1, r2_c2, r2_c3 = st.columns(3)
     for idx, meta in enumerate(row2_models):
         with [r2_c1, r2_c2, r2_c3][idx]:
@@ -2878,7 +2857,7 @@ def show_correlation_dialog(model_metadata, predictions):
     n_m = len(model_metadata)
     corr_matrix = np.zeros((n_m, n_m), dtype=np.float32)
     m_names = [m["name"] for m in model_metadata]
-
+    
     for i in range(n_m):
         for j in range(n_m):
             if i == j:
@@ -2888,7 +2867,7 @@ def show_correlation_dialog(model_metadata, predictions):
                 p_j = predictions[model_metadata[j]["key"]]["prob"]
                 m_i = predictions[model_metadata[i]["key"]]["mask"]
                 m_j = predictions[model_metadata[j]["key"]]["mask"]
-
+                
                 if "Pearson" in corr_metric:
                     v_i, v_j = p_i.flatten(), p_j.flatten()
                     std_i, std_j = np.std(v_i), np.std(v_j)
@@ -2971,11 +2950,11 @@ def show_risk_flags_dialog(risk_metrics):
         <div class="check-item"><span class="check-box">☑</span> <b>The lesion diameter in scans:</b></div>
     </div>
     """, unsafe_allow_html=True)
-
+    
     scan_lines = []
     for s in risk_metrics['slice_table']:
         scan_lines.append(f"<div class='scan-slice-row'>Scan z = <b>{s['z']}</b>; diameter <b>{s['d_major']:.1f} mm</b>, <b>{s['d_minor']:.1f} mm</b> ({s['area_mm2']:.1f} mm²)</div>")
-
+    
     st.markdown(f"""
     <div style="max-height: 200px; overflow-y: auto; background: #0d1117; border-radius: 8px; padding: 8px 12px; margin: 8px 0; border: 1px solid #21262d;">
         {''.join(scan_lines)}
@@ -2994,7 +2973,7 @@ def show_risk_flags_dialog(risk_metrics):
 def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, slice_title, selected_z, reviewer_name, is_clinician_edited, consensus_meas):
     st.markdown(f"#### ✏️ Clinician Interactive Lesion Editor (Slice z = {selected_z})")
     st.caption("Interactive clinician correction tools: Add (Brush), Erase, Shift lesion position, or apply radial safety margins. Lesion metrics (mm², diameter, and volume) update automatically.")
-
+    
     col_rev1, col_rev2 = st.columns([1.5, 1.0])
     with col_rev1:
         rev_name = st.text_input("Reviewed by:", value=reviewer_name, key=f"dlg_rev_{selected_z}")
@@ -3018,7 +2997,7 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
     slice_edit_key = f"{slice_title}_{selected_z}"
     curr_target_mask = active_consensus_mask.copy()
     orig_meas = compute_physical_measurements(orig_ai_mask)
-
+    
     if np.sum(curr_target_mask > 0) > 0:
         pos_y, pos_x = np.where(curr_target_mask > 0)
         def_cx, def_cy = int(np.mean(pos_x)), int(np.mean(pos_y))
@@ -3033,13 +3012,13 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
 
     with col_brush_controls:
         tool_tab1, tool_tab2, tool_tab3 = st.tabs(["🖌️ Brush (Add/Delete)", "📐 Radial Margin & Shift", "⚡ Quick Presets & Reset"])
-
+        
         with tool_tab1:
             b_mode = st.radio("Brush Action", ["🟢 Add Lesion (Brush)", "🔴 Delete Lesion (Eraser)"], horizontal=True, key=f"dlg_bmode_{selected_z}")
             action_key = "add" if "Add" in b_mode else "delete"
             b_rad_mm = st.slider("Brush Diameter (mm)", 1.0, 25.0, 6.0, 0.5, key=f"dlg_brad_{selected_z}")
             b_rad_px = max(1, int(round((b_rad_mm / 2.0) / PIXEL_SPACING_MM)))
-
+            
             st.markdown("<div style='font-size: 13px; color: #8b949e; margin-top: 8px;'>Target Location:</div>", unsafe_allow_html=True)
             q1, q2, q3, q4, q5 = st.columns(5)
             target_x = st.session_state.get(f"dlg_bx_{selected_z}", def_cx)
@@ -3059,13 +3038,13 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
             with q5:
                 if st.button("➡️ Right", key=f"dlg_br_{selected_z}", use_container_width=True):
                     st.session_state[f"dlg_bx_{selected_z}"] = max_x; st.session_state[f"dlg_by_{selected_z}"] = def_cy; st.rerun()
-
+            
             col_bx, col_by = st.columns(2)
             with col_bx:
                 b_x = st.slider("X Position (px)", 0, 255, int(target_x), key=f"dlg_bxslider_{selected_z}")
             with col_by:
                 b_y = st.slider("Y Position (px)", 0, 255, int(target_y), key=f"dlg_byslider_{selected_z}")
-
+                
             if st.button(f"🖌️ Apply Brush Stroke at ({b_x}, {b_y})", type="primary", use_container_width=True, key=f"dlg_apply_brush_{selected_z}"):
                 new_mask = apply_brush_stroke(curr_target_mask, b_x, b_y, b_rad_px, action=action_key)
                 st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
@@ -3079,7 +3058,7 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
                 st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
                 st.session_state["safety_margin_mm"] = rad_margin
                 st.rerun()
-
+                
             st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
             st.markdown("**2. Centroid Translation / Shift Location**")
             col_sx, col_sy = st.columns(2)
@@ -3104,7 +3083,7 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
                     new_mask = apply_radial_margin(curr_target_mask, -1.0)
                     st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
                     st.rerun()
-
+                    
             p3, p4 = st.columns(2)
             with p3:
                 if st.button("🧹 Denoise & Clean Voids", use_container_width=True, key=f"dlg_qden_{selected_z}"):
@@ -3116,7 +3095,7 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
                     new_mask = np.zeros_like(curr_target_mask)
                     st.session_state["clinician_edited_masks"][slice_edit_key] = new_mask
                     st.rerun()
-
+                    
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
             if st.button("🔄 Reset to AI Model Consensus", type="secondary", use_container_width=True, key=f"dlg_reset_ai_{selected_z}"):
                 if slice_edit_key in st.session_state["clinician_edited_masks"]:
@@ -3133,10 +3112,10 @@ def show_margin_editor_dialog(img_gray, active_consensus_mask, orig_ai_mask, sli
             action=action_key if 'action_key' in locals() else "add"
         )
         st.image(preview_img, caption=f"Axial Preview at ({b_x if 'b_x' in locals() else def_cx}, {b_y if 'b_y' in locals() else def_cy})", use_container_width=True)
-
+        
         delta_area = consensus_meas['area_mm2'] - orig_meas['area_mm2']
         delta_pct = (delta_area / max(1e-5, orig_meas['area_mm2'])) * 100.0 if orig_meas['area_mm2'] > 0 else 0.0
-
+        
         st.markdown(f"""
         <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 13px;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
@@ -3187,85 +3166,107 @@ def main():
     # ── Header ──
     st.markdown("""
     <div class="main-header" style="padding: 16px 22px; margin-bottom: 20px;">
-        <h1 style="margin: 0; font-size: 25px; font-weight: 700; color: #e6edf3;">
-            Brain CT Lesion Review
+        <h1 style="margin: 0; font-size: 25px; font-weight: 800; color: #f0f6fc;">
+            🧠 Brain CT Lesion Size Estimation and Risk Assessment
         </h1>
-        <p>Inspect the scan, verify the contour, then review the measurements.</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Review defaults keep technical settings out of the primary workflow.
-    heatmap_alpha = 0.65
-    cmap_choice = "turbo"
-    min_agreement_filter = 1
-    active_rot_k = 1
-    device_opt = "cuda" if torch.cuda.is_available() else "cpu"
-    is_deep_gpu = st.session_state.get("force_deep_gpu", False)
+    # ── Sidebar Configuration ──
+    with st.sidebar:
+        st.markdown("### 🧠 Brain CT Review")
+        st.caption("Case selection and advanced controls")
+        with st.expander("Dataset, display & inference settings", expanded=False):
+            st.markdown("### ⚙️ Modality & Dataset")
+            selected_dataset_name = st.selectbox(
+            "Select Imaging Dataset",
+            list(DATASET_CONFIGS.keys()),
+            index=0,
+            help="NCCT and CECT contrast profiles use distinct, isolated trained weights."
+        )
+            current_cfg = DATASET_CONFIGS[selected_dataset_name]
+            st.caption(f"📁 {current_cfg['description']}")
+
+            st.markdown("---")
+            st.markdown("### Display controls")
+            heatmap_alpha = st.slider("Heatmap Overlay Opacity", 0.2, 1.0, 0.65, 0.05)
+            cmap_choice = st.selectbox("Heatmap Palette", ["turbo", "jet", "plasma", "viridis", "inferno"], index=0)
+            min_agreement_filter = st.slider("Filter Agreement Below (Models)", 1, 4, 1, 1)
+
+            st.markdown("---")
+            st.markdown("### Orientation")
+            rot_choice = st.selectbox(
+            "Slice Display Orientation",
+            [
+                "Standard Anterior (Eyes Top, k=1)",
+                "Rotated 180° (k=2)",
+                "Rotated 270° (k=3)",
+                "Native Scanner View (k=0)"
+            ],
+            index=0
+        )
+            rot_k_map = {
+            "Standard Anterior (Eyes Top, k=1)": 1,
+            "Rotated 180° (k=2)": 2,
+            "Rotated 270° (k=3)": 3,
+            "Native Scanner View (k=0)": 0
+        }
+            active_rot_k = rot_k_map[rot_choice]
+
+            st.markdown("---")
+            st.markdown("### 🖥️ Hardware Status")
+            device_opt = "cuda" if torch.cuda.is_available() else "cpu"
+            st.info(f"Target Device: **{device_opt.upper()}** (escnn: {'Active ✅' if HAS_ESCNN else 'Fallback Mode ⚠️'})")
+
+            st.markdown("---")
+            st.markdown("### Inference mode")
+            inf_mode_choice = st.radio(
+            "Engine Speed Mode",
+            [
+                "⚡ Fast Interactive Mode (Instant Startup)",
+                "🔬 Deep GPU 6-Model Inference"
+            ],
+            index=0,
+            help="Fast Interactive Mode loads instantly (<0.1s) using calibrated model distributions for 60fps real-time slice scrubbing. Deep GPU mode executes full neural network PyTorch weights."
+        )
+            is_deep_gpu = ("Deep GPU" in inf_mode_choice) or st.session_state.get("force_deep_gpu", False)
 
     # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
+    st.subheader("Open a scan and review the lesion")
     if not is_deep_gpu:
-        st.warning("Preview mode uses simulated masks. Run model inference and verify the contour before interpreting measurements.")
-
-    with st.expander("Review settings", expanded=False):
-        setting_a, setting_b, setting_c = st.columns(3)
-        with setting_a:
-            rot_choice = st.selectbox(
-                "Image orientation",
-                ["Standard anterior", "Rotated 180°", "Rotated 270°", "Native scanner view"],
-                index=0,
-                key="review_orientation"
-            )
-        active_rot_k = {
-            "Standard anterior": 1,
-            "Rotated 180°": 2,
-            "Rotated 270°": 3,
-            "Native scanner view": 0,
-        }[rot_choice]
-        with setting_b:
-            heatmap_alpha = st.slider("Overlay opacity", 0.2, 1.0, 0.65, 0.05)
-        with setting_c:
-            cmap_choice = st.selectbox("Heatmap palette", ["turbo", "viridis", "plasma", "inferno"], index=0)
-        st.caption(f"Inference device: {device_opt.upper()} · Equivariant layers: {'available' if HAS_ESCNN else 'unavailable'}")
-
-    selected_dataset_name = st.selectbox(
-        "Imaging dataset",
-        list(DATASET_CONFIGS.keys()),
-        index=0,
-        help="Choose the scan dataset for case discovery and model weights."
-    )
-    current_cfg = DATASET_CONFIGS[selected_dataset_name]
-
+        st.warning("Demonstration preview: the fast mode uses simulated masks, not model predictions. Use Deep GPU inference and verify the contour before interpreting measurements.")
+    
     init_progress_placeholder = st.empty()
     is_initial_load = ("app_initialized" not in st.session_state) or st.session_state.get("force_deep_gpu", False)
     if is_initial_load:
-        init_progress_placeholder.progress(15, text="Finding available scans (15%)")
-
+        init_progress_placeholder.progress(15, text="⏳ [1/5] Scanning CT scan repositories & patient metadata... (15%)")
+    
     # Fast 1-sample discovery on initial load to prevent long waiting times and avoid scanning entire disk/rclone drive
     discovered_nifti_cases = discover_dgx_nifti_cases(max_samples=1)
     discovered_cases = discover_dataset_cases(selected_dataset_name, max_samples=1)
-
+    
     if is_initial_load:
-        init_progress_placeholder.progress(40, text="Loading the selected volume (40%)")
-
+        init_progress_placeholder.progress(40, text="📁 [2/5] Loading 3D CT volume & calibrating HU windowing... (40%)")
+    
     # Available sources: DGX 3D NIfTI (top priority if on DGX), DGX Slices, Preset 3D, Upload
     sources = []
     if discovered_nifti_cases:
-        sources.append("DGX 3D NIfTI Volume (.nii.gz)")
+        sources.append("🏥 DGX 3D NIfTI Volume (.nii.gz)")
     if discovered_cases:
-        sources.append("DGX Patient Dataset (Slices)")
-    sources.append("Clinical 3D Presets")
-    sources.append("Upload Custom Scan")
+        sources.append("📁 DGX Patient Dataset (Slices)")
+    sources.append("⭐ Clinical 3D Presets (No Upload Needed)")
+    sources.append("📤 Upload Custom Scan")
 
-    col_input_mode, col_case_picker = st.columns([1.1, 2.9])
+    col_input_mode, col_case_picker = st.columns([1.2, 1.8])
     with col_input_mode:
-        input_source = st.selectbox("Scan source", sources, index=0)
+        input_source = st.radio("Source", sources, index=0)
 
     img_raw, tensor_native, mask_raw = None, None, None
     vol_3d, mask_3d = None, None
     slice_title = "Reference Case"
     patient_z_active = 12
 
-    if input_source == "DGX 3D NIfTI Volume (.nii.gz)" and discovered_nifti_cases:
+    if input_source == "🏥 DGX 3D NIfTI Volume (.nii.gz)" and discovered_nifti_cases:
         with col_case_picker:
             nii_options = [c["label"] for c in discovered_nifti_cases]
             chosen_label = st.selectbox("Select DGX Server 3D NIfTI Volume:", nii_options, index=0)
@@ -3280,7 +3281,7 @@ def main():
                 gt_count = int(np.sum(mask_3d > 0)) if mask_3d is not None else 0
                 st.caption(f"Loaded DGX 3D NIfTI: **{chosen_nii['name']}** ({vol_3d.shape[0]} slices, GT active z={patient_z_active}, Total GT: **{gt_count:,} voxels**)")
 
-    elif input_source == "DGX Patient Dataset (Slices)" and discovered_cases:
+    elif input_source == "📁 DGX Patient Dataset (Slices)" and discovered_cases:
         with col_case_picker:
             case_options = [c["label"] for c in discovered_cases]
             chosen_label = st.selectbox("Select Verified Patient Tumor Case:", case_options, index=0)
@@ -3291,10 +3292,10 @@ def main():
             if z_m: patient_z_active = int(z_m[0])
             st.caption(f"Loaded Slice: **{chosen_case['name']}** (Confirmed GT: **{int(np.sum(mask_raw > 0)):,} px**)")
 
-    elif input_source == "Clinical 3D Presets":
+    elif input_source == "⭐ Clinical 3D Presets (No Upload Needed)":
         with col_case_picker:
             preset_options = [
-                "Real Patient CT 3D Scan (24 Slices - Included DICOM Series)",
+                "🏥 Real Patient CT 3D Scan (24 Slices - Included DICOM Series)",
                 "Patient Case 1: Right Parietal Glioma (3D Volume)",
                 "Patient Case 2: Left Frontal Meningioma (3D Volume)",
                 "Patient Case 3: Temporal Ischemic Infarct (3D Volume)"
@@ -3316,7 +3317,7 @@ def main():
                 patient_z_active = 50
                 st.caption(f"Loaded Preset: **{slice_title}** (Reference GT: **{int(np.sum(mask_raw > 0)):,} px**)")
 
-    elif input_source == "Upload Custom Scan":
+    elif input_source == "📤 Upload Custom Scan":
         uploaded_file = st.file_uploader(
             "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPY / PNG)",
             type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy"]
@@ -3339,10 +3340,10 @@ def main():
                             os.unlink(tmp_path)
                         except Exception:
                             pass
-
+                        
                         if nii_data.ndim == 4:
                             nii_data = nii_data[..., 0]
-
+                        
                         if nii_data.ndim == 3:
                             if nii_data.shape[0] < nii_data.shape[2] and nii_data.shape[0] < nii_data.shape[1]:
                                 pass
@@ -3385,7 +3386,7 @@ def main():
                     intercept = float(getattr(ds, "RescaleIntercept", 0.0))
                     pixel_array = ds.pixel_array.astype(np.float32)
                     hu = pixel_array * slope + intercept
-
+                    
                     wc = float(getattr(ds, "WindowCenter", 40))
                     ww = float(getattr(ds, "WindowWidth", 80))
                     w_min, w_max = wc - ww / 2.0, wc + ww / 2.0
@@ -3462,7 +3463,7 @@ def main():
                 pil_img = Image.open(uploaded_file).convert("L")
                 img_raw = np.array(pil_img).astype(np.float32) / 255.0
                 tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
-
+        
         # Helper download button for sample DICOM files
         with st.expander("📥 Download Sample Clinical Brain CT DICOM Files for Testing"):
             st.caption("Use these clinical DICOM sample files to test the DICOM upload feature:")
@@ -3495,8 +3496,8 @@ def main():
 
     # ── Establish 3D Patient Volume & Lesion Mask Upfront ──
     real_names = []
-
-    if input_source == "DGX Patient Dataset (Slices)" and 'chosen_case' in locals() and chosen_case and "curr" in chosen_case:
+    
+    if input_source == "📁 DGX Patient Dataset (Slices)" and 'chosen_case' in locals() and chosen_case and "curr" in chosen_case:
         patient_folder = os.path.dirname(chosen_case['curr'])
         target_base = os.path.basename(chosen_case['curr']).replace('_img.npy', '')
         vol_3d, mask_3d, real_names = load_real_patient_3d_volume(patient_folder, target_base)
@@ -3517,22 +3518,21 @@ def main():
 
     risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
     if is_initial_load:
-        init_progress_placeholder.progress(70, text="Preparing scan views (70%)")
+        init_progress_placeholder.progress(70, text="📐 [3/5] Reconstructing 3D Slicer MPR orthogonal views (Axial, Coronal, Sagittal)... (70%)")
 
     # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
     st.markdown("---")
-
+    
     col_hero_hdr1, col_hero_hdr2 = st.columns([1.8, 1.2])
     with col_hero_hdr1:
-        st.markdown('<h3 style="margin: 0; color: #e6edf3;">Scan</h3>', unsafe_allow_html=True)
-        st.caption("Move through slices to review the contour in context.")
+        st.markdown('<h3 style="margin: 0; color: #58a6ff;">Lesion review</h3>', unsafe_allow_html=True)
+        st.caption("Review the current CT slice and lesion estimate. Use the slice control to inspect adjacent levels.")
     with col_hero_hdr2:
-        st.caption(f"{vol_3d.shape[0]} slices · {'Model inference' if is_deep_gpu else 'Preview'}")
+        st.markdown(f"<div style='text-align: right; font-size: 12px; color: #8b949e; margin-bottom: 4px;'>Volume: <b style='color: #e6edf3;'>{vol_3d.shape[0]} slices</b> | Engine: <b style='color: {'#3fb950' if is_deep_gpu else '#58a6ff'};'>{'Deep GPU 6-Model' if is_deep_gpu else '⚡ Fast Realtime'}</b></div>", unsafe_allow_html=True)
         if not is_deep_gpu:
-            if st.button("Run model inference", use_container_width=True, help="Run the six available neural network models on this slice"):
+            if st.button("🚀 Run Deep 6-Model GPU Inference", use_container_width=True, help="Run 6 deep neural network model inference on GPU for this active slice"):
                 st.session_state["force_deep_gpu"] = True
-                selected_slice = st.session_state.get("z_scrub_slider", patient_z_active)
-                cache_key_del = f"{selected_dataset_name}_{slice_title}_z{selected_slice}"
+                cache_key_del = f"{slice_title}_z{selected_z}"
                 if "cached_slice_preds" in st.session_state and cache_key_del in st.session_state["cached_slice_preds"]:
                     del st.session_state["cached_slice_preds"][cache_key_del]
                 st.rerun()
@@ -3544,7 +3544,7 @@ def main():
         col_slider, col_rot, col_bmode = st.columns([1.7, 1.2, 1.1])
         with col_slider:
             selected_z = st.slider(
-                "Slice",
+                "Select Z-Slice / Scrub Depth (3D Scroll & Multi-Angle Detection)",
                 min_value=0,
                 max_value=vol_3d.shape[0] - 1,
                 value=min(patient_z_active, vol_3d.shape[0] - 1),
@@ -3552,17 +3552,19 @@ def main():
                 key="z_scrub_slider"
             )
         with col_rot:
+            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>Rotate Imaging</div>", unsafe_allow_html=True)
             rot_choice_mpr = st.selectbox(
-                "Orientation",
-                options=["Standard", "180°", "270°", "Native"],
+                "Rotate",
+                options=["Standard (k=1)", "Rotated 180° (k=2)", "Rotated 270° (k=3)", "Native (k=0)"],
                 index=0 if active_rot_k == 1 else (1 if active_rot_k == 2 else (2 if active_rot_k == 3 else 3)),
                 key="mpr_rot_choice",
                 label_visibility="collapsed"
             )
-            rot_map = {"Standard": 1, "180°": 2, "270°": 3, "Native": 0}
+            rot_map = {"Standard (k=1)": 1, "Rotated 180° (k=2)": 2, "Rotated 270° (k=3)": 3, "Native (k=0)": 0}
             active_mpr_rot_k = rot_map[rot_choice_mpr]
         with col_bmode:
-            box_style = st.selectbox("3D view", ["3D bounding box", "Axial plane"], key="roi_box_style")
+            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>3D View Style</div>", unsafe_allow_html=True)
+            box_style = st.radio("ROI Display", ["3D Bounding Box", "Planar (Axial)"], horizontal=True, key="roi_box_style", label_visibility="collapsed")
 
         # Dynamic Per-Slice Inference for selected_z
         active_slice_img = vol_3d[selected_z]
@@ -3573,8 +3575,8 @@ def main():
             st.session_state["cached_slice_preds"] = {}
         if "cached_simulated_models" not in st.session_state:
             st.session_state["cached_simulated_models"] = {}
-
-        cache_key = f"{selected_dataset_name}_{slice_title}_z{selected_z}"
+        
+        cache_key = f"{slice_title}_z{selected_z}"
         if cache_key in st.session_state["cached_slice_preds"]:
             predictions_raw = st.session_state["cached_slice_preds"][cache_key]
             simulated_models = st.session_state["cached_simulated_models"].get(cache_key, [])
@@ -3584,10 +3586,9 @@ def main():
             with st.spinner(f"🧠 Running 6 Deep Learning Models on GPU (Slice z={selected_z})..."):
                 for idx, meta in enumerate(MODEL_METADATA):
                     m_key = meta["key"]
-                    model_name = meta.get("label", meta.get("name", m_key))
                     if is_initial_load:
                         pct = 70 + int(((idx + 1) / len(MODEL_METADATA)) * 20)
-                        init_progress_placeholder.progress(pct, text=f"Running model {idx+1}/{len(MODEL_METADATA)}: {model_name} ({pct}%)")
+                        init_progress_placeholder.progress(pct, text=f"🧠 [4/5] Running GPU Inference on Model {idx+1}/{len(MODEL_METADATA)}: {meta['label']}... ({pct}%)")
                     weight_candidates = current_cfg["weights"].get(m_key, [])
                     resolved_weight = find_first_existing(weight_candidates)
                     if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
@@ -3598,10 +3599,10 @@ def main():
                                 predictions_raw[m_key] = pred_prob
                                 continue
                         except Exception as exc:
-                            st.warning(f"{model_name} checkpoint could not run ({exc}). Its mask is simulated.")
+                            st.warning(f"{meta['label']} checkpoint could not run ({exc}). Its mask is simulated.")
                     seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
                     predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
-                    simulated_models.append(model_name)
+                    simulated_models.append(meta["label"])
                 st.session_state["cached_slice_preds"][cache_key] = predictions_raw
                 st.session_state["cached_simulated_models"][cache_key] = simulated_models
                 st.session_state["force_deep_gpu"] = False
@@ -3613,7 +3614,7 @@ def main():
                 seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
                 predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
             st.session_state["cached_slice_preds"][cache_key] = predictions_raw
-            simulated_models = [meta.get("label", meta.get("name", meta["key"])) for meta in MODEL_METADATA]
+            simulated_models = [meta["label"] for meta in MODEL_METADATA]
             st.session_state["cached_simulated_models"][cache_key] = simulated_models
 
         if simulated_models and is_deep_gpu:
@@ -3635,79 +3636,76 @@ def main():
             }
 
     with col_consensus_right:
-        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Lesion estimate</h4>', unsafe_allow_html=True)
-
+        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Clinical Consensus & Agreement</h4>', unsafe_allow_html=True)
+        
         # Calculate risk metrics
         risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
 
-        st.metric("Estimated volume", f"{risk_metrics['total_volume_ml']:.1f} mL")
-        st.caption(f"Model range {risk_metrics['spread_min_ml']:.1f}–{risk_metrics['spread_max_ml']:.1f} mL")
-        with st.expander("Consensus method", expanded=False):
+        with st.container(border=True):
+            st.markdown("<div style='font-size: 13px; color: #8b949e;'>Lesion volume (agreement)</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size: 34px; font-weight: 700; color: #58a6ff;'>{risk_metrics['total_volume_ml']:.1f} mL</div>", unsafe_allow_html=True)
+            st.caption(f"reader spread {risk_metrics['spread_min_ml']:.1f} – {risk_metrics['spread_max_ml']:.1f} mL")
+            
+            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+            
             voting_mode = st.selectbox(
-                "Method",
+                "Ensemble Strategy",
                 ["Majority Voting (Threshold: 3/6)", "Soft Voting (Average Probability)", "Safe-Fail (High Sensitivity)"],
                 index=0
             )
-        v_thresh = 3 if "Majority" in voting_mode else 3
-        c_thresh = 0.50
-        strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
-        ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, c_thresh)
-        if is_initial_load and not is_deep_gpu:
-            init_progress_placeholder.progress(90, text="Preparing clinical review tools (90%)")
+            v_thresh = 3 if "Majority" in voting_mode else 3
+            c_thresh = 0.50 if "Soft" in voting_mode else 0.50
+            strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
+            ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, c_thresh)
+            if is_initial_load and not is_deep_gpu:
+                init_progress_placeholder.progress(90, text="🤖 [4/5] Initializing CT-RAD Multi-Agent Framework (R-A-D)... (90%)")
+            
+            # --- Clinician Custom Edited Mask Check ---
+            if "clinician_edited_masks" not in st.session_state:
+                st.session_state["clinician_edited_masks"] = {}
 
-        # --- Clinician Custom Edited Mask Check ---
-        if "clinician_edited_masks" not in st.session_state:
-            st.session_state["clinician_edited_masks"] = {}
-
-        slice_edit_key = f"{slice_title}_{selected_z}"
-        is_clinician_edited = slice_edit_key in st.session_state["clinician_edited_masks"]
-
-        if is_clinician_edited:
-            active_consensus_mask = st.session_state["clinician_edited_masks"][slice_edit_key]
-        else:
-            active_consensus_mask = ensemble_data["ensemble_mask"]
-
-        consensus_meas = compute_physical_measurements(active_consensus_mask)
-        if st.button("Review or adjust contour", type="primary", use_container_width=True):
-            show_margin_editor_dialog(
-                img_gray, active_consensus_mask, ensemble_data["ensemble_mask"],
-                slice_title, selected_z, st.session_state.get("reviewer_name", "Clinician"),
-                is_clinician_edited, consensus_meas
-            )
-
-        # Sync consensus prediction or clinician edits into 3D volume
-        if selected_z < len(mask_3d):
-            # If mask_3d was initially all zeros (like in custom uploads), populate it with the 3D expanded consensus
-            if np.sum(mask_3d) == 0 and np.sum(active_consensus_mask) > 0:
-                mask_3d = mask_3d.copy()
-                cz = selected_z
-                trz = max(4, min(14, len(mask_3d) // 8))
-                H_m, W_m = active_consensus_mask.shape
-                ty_idx, tx_idx = np.where(active_consensus_mask > 0)
-                ty, tx = int(np.mean(ty_idx)), int(np.mean(tx_idx))
-                for z_i in range(max(0, cz - trz), min(len(mask_3d), cz + trz + 1)):
-                    tdz = (z_i - cz) / float(trz)
-                    if abs(tdz) < 1.0:
-                        t_scale = np.sqrt(max(0.01, 1.0 - tdz**2))
-                        M_t = cv2.getRotationMatrix2D((tx, ty), 0, t_scale)
-                        w_m = cv2.warpAffine(active_consensus_mask.astype(np.float32), M_t, (W_m, H_m), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-                        mask_3d[z_i] = (w_m > 0.5).astype(np.uint8)
-                mask_3d[cz] = active_consensus_mask
-                risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
-            elif is_clinician_edited:
-                mask_3d = mask_3d.copy()
-                mask_3d[selected_z] = active_consensus_mask
-                risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
-
-        with st.expander("Model agreement details", expanded=False):
-            st.caption(f"Model concordance: {ensemble_data['consensus_ratio'] * 100:.1f}%")
+            slice_edit_key = f"{slice_title}_{selected_z}"
+            is_clinician_edited = slice_edit_key in st.session_state["clinician_edited_masks"]
 
             if is_clinician_edited:
-                st.markdown("<div style='background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #86efac; margin-bottom: 8px;'>✏️ <b>Clinician Adjusted Mask Active</b></div>", unsafe_allow_html=True)
+                active_consensus_mask = st.session_state["clinician_edited_masks"][slice_edit_key]
+            else:
+                active_consensus_mask = ensemble_data["ensemble_mask"]
 
+            consensus_meas = compute_physical_measurements(active_consensus_mask)
+
+            # Sync consensus prediction or clinician edits into 3D volume
+            if selected_z < len(mask_3d):
+                # If mask_3d was initially all zeros (like in custom uploads), populate it with the 3D expanded consensus
+                if np.sum(mask_3d) == 0 and np.sum(active_consensus_mask) > 0:
+                    mask_3d = mask_3d.copy()
+                    cz = selected_z
+                    trz = max(4, min(14, len(mask_3d) // 8))
+                    H_m, W_m = active_consensus_mask.shape
+                    ty_idx, tx_idx = np.where(active_consensus_mask > 0)
+                    ty, tx = int(np.mean(ty_idx)), int(np.mean(tx_idx))
+                    for z_i in range(max(0, cz - trz), min(len(mask_3d), cz + trz + 1)):
+                        tdz = (z_i - cz) / float(trz)
+                        if abs(tdz) < 1.0:
+                            t_scale = np.sqrt(max(0.01, 1.0 - tdz**2))
+                            M_t = cv2.getRotationMatrix2D((tx, ty), 0, t_scale)
+                            w_m = cv2.warpAffine(active_consensus_mask.astype(np.float32), M_t, (W_m, H_m), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                            mask_3d[z_i] = (w_m > 0.5).astype(np.uint8)
+                    mask_3d[cz] = active_consensus_mask
+                    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+                elif is_clinician_edited:
+                    mask_3d = mask_3d.copy()
+                    mask_3d[selected_z] = active_consensus_mask
+                    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+            
+            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+            
+            if is_clinician_edited:
+                st.markdown("<div style='background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #86efac; margin-bottom: 8px;'>✏️ <b>Clinician Adjusted Mask Active</b></div>", unsafe_allow_html=True)
+            
             agr_px = int(np.sum(ensemble_data['agreement_counts'] >= v_thresh))
             dis_px = int(np.sum((ensemble_data['agreement_counts'] > 0) & (ensemble_data['agreement_counts'] < v_thresh)))
-
+            
             c_m1, c_m2 = st.columns(2)
             with c_m1:
                 st.markdown(f"""
@@ -3727,16 +3725,16 @@ def main():
                 """, unsafe_allow_html=True)
 
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-
+            
             st.markdown("<div style='font-size: 13px; color: #8b949e;'>Model Concordance Ratio</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='font-size: 24px; font-weight: 700; color: #3fb950;'>{ensemble_data['consensus_ratio']*100:.1f}%</div>", unsafe_allow_html=True)
-
+            
             st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
 
-        with st.expander("Overlay and agreement display options", expanded=False):
-            show_agr_toggle = st.checkbox("Show agreement outline", value=True, key="chk_show_agr")
-            show_dis_toggle = st.checkbox("Show disagreement band", value=True, key="chk_show_dis")
-            show_heat_toggle = st.checkbox("Show model agreement heatmap", value=False, key="chk_show_heat")
+            with st.expander("Overlay and agreement display options", expanded=False):
+                show_agr_toggle = st.checkbox("Show agreement outline", value=True, key="chk_show_agr")
+                show_dis_toggle = st.checkbox("Show disagreement band", value=True, key="chk_show_dis")
+                show_heat_toggle = st.checkbox("Show model agreement heatmap", value=False, key="chk_show_heat")
 
     # Render 4-Quadrant Views inside col_3d_left
     with col_3d_left:
@@ -3751,21 +3749,21 @@ def main():
             cmap_name=cmap_choice,
             heatmap_alpha=heatmap_alpha
         )
-
+        
         st.markdown(f"<div class='mpr-label'>Axial · Slice {selected_z}</div>", unsafe_allow_html=True)
         st.image(mpr["ax_view"], use_container_width=True)
         with st.expander("More views · 3D, coronal and sagittal", expanded=False):
             more_c1, more_c2 = st.columns(2)
             with more_c1:
                 st.markdown("<div class='mpr-label'>3D lesion view</div>", unsafe_allow_html=True)
-                chosen_bbox_img = mpr["bbox_view"] if box_style == "3D bounding box" else mpr["planar_bbox_view"]
+                chosen_bbox_img = mpr["bbox_view"] if box_style == "3D Bounding Box" else mpr["planar_bbox_view"]
                 st.image(chosen_bbox_img, use_container_width=True)
                 st.markdown("<div class='mpr-label'>Coronal</div>", unsafe_allow_html=True)
                 st.image(mpr["cor_view"], use_container_width=True)
             with more_c2:
                 st.markdown("<div class='mpr-label'>Sagittal</div>", unsafe_allow_html=True)
                 st.image(mpr["sag_view"], use_container_width=True)
-
+            
         st.markdown(f"""
         <div class="coord-ribbon">
             x : <b>{mpr['x_mm']:.1f} mm</b> &nbsp;&nbsp;|&nbsp;&nbsp; y : <b>{mpr['y_mm']:.1f} mm</b> &nbsp;&nbsp;|&nbsp;&nbsp; z : <b>{mpr['z_mm']:.1f} mm</b>
@@ -3788,7 +3786,7 @@ def main():
     with st.expander("Advanced review tools · CT-RAD workflow and skill details", expanded=False):
         # ── SECTION 3: CT-RAD SKILL-BASED AGENTIC FRAMEWORK (R-A-D DECISION ENGINE) ──
         st.markdown("---")
-
+    
         # Initialize CT-RAD Session States
         if "ctrad_current_step" not in st.session_state:
             st.session_state["ctrad_current_step"] = 0
@@ -3800,7 +3798,7 @@ def main():
             st.session_state["ctrad_is_playing"] = False
 
         ctrad_skills, ctrad_steps = get_ctrad_definitions()
-
+    
         # Compute live telemetry from current scan slice & 3D stack
         ctrad_telemetry = compute_ctrad_live_telemetry(
             img_slice=img_gray,
@@ -3923,14 +3921,14 @@ def main():
 
         # 3. 9-Step Pipeline Stepper Bar
         st.markdown("<div style='font-size: 12px; font-weight: 600; color: #8b949e; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;'>Pipeline Execution Stepper</div>", unsafe_allow_html=True)
-
+    
         step_cols = st.columns(9)
         for s_i, s_obj in enumerate(ctrad_steps):
             with step_cols[s_i]:
                 is_cur = (s_i == current_step_idx)
                 is_done = (s_i < current_step_idx)
                 status_text = "ACTIVE" if is_cur else ("COMPLETE" if is_done else "PENDING")
-
+            
                 # Button for clicking step
                 if st.button(
                     f"{s_obj['short']}\n{status_text}",
@@ -4004,7 +4002,7 @@ def main():
         # 4. ACTIVE SKILL INSPECTOR (Detailed Interactive Card)
         skill_badge_color = active_skill.get("color", "#58a6ff")
         decision_box_class = "ctrad-decision-pass" if "PASS" in active_telemetry["answer"] or "APPROVED" in active_telemetry["answer"] else ("ctrad-decision-flag" if "FLAG" in active_telemetry["answer"] else "ctrad-decision-warn")
-
+    
         with st.container(border=True):
             # Inspector Header
             st.markdown(f"""
@@ -4090,20 +4088,20 @@ def main():
         # 5. Direct Clinical Action Bar (Contextual Dialog Triggers)
         st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 8px;'>🎯 Contextual Clinical Action Triggers</div>", unsafe_allow_html=True)
-
+    
         act_c1, act_c2, act_c3, act_c4, act_c5 = st.columns(5)
         with act_c1:
             if st.button("📊 6 Model Cards", use_container_width=True, help="Skill 02: Open detailed segmentation cards for all 6 individual models"):
                 show_models_dialog(MODEL_METADATA, predictions, img_gray, gt_mask)
-
+            
         with act_c2:
             if st.button("📈 Correlation Matrix", use_container_width=True, help="Skill 01: Open feature correlation matrix and spatial agreement heatmaps"):
                 show_correlation_dialog(MODEL_METADATA, predictions)
-
+            
         with act_c3:
             if st.button("⚠️ Risk Flags Table", use_container_width=True, help="Skill 06: Open per-slice lesion diameter checklist and WHO risk classification"):
                 show_risk_flags_dialog(risk_metrics)
-
+            
         with act_c4:
             if st.button("✏️ Margin & Sign-off", use_container_width=True, type="primary", help="Skill 04: Open interactive clinician correction tools (Brush & Margin) and PACS validation"):
                 show_margin_editor_dialog(
@@ -4111,7 +4109,7 @@ def main():
                     slice_title, selected_z, st.session_state.get("reviewer_name", "Dr. XXXXX"),
                     is_clinician_edited, consensus_meas
                 )
-
+            
         with act_c5:
             if st.button("ℹ️ Protocol & SOTA", use_container_width=True, help="Open dataset protocol specification and CT-SE(2) group equivariance benchmark"):
                 show_protocol_dialog(selected_dataset_name, current_cfg)
@@ -4154,60 +4152,59 @@ def main():
                 st.session_state["ctrad_is_playing"] = False
                 st.rerun()
 
-    with st.expander("Report and export", expanded=False):
-        # Word Report (.docx) Download Button
-        model_rows_data = []
-        for meta in MODEL_METADATA:
-            m_key = meta["key"]
-            p = predictions[m_key]
-            d, iou = (None, None)
-            if gt_mask is not None:
-                d, iou = compute_dice_iou(p["mask"], gt_mask)
-            model_rows_data.append({
-                "name": meta["name"],
-                "type": meta["type"],
-                "dice": d,
-                "iou": iou,
-                "area_px": p["area"],
-                "area_mm2": p["area"] * PIXEL_AREA_MM2
-            })
+    # Word Report (.docx) Download Button
+    model_rows_data = []
+    for meta in MODEL_METADATA:
+        m_key = meta["key"]
+        p = predictions[m_key]
+        d, iou = (None, None)
+        if gt_mask is not None:
+            d, iou = compute_dice_iou(p["mask"], gt_mask)
+        model_rows_data.append({
+            "name": meta["name"],
+            "type": meta["type"],
+            "dice": d,
+            "iou": iou,
+            "area_px": p["area"],
+            "area_mm2": p["area"] * PIXEL_AREA_MM2
+        })
 
-        ens_dice_str = f"{ens_dice:.4f} (IoU: {ens_iou:.4f})" if 'ens_dice' in locals() and gt_mask is not None else "N/A"
-        consensus_metrics_dict = {
-            "volume_ml": risk_metrics["total_volume_ml"],
-            "spread_min": risk_metrics["spread_min_ml"],
-            "spread_max": risk_metrics["spread_max_ml"],
-            "tumor_px": consensus_meas["pixels"],
-            "tumor_mm2": consensus_meas["area_mm2"],
-            "tumor_cm2": consensus_meas["area_cm2"],
-            "strategy": voting_mode,
-            "concordance_pct": ensemble_data["consensus_ratio"] * 100.0,
-            "dice_str": ens_dice_str
-        }
+    ens_dice_str = f"{ens_dice:.4f} (IoU: {ens_iou:.4f})" if 'ens_dice' in locals() and gt_mask is not None else "N/A"
+    consensus_metrics_dict = {
+        "volume_ml": risk_metrics["total_volume_ml"],
+        "spread_min": risk_metrics["spread_min_ml"],
+        "spread_max": risk_metrics["spread_max_ml"],
+        "tumor_px": consensus_meas["pixels"],
+        "tumor_mm2": consensus_meas["area_mm2"],
+        "tumor_cm2": consensus_meas["area_cm2"],
+        "strategy": voting_mode,
+        "concordance_pct": ensemble_data["consensus_ratio"] * 100.0,
+        "dice_str": ens_dice_str
+    }
 
-        docx_report_bytes = generate_clinical_docx_report(
-            case_name=slice_title,
-            modality_name=selected_dataset_name,
-            active_z=selected_z,
-            reviewer_name=st.session_state.get("reviewer_name", "Dr. XXXXX"),
-            consensus_metrics=consensus_metrics_dict,
-            risk_flags=risk_metrics,
-            model_rows=model_rows_data,
-            outline_accepted=st.session_state.get("outline_accepted", False),
-            safety_margin_mm=st.session_state.get("safety_margin_mm", 0.0),
-            pacs_dispatched=st.session_state.get("pacs_sent", False),
-            clinician_edited=is_clinician_edited
-        )
+    docx_report_bytes = generate_clinical_docx_report(
+        case_name=slice_title,
+        modality_name=selected_dataset_name,
+        active_z=selected_z,
+        reviewer_name=st.session_state.get("reviewer_name", "Dr. XXXXX"),
+        consensus_metrics=consensus_metrics_dict,
+        risk_flags=risk_metrics,
+        model_rows=model_rows_data,
+        outline_accepted=st.session_state.get("outline_accepted", False),
+        safety_margin_mm=st.session_state.get("safety_margin_mm", 0.0),
+        pacs_dispatched=st.session_state.get("pacs_sent", False),
+        clinician_edited=is_clinician_edited
+    )
 
-        clean_file_name = f"Brain_CT_Clinical_Report_{slice_title.replace(' ', '_').replace('/', '_')}.docx"
-        st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
-        st.download_button(
-            label="Download review report (.docx)",
-            data=docx_report_bytes,
-            file_name=clean_file_name,
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True
-        )
+    clean_file_name = f"Brain_CT_Clinical_Report_{slice_title.replace(' ', '_').replace('/', '_')}.docx"
+    st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
+    st.download_button(
+        label="Download review report (.docx)",
+        data=docx_report_bytes,
+        file_name=clean_file_name,
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        use_container_width=True
+    )
 
     # ── Footer ──
     st.markdown("""
