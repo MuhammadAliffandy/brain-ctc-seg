@@ -58,33 +58,34 @@ import streamlit as st
 # 1. STREAMLIT APP CONFIG & CLINICAL DESIGN SYSTEM
 # ─────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Brain CT Lesion Size Estimation and Risk Assessment",
-    page_icon="🧠",
+    page_title="Brain CT review",
+    page_icon=":material/radiology:",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 CUSTOM_CSS = """
 <style>
     .main-header {
-        background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-        padding: 24px;
-        border-radius: 12px;
-        border: 1px solid #30363d;
-        margin-bottom: 24px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        background: transparent;
+        padding: 0 0 12px;
+        border: 0;
+        border-bottom: 1px solid #2c333d;
+        border-radius: 0;
+        margin: 0 auto 18px;
+        max-width: 1540px;
     }
     .main-header h1 {
-        color: #58a6ff;
+        color: #e7edf4;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        font-size: 28px;
-        font-weight: 700;
-        margin: 0 0 8px 0;
+        font-size: 21px;
+        font-weight: 650;
+        margin: 0;
     }
     .main-header p {
         color: #8b949e;
-        font-size: 15px;
-        margin: 0;
+        font-size: 13px;
+        margin: 5px 0 0;
     }
     .badge-bar {
         display: flex;
@@ -294,9 +295,55 @@ CUSTOM_CSS = """
     .ctrad-lib-card:hover {
         border-color: #58a6ff;
     }
+    div[data-baseweb="tab-list"] {
+        gap: 3px;
+        border-bottom: 1px solid #30363d;
+    }
+    button[data-baseweb="tab"] {
+        height: 40px;
+        padding: 0 15px;
+        color: #aab4bd;
+        font-size: 13px;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #f0f3f6;
+        border-bottom-color: #e6edf3;
+    }
+    .stButton > button {
+        border-radius: 5px;
+        min-height: 42px;
+        font-weight: 600;
+    }
+    [data-testid="stMetric"] {
+        background: #10151c;
+        border: 1px solid #2c333d;
+        border-radius: 5px;
+        padding: 12px 14px;
+    }
+    [data-testid="stExpander"] {
+        border-color: #2c333d;
+        border-radius: 5px;
+    }
+    @media (max-width: 850px) {
+        .main .block-container { padding-left: 1rem; padding-right: 1rem; }
+        section[data-testid="stSidebar"] { min-width: 250px; }
+    }
+    [data-testid="stMainBlockContainer"] {
+        max-width: 1660px;
+        padding-top: 1.1rem;
+    }
+    section[data-testid="stSidebar"] {
+        background: #11161d;
+        border-right: 1px solid #2c333d;
+    }
+    section[data-testid="stSidebar"] h3 {
+        font-size: 0.95rem;
+        margin-top: 0.3rem;
+    }
+    div[data-testid="stProgress"] { margin: 0.35rem 0 0.8rem; }
 </style>
 """
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+# Legacy CSS is retained for reference; the review screen uses native theme settings.
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -3163,85 +3210,37 @@ def show_protocol_dialog(selected_dataset_name, current_cfg):
 # 9. MAIN INTERACTIVE APPLICATION
 # ─────────────────────────────────────────────────────────────────
 def main():
-    # ── Header ──
-    st.markdown("""
-    <div class="main-header" style="padding: 16px 22px; margin-bottom: 20px;">
-        <h1 style="margin: 0; font-size: 25px; font-weight: 800; color: #f0f6fc;">
-            🧠 Brain CT Lesion Size Estimation and Risk Assessment
-        </h1>
-    </div>
-    """, unsafe_allow_html=True)
+    title_col, settings_col = st.columns([4, 1], vertical_alignment="center")
+    with title_col:
+        st.title("Brain CT review")
+        st.caption("Review the scan and contour before recording your decision.")
+    with settings_col:
+        with st.popover("Settings", icon=":material/tune:"):
+            selected_dataset_name = st.selectbox("Imaging dataset", list(DATASET_CONFIGS.keys()))
+            current_cfg = DATASET_CONFIGS[selected_dataset_name]
+            heatmap_alpha = st.slider("Overlay opacity", 0.2, 1.0, 0.65, 0.05)
+            cmap_choice = st.selectbox("Heatmap palette", ["viridis", "turbo", "plasma", "inferno"])
+            orientation = st.selectbox("Orientation", ["Standard", "180°", "270°", "Native"])
+            active_rot_k = {"Standard": 1, "180°": 2, "270°": 3, "Native": 0}[orientation]
+            voting_mode = st.selectbox("Contour method", ["Majority Voting (Threshold: 3/6)", "Soft Voting (Average Probability)", "Safe-Fail (High Sensitivity)"])
+            st.caption("Technical settings apply to this review session.")
+    device_opt = "cuda" if torch.cuda.is_available() else "cpu"
+    min_agreement_filter = 1
+    is_deep_gpu = bool(st.session_state.get("force_deep_gpu", False))
 
-    # ── Sidebar Configuration ──
-    with st.sidebar:
-        st.markdown("### ⚙️ Modality & Dataset")
-        selected_dataset_name = st.selectbox(
-            "Select Imaging Dataset",
-            list(DATASET_CONFIGS.keys()),
-            index=0,
-            help="NCCT and CECT contrast profiles use distinct, isolated trained weights."
-        )
-        current_cfg = DATASET_CONFIGS[selected_dataset_name]
-        st.caption(f"📁 {current_cfg['description']}")
-
-        st.markdown("---")
-        st.markdown("### 🎨 Heatmap & Visualization Controls")
-        heatmap_alpha = st.slider("Heatmap Overlay Opacity", 0.2, 1.0, 0.65, 0.05)
-        cmap_choice = st.selectbox("Heatmap Palette", ["turbo", "jet", "plasma", "viridis", "inferno"], index=0)
-        min_agreement_filter = st.slider("Filter Agreement Below (Models)", 1, 4, 1, 1)
-
-        st.markdown("---")
-        st.markdown("### 📐 Clinical View Orientation")
-        rot_choice = st.selectbox(
-            "Slice Display Orientation",
-            [
-                "Standard Anterior (Eyes Top, k=1)",
-                "Rotated 180° (k=2)",
-                "Rotated 270° (k=3)",
-                "Native Scanner View (k=0)"
-            ],
-            index=0
-        )
-        rot_k_map = {
-            "Standard Anterior (Eyes Top, k=1)": 1,
-            "Rotated 180° (k=2)": 2,
-            "Rotated 270° (k=3)": 3,
-            "Native Scanner View (k=0)": 0
-        }
-        active_rot_k = rot_k_map[rot_choice]
-
-        st.markdown("---")
-        st.markdown("### 🖥️ Hardware Status")
-        device_opt = "cuda" if torch.cuda.is_available() else "cpu"
-        st.info(f"Target Device: **{device_opt.upper()}** (escnn: {'Active ✅' if HAS_ESCNN else 'Fallback Mode ⚠️'})")
-
-        st.markdown("---")
-        st.markdown("### ⚡ Inference Execution Engine")
-        inf_mode_choice = st.radio(
-            "Engine Speed Mode",
-            [
-                "⚡ Fast Interactive Mode (Instant Startup)",
-                "🔬 Deep GPU 6-Model Inference"
-            ],
-            index=0,
-            help="Fast Interactive Mode loads instantly (<0.1s) using calibrated model distributions for 60fps real-time slice scrubbing. Deep GPU mode executes full neural network PyTorch weights."
-        )
-        is_deep_gpu = ("Deep GPU" in inf_mode_choice) or st.session_state.get("force_deep_gpu", False)
-
-    # ── SECTION 1: SCAN & GROUND TRUTH INPUT ──
-    st.subheader("1. Input Brain CT Scan & Case Selection")
-    
     init_progress_placeholder = st.empty()
+    loading_note = st.empty()
     is_initial_load = ("app_initialized" not in st.session_state) or st.session_state.get("force_deep_gpu", False)
     if is_initial_load:
-        init_progress_placeholder.progress(15, text="⏳ [1/5] Scanning CT scan repositories & patient metadata... (15%)")
+        init_progress_placeholder.progress(10, text="Finding available scans")
+        loading_note.caption("Preparing the case list. The first scan can take longer while configured folders are checked.")
     
     # Fast 1-sample discovery on initial load to prevent long waiting times and avoid scanning entire disk/rclone drive
     discovered_nifti_cases = discover_dgx_nifti_cases(max_samples=1)
     discovered_cases = discover_dataset_cases(selected_dataset_name, max_samples=1)
     
     if is_initial_load:
-        init_progress_placeholder.progress(40, text="📁 [2/5] Loading 3D CT volume & calibrating HU windowing... (40%)")
+        init_progress_placeholder.progress(30, text="Loading the selected CT volume")
     
     # Available sources: DGX 3D NIfTI (top priority if on DGX), DGX Slices, Preset 3D, Upload
     sources = []
@@ -3252,9 +3251,10 @@ def main():
     sources.append("⭐ Clinical 3D Presets (No Upload Needed)")
     sources.append("📤 Upload Custom Scan")
 
-    col_input_mode, col_case_picker = st.columns([1.2, 1.8])
+    case_panel = st.expander("Open or change scan", expanded=False, icon=":material/folder_open:")
+    col_input_mode, col_case_picker = case_panel.columns([1, 2])
     with col_input_mode:
-        input_source = st.radio("Source", sources, index=0)
+        input_source = st.selectbox("Scan source", sources, index=0, format_func=lambda value: value.lstrip("🏥📁⭐📤 "))
 
     img_raw, tensor_native, mask_raw = None, None, None
     vol_3d, mask_3d = None, None
@@ -3515,688 +3515,194 @@ def main():
     if is_initial_load:
         init_progress_placeholder.progress(70, text="📐 [3/5] Reconstructing 3D Slicer MPR orthogonal views (Axial, Coronal, Sagittal)... (70%)")
 
-    # ── SECTION 2: 3D SLICER MPR HERO VIEWPORT WITH AGREEMENT & DISAGREEMENT ──
-    st.markdown("---")
-    
-    col_hero_hdr1, col_hero_hdr2 = st.columns([1.8, 1.2])
-    with col_hero_hdr1:
-        st.markdown('<h3 style="margin: 0; color: #58a6ff;">3D Slicer MPR & Multi-Model Agreement / Disagreement</h3>', unsafe_allow_html=True)
-        st.caption("Per-slice CT cross-sectional detection across Axial, Coronal, Sagittal, and 3D Bounding Box views with multi-model agreement and disagreement visualization.")
-    with col_hero_hdr2:
-        st.markdown(f"<div style='text-align: right; font-size: 12px; color: #8b949e; margin-bottom: 4px;'>Volume: <b style='color: #e6edf3;'>{vol_3d.shape[0]} slices</b> | Engine: <b style='color: {'#3fb950' if is_deep_gpu else '#58a6ff'};'>{'Deep GPU 6-Model' if is_deep_gpu else '⚡ Fast Realtime'}</b></div>", unsafe_allow_html=True)
-        if not is_deep_gpu:
-            if st.button("🚀 Run Deep 6-Model GPU Inference", use_container_width=True, help="Run 6 deep neural network model inference on GPU for this active slice"):
-                st.session_state["force_deep_gpu"] = True
-                cache_key_del = f"{slice_title}_z{selected_z}"
-                if "cached_slice_preds" in st.session_state and cache_key_del in st.session_state["cached_slice_preds"]:
-                    del st.session_state["cached_slice_preds"][cache_key_del]
-                st.rerun()
+    case_display = re.sub(r"_z\d+$", "", slice_title).replace("_", " ")
+    case_display = re.sub(r"(\d+)Slice", r"\1-slice", case_display)
+    st.subheader(case_display)
+    st.caption(f"{selected_dataset_name} · {len(vol_3d)} slices · Contour review")
+    scan_col, findings_col = st.columns([2.3, 1], gap="large")
+    with scan_col:
+        selected_z = st.slider("Slice", 0, len(vol_3d) - 1, min(patient_z_active, len(vol_3d) - 1), key="z_scrub_slider")
+        image_slot = st.container()
+        with st.popover("Display options", icon=":material/layers:"):
+            show_agr_toggle = st.toggle("Contour outline", value=True, key="chk_show_agr")
+            show_dis_toggle = st.toggle("Uncertain boundary", value=True, key="chk_show_dis")
+            show_heat_toggle = st.toggle("Model agreement heatmap", value=False, key="chk_show_heat")
 
-    col_3d_left, col_consensus_right = st.columns([1.35, 1.0], gap="large")
+    active_slice_img = vol_3d[selected_z]
+    active_slice_mask = mask_3d[selected_z]
+    active_tensor = torch.from_numpy(np.stack([active_slice_img] * 3, axis=0)).unsqueeze(0).float()
+    cache_key = f"{selected_dataset_name}_{slice_title}_z{selected_z}"
+    prediction_cache = st.session_state.setdefault("review_prediction_cache", {})
+    with findings_col:
+        st.subheader("Finding")
+        if st.button("Analyze this slice", icon=":material/play_arrow:", width="stretch"):
+            st.session_state["force_deep_gpu"] = True
+            prediction_cache.pop(cache_key, None)
+            st.rerun()
 
-    with col_3d_left:
-        # Scrubbing and viewport orientation controls
-        col_slider, col_rot, col_bmode = st.columns([1.7, 1.2, 1.1])
-        with col_slider:
-            selected_z = st.slider(
-                "Select Z-Slice / Scrub Depth (3D Scroll & Multi-Angle Detection)",
-                min_value=0,
-                max_value=vol_3d.shape[0] - 1,
-                value=min(patient_z_active, vol_3d.shape[0] - 1),
-                step=1,
-                key="z_scrub_slider"
-            )
-        with col_rot:
-            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>Rotate Imaging</div>", unsafe_allow_html=True)
-            rot_choice_mpr = st.selectbox(
-                "Rotate",
-                options=["Standard (k=1)", "Rotated 180° (k=2)", "Rotated 270° (k=3)", "Native (k=0)"],
-                index=0 if active_rot_k == 1 else (1 if active_rot_k == 2 else (2 if active_rot_k == 3 else 3)),
-                key="mpr_rot_choice",
-                label_visibility="collapsed"
-            )
-            rot_map = {"Standard (k=1)": 1, "Rotated 180° (k=2)": 2, "Rotated 270° (k=3)": 3, "Native (k=0)": 0}
-            active_mpr_rot_k = rot_map[rot_choice_mpr]
-        with col_bmode:
-            st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 4px;'>3D View Style</div>", unsafe_allow_html=True)
-            box_style = st.radio("ROI Display", ["3D Bounding Box", "Planar (Axial)"], horizontal=True, key="roi_box_style", label_visibility="collapsed")
-
-        # Dynamic Per-Slice Inference for selected_z
-        active_slice_img = vol_3d[selected_z]
-        active_slice_mask = mask_3d[selected_z] if mask_3d is not None and selected_z < len(mask_3d) else None
-        active_tensor = torch.from_numpy(np.stack([active_slice_img]*3, axis=0)).unsqueeze(0).float()
-
-        if "cached_slice_preds" not in st.session_state:
-            st.session_state["cached_slice_preds"] = {}
-        
-        cache_key = f"{slice_title}_z{selected_z}"
-        if cache_key in st.session_state["cached_slice_preds"]:
-            predictions_raw = st.session_state["cached_slice_preds"][cache_key]
-        elif is_deep_gpu:
-            predictions_raw = {}
-            with st.spinner(f"🧠 Running 6 Deep Learning Models on GPU (Slice z={selected_z})..."):
-                for idx, meta in enumerate(MODEL_METADATA):
-                    m_key = meta["key"]
-                    if is_initial_load:
-                        pct = 70 + int(((idx + 1) / len(MODEL_METADATA)) * 20)
-                        init_progress_placeholder.progress(pct, text=f"🧠 [4/5] Running GPU Inference on Model {idx+1}/{len(MODEL_METADATA)}: {meta['label']}... ({pct}%)")
-                    weight_candidates = current_cfg["weights"].get(m_key, [])
-                    resolved_weight = find_first_existing(weight_candidates)
-                    if resolved_weight and (not meta["is_se2"] or HAS_ESCNN):
-                        model = load_cached_model(m_key, resolved_weight, device_opt)
-                        pred_prob = run_single_inference(model, active_tensor, device_opt)
-                        if pred_prob is not None:
-                            predictions_raw[m_key] = pred_prob
-                            continue
-                    seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
-                    predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
-                st.session_state["cached_slice_preds"][cache_key] = predictions_raw
-                st.session_state["force_deep_gpu"] = False
-        else:
-            # Instant Fast Mode: Sub-second initial response (< 0.05s)
-            predictions_raw = {}
-            for meta in MODEL_METADATA:
+    if cache_key not in prediction_cache:
+        predictions_raw, simulated_models, model_errors = {}, [], []
+        with st.spinner("Preparing contour…" if not is_deep_gpu else "Analyzing this slice…"):
+            for idx, meta in enumerate(MODEL_METADATA):
                 m_key = meta["key"]
-                seed_offset = {"se2": 0, "harmonic": 2, "nn": 4, "attn": 6, "trans": 8, "std": 10}.get(m_key, 0)
-                predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=seed_offset)
-            st.session_state["cached_slice_preds"][cache_key] = predictions_raw
-
-        img_gray = align_for_clinical_display(active_slice_img, crop=CROP_MARGIN, rot_k=active_rot_k)
-        gt_mask = align_for_clinical_display(active_slice_mask, crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True) if active_slice_mask is not None else None
-
-        predictions = {}
-        for meta in MODEL_METADATA:
-            m_key = meta["key"]
-            p_raw = predictions_raw[m_key]
-            p_aligned = align_for_clinical_display(p_raw, crop=CROP_MARGIN, rot_k=active_rot_k)
-            mask_aligned = (p_aligned >= 0.50).astype(np.uint8)
-            predictions[m_key] = {
-                "prob": p_aligned,
-                "mask": mask_aligned,
-                "area": int(np.sum(mask_aligned > 0))
-            }
-
-    with col_consensus_right:
-        st.markdown('<h4 style="margin: 0 0 8px 0; color: #e6edf3;">Clinical Consensus & Agreement</h4>', unsafe_allow_html=True)
-        
-        # Calculate risk metrics
-        risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
-
-        with st.container(border=True):
-            st.markdown("<div style='font-size: 13px; color: #8b949e;'>Lesion volume (agreement)</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 34px; font-weight: 700; color: #58a6ff;'>{risk_metrics['total_volume_ml']:.1f} mL</div>", unsafe_allow_html=True)
-            st.caption(f"reader spread {risk_metrics['spread_min_ml']:.1f} – {risk_metrics['spread_max_ml']:.1f} mL")
-            
-            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-            
-            voting_mode = st.selectbox(
-                "Ensemble Strategy",
-                ["Majority Voting (Threshold: 3/6)", "Soft Voting (Average Probability)", "Safe-Fail (High Sensitivity)"],
-                index=0
-            )
-            v_thresh = 3 if "Majority" in voting_mode else 3
-            c_thresh = 0.50 if "Soft" in voting_mode else 0.50
-            strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
-            ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, c_thresh)
-            if is_initial_load and not is_deep_gpu:
-                init_progress_placeholder.progress(90, text="🤖 [4/5] Initializing CT-RAD Multi-Agent Framework (R-A-D)... (90%)")
-            
-            # --- Clinician Custom Edited Mask Check ---
-            if "clinician_edited_masks" not in st.session_state:
-                st.session_state["clinician_edited_masks"] = {}
-
-            slice_edit_key = f"{slice_title}_{selected_z}"
-            is_clinician_edited = slice_edit_key in st.session_state["clinician_edited_masks"]
-
-            if is_clinician_edited:
-                active_consensus_mask = st.session_state["clinician_edited_masks"][slice_edit_key]
-            else:
-                active_consensus_mask = ensemble_data["ensemble_mask"]
-
-            consensus_meas = compute_physical_measurements(active_consensus_mask)
-
-            # Sync consensus prediction or clinician edits into 3D volume
-            if selected_z < len(mask_3d):
-                # If mask_3d was initially all zeros (like in custom uploads), populate it with the 3D expanded consensus
-                if np.sum(mask_3d) == 0 and np.sum(active_consensus_mask) > 0:
-                    mask_3d = mask_3d.copy()
-                    cz = selected_z
-                    trz = max(4, min(14, len(mask_3d) // 8))
-                    H_m, W_m = active_consensus_mask.shape
-                    ty_idx, tx_idx = np.where(active_consensus_mask > 0)
-                    ty, tx = int(np.mean(ty_idx)), int(np.mean(tx_idx))
-                    for z_i in range(max(0, cz - trz), min(len(mask_3d), cz + trz + 1)):
-                        tdz = (z_i - cz) / float(trz)
-                        if abs(tdz) < 1.0:
-                            t_scale = np.sqrt(max(0.01, 1.0 - tdz**2))
-                            M_t = cv2.getRotationMatrix2D((tx, ty), 0, t_scale)
-                            w_m = cv2.warpAffine(active_consensus_mask.astype(np.float32), M_t, (W_m, H_m), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-                            mask_3d[z_i] = (w_m > 0.5).astype(np.uint8)
-                    mask_3d[cz] = active_consensus_mask
-                    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
-                elif is_clinician_edited:
-                    mask_3d = mask_3d.copy()
-                    mask_3d[selected_z] = active_consensus_mask
-                    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
-            
-            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-            
-            if is_clinician_edited:
-                st.markdown("<div style='background: rgba(34, 197, 94, 0.15); border: 1px solid #22c55e; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #86efac; margin-bottom: 8px;'>✏️ <b>Clinician Adjusted Mask Active</b></div>", unsafe_allow_html=True)
-            
-            agr_px = int(np.sum(ensemble_data['agreement_counts'] >= v_thresh))
-            dis_px = int(np.sum((ensemble_data['agreement_counts'] > 0) & (ensemble_data['agreement_counts'] < v_thresh)))
-            
-            c_m1, c_m2 = st.columns(2)
-            with c_m1:
-                st.markdown(f"""
-                <div style="background: rgba(34, 197, 94, 0.12); border: 1px solid #22c55e; border-radius: 6px; padding: 6px 10px;">
-                    <div style="font-size: 11px; color: #86efac;">Agreement Core</div>
-                    <div style="font-size: 18px; font-weight: 700; color: #4ade80;">{agr_px:,} px</div>
-                    <div style="font-size: 11px; color: #86efac;">{agr_px * PIXEL_AREA_MM2:.1f} mm²</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with c_m2:
-                st.markdown(f"""
-                <div style="background: rgba(249, 115, 22, 0.12); border: 1px solid #f97316; border-radius: 6px; padding: 6px 10px;">
-                    <div style="font-size: 11px; color: #fdba74;">Disagreement Zone</div>
-                    <div style="font-size: 18px; font-weight: 700; color: #fb923c;">{dis_px:,} px</div>
-                    <div style="font-size: 11px; color: #fdba74;">{dis_px * PIXEL_AREA_MM2:.1f} mm²</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-            
-            st.markdown("<div style='font-size: 13px; color: #8b949e;'>Model Concordance Ratio</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 24px; font-weight: 700; color: #3fb950;'>{ensemble_data['consensus_ratio']*100:.1f}%</div>", unsafe_allow_html=True)
-            
-            st.markdown("<hr style='margin: 10px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-
-            # Viewport Contour Toggles
-            st.markdown("<div style='font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 6px;'>🎯 Viewport Contours</div>", unsafe_allow_html=True)
-            show_agr_toggle = st.checkbox("Show Agreement Outline (Solid Green)", value=True, key="chk_show_agr")
-            show_dis_toggle = st.checkbox("Show Disagreement Band (Amber/Coral)", value=True, key="chk_show_dis")
-            show_heat_toggle = st.checkbox("Overlay Agreement Heatmap (1-6 Votes)", value=False, key="chk_show_heat")
-
-    # Render 4-Quadrant Views inside col_3d_left
-    with col_3d_left:
-        mpr = generate_mpr_visualizations(
-            vol_3d, mask_3d, selected_z,
-            rot_k=active_mpr_rot_k, crop=CROP_MARGIN,
-            agreement_counts=ensemble_data["agreement_counts"],
-            v_thresh=v_thresh,
-            show_agreement=show_agr_toggle,
-            show_disagreement=show_dis_toggle,
-            show_heatmap=show_heat_toggle,
-            cmap_name=cmap_choice,
-            heatmap_alpha=heatmap_alpha
-        )
-        
-        # 3D Slicer exact 4-quadrant layout
-        g1, g2 = st.columns(2)
-        with g1:
-            st.markdown(f"<div class='mpr-label' style='border-left: 3px solid #ef4444; color: #fca5a5;'>Red · Ax {selected_z} (Agreement & Disagreement)</div>", unsafe_allow_html=True)
-            st.image(mpr["ax_view"], use_container_width=True)
-        with g2:
-            st.markdown("<div class='mpr-label' style='border-left: 3px solid #c026d3; color: #f0abfc;'>Purple · 3D Bounding Box & Tumor</div>", unsafe_allow_html=True)
-            chosen_bbox_img = mpr["bbox_view"] if box_style == "3D Bounding Box" else mpr["planar_bbox_view"]
-            st.image(chosen_bbox_img, use_container_width=True)
-        
-        g3, g4 = st.columns(2)
-        with g3:
-            st.markdown("<div class='mpr-label' style='border-left: 3px solid #22c55e; color: #86efac;'>Green · Coronal</div>", unsafe_allow_html=True)
-            st.image(mpr["cor_view"], use_container_width=True)
-        with g4:
-            st.markdown("<div class='mpr-label' style='border-left: 3px solid #eab308; color: #fde047;'>Yellow · Sagittal</div>", unsafe_allow_html=True)
-            st.image(mpr["sag_view"], use_container_width=True)
-            
-        st.markdown(f"""
-        <div class="coord-ribbon">
-            x : <b>{mpr['x_mm']:.1f} mm</b> &nbsp;&nbsp;|&nbsp;&nbsp; y : <b>{mpr['y_mm']:.1f} mm</b> &nbsp;&nbsp;|&nbsp;&nbsp; z : <b>{mpr['z_mm']:.1f} mm</b>
-        </div>
-        """, unsafe_allow_html=True)
-
-        with st.expander("🌐 Interactive 3D Cranial Volume & Bounding Box (Plotly 3D Orbit)"):
-            if HAS_PLOTLY:
-                fig_3d = create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=selected_z)
-                st.plotly_chart(fig_3d, use_container_width=True)
-            else:
-                st.info("Plotly is required for interactive 3D rotation.")
-
-    if is_initial_load:
-        init_progress_placeholder.progress(100, text="✅ [5/5] Clinical analysis ready! Launching interface... (100%)")
-        time.sleep(0.2)
-        init_progress_placeholder.empty()
-        st.session_state["app_initialized"] = True
-
-    # ── SECTION 3: CT-RAD SKILL-BASED AGENTIC FRAMEWORK (R-A-D DECISION ENGINE) ──
-    st.markdown("---")
-    
-    # Initialize CT-RAD Session States
-    if "ctrad_current_step" not in st.session_state:
-        st.session_state["ctrad_current_step"] = 0
-    if "ctrad_selected_skill" not in st.session_state:
-        st.session_state["ctrad_selected_skill"] = None
-    if "ctrad_scenario" not in st.session_state:
-        st.session_state["ctrad_scenario"] = "standard"  # "standard" or "ambiguity"
-    if "ctrad_is_playing" not in st.session_state:
-        st.session_state["ctrad_is_playing"] = False
-
-    ctrad_skills, ctrad_steps = get_ctrad_definitions()
-    
-    # Compute live telemetry from current scan slice & 3D stack
-    ctrad_telemetry = compute_ctrad_live_telemetry(
-        img_slice=img_gray,
-        active_mask=active_consensus_mask,
-        predictions=predictions,
-        ensemble_data=ensemble_data,
-        risk_metrics=risk_metrics,
-        selected_z=selected_z,
-        slice_title=slice_title,
-        is_clinician_edited=is_clinician_edited,
-        safety_margin_mm=st.session_state.get("safety_margin_mm", 0.0),
-        pacs_sent=st.session_state.get("pacs_sent", False),
-        outline_accepted=st.session_state.get("outline_accepted", False),
-        reviewer_name=st.session_state.get("reviewer_name", "Dr. XXXXX")
-    )
-
-    current_step_idx = st.session_state["ctrad_current_step"]
-    current_step_obj = ctrad_steps[current_step_idx]
-    active_skill_id = st.session_state["ctrad_selected_skill"] if st.session_state["ctrad_selected_skill"] is not None else current_step_obj["skill_id"]
-    active_skill = ctrad_skills[active_skill_id]
-    active_telemetry = ctrad_telemetry.get(current_step_idx, ctrad_telemetry[0])
-
-    # 1. Framework Banner
-    st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #161b22 0%, #0d1117 100%); border: 1px solid #30363d; border-radius: 12px; padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-            <div>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <h3 style="margin: 0; color: #58a6ff; font-size: 20px;">🤖 CT-RAD Skill-Based Agentic Framework</h3>
-                    <span style="background: rgba(56, 139, 253, 0.15); border: 1px solid #388bfd; border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; color: #58a6ff;">
-                        R-A-D MULTI-AGENT
-                    </span>
-                </div>
-                <div style="font-size: 13px; color: #8b949e; margin-top: 4px;">
-                    Cognitive medical decision engine: 3 Specialized Autonomous Agents + 6 Domain Skills with Human-in-the-Loop oversight.
-                </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 12px; background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 5px 12px; color: #c9d1d9; font-family: ui-monospace, monospace;">
-                    Slice <b>z = {selected_z}</b> · Step <b>{current_step_idx + 1:02d} / 09</b>
-                </span>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # 2. 3-Agent Status Dashboard (Review, Assessment, Documentation, Clinician)
-    active_agent_key = active_skill["agent"].lower()
-    is_review_active = "review" in active_agent_key
-    is_assessment_active = "assessment" in active_agent_key
-    is_doc_active = "documentation" in active_agent_key
-    is_clinician_active = "expert" in active_agent_key or "clinician" in active_agent_key
-
-    ag_c1, ag_c2, ag_c3, ag_c4 = st.columns(4)
-    with ag_c1:
-        st.markdown(f"""
-        <div class="ctrad-agent-box {'active' if is_review_active else ''}">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="ctrad-badge-agent" style="background: rgba(88, 166, 255, 0.15); color: #58a6ff; border: 1px solid rgba(88, 166, 255, 0.4);">
-                    REVIEW AGENT (R)
-                </span>
-                <span style="font-size: 10px; color: {'#58a6ff; font-weight: bold;' if is_review_active else '#6e7681;'}">
-                    {'● ACTIVE' if is_review_active else 'STANDBY'}
-                </span>
-            </div>
-            <div style="font-size: 12px; font-weight: 600; color: #e6edf3;">Consensus & Editing</div>
-            <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Skills: S01 (Falsification), S02 (Experts), S04 (Refinement)</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with ag_c2:
-        st.markdown(f"""
-        <div class="ctrad-agent-box {'active' if is_assessment_active else ''}">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="ctrad-badge-agent" style="background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.4);">
-                    ASSESSMENT AGENT (A)
-                </span>
-                <span style="font-size: 10px; color: {'#3fb950; font-weight: bold;' if is_assessment_active else '#6e7681;'}">
-                    {'● ACTIVE' if is_assessment_active else 'STANDBY'}
-                </span>
-            </div>
-            <div style="font-size: 12px; font-weight: 600; color: #e6edf3;">Diagnosis & Verification</div>
-            <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Skills: S03 (Failure Diagnosis), S05 (Verification)</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with ag_c3:
-        st.markdown(f"""
-        <div class="ctrad-agent-box {'active' if is_doc_active else ''}">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="ctrad-badge-agent" style="background: rgba(240, 136, 62, 0.15); color: #f0883e; border: 1px solid rgba(240, 136, 62, 0.4);">
-                    DOCUMENTATION AGENT (D)
-                </span>
-                <span style="font-size: 10px; color: {'#f0883e; font-weight: bold;' if is_doc_active else '#6e7681;'}">
-                    {'● ACTIVE' if is_doc_active else 'STANDBY'}
-                </span>
-            </div>
-            <div style="font-size: 12px; font-weight: 600; color: #e6edf3;">Volumetry & Reliability</div>
-            <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Skills: S06 (Measurement & Confidence Interval)</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with ag_c4:
-        st.markdown(f"""
-        <div class="ctrad-agent-box {'active' if is_clinician_active else ''}">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="ctrad-badge-agent" style="background: rgba(188, 140, 255, 0.15); color: #bc8cff; border: 1px solid rgba(188, 140, 255, 0.4);">
-                    DOMAIN EXPERT (HUMAN)
-                </span>
-                <span style="font-size: 10px; color: {'#bc8cff; font-weight: bold;' if is_clinician_active else '#6e7681;'}">
-                    {'● ACTIVE' if is_clinician_active else 'STANDBY'}
-                </span>
-            </div>
-            <div style="font-size: 12px; font-weight: 600; color: #e6edf3;">Physician Final Sign-off</div>
-            <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Interactive Brush Edit, Legal Sign-off, PACS Export</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
-
-    # 3. 9-Step Pipeline Stepper Bar
-    st.markdown("<div style='font-size: 12px; font-weight: 600; color: #8b949e; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;'>Pipeline Execution Stepper</div>", unsafe_allow_html=True)
-    
-    step_cols = st.columns(9)
-    for s_i, s_obj in enumerate(ctrad_steps):
-        with step_cols[s_i]:
-            is_cur = (s_i == current_step_idx)
-            is_done = (s_i < current_step_idx)
-            status_text = "ACTIVE" if is_cur else ("COMPLETE" if is_done else "PENDING")
-            
-            # Button for clicking step
-            if st.button(
-                f"{s_obj['short']}\n{status_text}",
-                key=f"ctrad_step_btn_{s_i}",
-                type="primary" if is_cur else "secondary",
-                use_container_width=True,
-                help=f"Jump to Step {s_i}: {s_obj['label']}"
-            ):
-                st.session_state["ctrad_current_step"] = s_i
-                st.session_state["ctrad_selected_skill"] = None
-                st.session_state["ctrad_is_playing"] = False
-                st.rerun()
-
-    # Active Simulation Auto-play Status Banner (when playing)
-    if st.session_state.get("ctrad_is_playing", False):
-        st.markdown(f"""
-        <div style="background: rgba(88, 166, 255, 0.12); border: 1px solid #58a6ff; border-radius: 8px; padding: 7px 14px; margin-top: 6px; margin-bottom: 8px; font-size: 12px; color: #58a6ff; display: flex; align-items: center; justify-content: space-between;">
-            <span>▶ <b>Auto-Simulation Active:</b> Executing step {current_step_idx + 1} of 9 ({current_step_obj['label']})...</span>
-            <span style="font-size: 11px; color: #8b949e;">Click '⏸ Pause Simulation' to halt</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Navigation Controls Bar
-    nav_c1, nav_play, nav_c2, nav_c3, nav_c4 = st.columns([1.6, 2.4, 1.6, 2.2, 3.4])
-    with nav_c1:
-        if st.button("◀ Previous", disabled=(current_step_idx == 0), use_container_width=True):
-            st.session_state["ctrad_current_step"] = max(0, current_step_idx - 1)
-            st.session_state["ctrad_selected_skill"] = None
-            st.session_state["ctrad_is_playing"] = False
-            st.rerun()
-    with nav_play:
-        is_playing = st.session_state.get("ctrad_is_playing", False)
-        if is_playing:
-            if st.button("⏸ Pause Simulation", type="secondary", use_container_width=True, help="Pause continuous auto-play"):
-                st.session_state["ctrad_is_playing"] = False
-                st.rerun()
-        else:
-            if st.button("▶ Play Simulation", type="primary", use_container_width=True, help="Automatically iterate through all 9 clinical pipeline steps"):
-                if current_step_idx >= 8:
-                    st.session_state["ctrad_current_step"] = 0
-                st.session_state["ctrad_selected_skill"] = None
-                st.session_state["ctrad_is_playing"] = True
-                st.rerun()
-    with nav_c2:
-        if st.button("Next ▶", disabled=(current_step_idx == 8), use_container_width=True):
-            st.session_state["ctrad_current_step"] = min(8, current_step_idx + 1)
-            st.session_state["ctrad_selected_skill"] = None
-            st.session_state["ctrad_is_playing"] = False
-            st.rerun()
-    with nav_c3:
-        if st.button("🔄 Reset (Step 0)", use_container_width=True):
-            st.session_state["ctrad_current_step"] = 0
-            st.session_state["ctrad_selected_skill"] = None
-            st.session_state["ctrad_is_playing"] = False
-            st.rerun()
-    with nav_c4:
-        scenario_choice = st.selectbox(
-            "Clinical Simulation Route",
-            ["Scenario A: Standard Consensus & Refinement", "Scenario B: Boundary Ambiguity Fallback"],
-            index=0 if st.session_state["ctrad_scenario"] == "standard" else 1,
-            label_visibility="collapsed"
-        )
-        new_scenario = "standard" if "Scenario A" in scenario_choice else "ambiguity"
-        if new_scenario != st.session_state["ctrad_scenario"]:
-            st.session_state["ctrad_scenario"] = new_scenario
-            st.session_state["ctrad_is_playing"] = False
-            st.rerun()
-
-    st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
-
-    # 4. ACTIVE SKILL INSPECTOR (Detailed Interactive Card)
-    skill_badge_color = active_skill.get("color", "#58a6ff")
-    decision_box_class = "ctrad-decision-pass" if "PASS" in active_telemetry["answer"] or "APPROVED" in active_telemetry["answer"] else ("ctrad-decision-flag" if "FLAG" in active_telemetry["answer"] else "ctrad-decision-warn")
-    
-    with st.container(border=True):
-        # Inspector Header
-        st.markdown(f"""
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 12px; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="background: {skill_badge_color}; color: #0d1117; font-weight: 800; font-size: 13px; border-radius: 6px; padding: 4px 10px; font-family: ui-monospace, monospace;">
-                    {'SKILL ' + f'{active_skill_id:02d}' if active_skill_id not in [0, 7, 8] else ('PREPROCESSING' if active_skill_id==0 else ('TOOL' if active_skill_id==7 else 'EXPERT'))}
-                </span>
-                <div>
-                    <h3 style="margin: 0; color: #e6edf3; font-size: 18px;">{active_skill['name']}</h3>
-                    <div style="font-size: 12px; color: #8b949e;">Agent: <b style="color: {skill_badge_color};">{active_skill['agent']}</b> &nbsp;|&nbsp; Phase: <b>{current_step_obj['phase']}</b></div>
-                </div>
-            </div>
-            <div>
-                <span style="font-size: 12px; background: rgba(56, 139, 253, 0.15); border: 1px solid #388bfd; border-radius: 6px; padding: 4px 12px; color: #58a6ff; font-weight: 600;">
-                    Status: {active_telemetry['status']}
-                </span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Core Purpose
-        st.markdown(f"""
-        <div style="font-size: 13.5px; color: #c9d1d9; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px;">
-            <b>Clinical Purpose:</b> {active_skill['purpose']}
-        </div>
-        """, unsafe_allow_html=True)
-
-        # 3-Column Specification (Inputs, Tools, Rule & Decision)
-        spec_c1, spec_c2, spec_c3 = st.columns(3)
-        with spec_c1:
-            st.markdown("<div style='font-size: 12px; font-weight: 700; color: #8b949e; text-transform: uppercase; margin-bottom: 6px;'>📥 Ingested Inputs</div>", unsafe_allow_html=True)
-            for inp_item in active_skill["inputs"]:
-                st.markdown(f"<div class='ctrad-pill'>• {inp_item}</div>", unsafe_allow_html=True)
-
-        with spec_c2:
-            st.markdown("<div style='font-size: 12px; font-weight: 700; color: #8b949e; text-transform: uppercase; margin-bottom: 6px;'>🛠️ Specialized Tools Called</div>", unsafe_allow_html=True)
-            for tool_item in active_skill["tools"]:
-                st.markdown(f"<div class='ctrad-tool-tag'>⚙️ {tool_item}</div>", unsafe_allow_html=True)
-
-        with spec_c3:
-            st.markdown("<div style='font-size: 12px; font-weight: 700; color: #8b949e; text-transform: uppercase; margin-bottom: 6px;'>⚖️ Clinical Rule Evaluated</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 12px; color: #c9d1d9; margin-bottom: 6px;'><i>\"{active_skill['decision']}\"</i></div>", unsafe_allow_html=True)
-            st.markdown(f"""
-            <div class="{decision_box_class}" style="padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 12px;">
-                Outcome: <b>{active_telemetry['answer']}</b><br>
-                <span style="font-size: 11px; font-weight: normal; opacity: 0.9;">{active_telemetry['decision']}</span>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
-
-        # Output Artifact & Routing
-        out_c1, out_c2 = st.columns(2)
-        with out_c1:
-            st.markdown(f"""
-            <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px;">
-                <div style="font-size: 11px; font-weight: 700; color: #8b949e; text-transform: uppercase;">📦 Output Artifact Produced</div>
-                <div style="font-size: 13px; font-weight: 600; color: #e6edf3; margin-top: 3px;">{active_telemetry['output']}</div>
-                <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">{active_skill['detail']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with out_c2:
-            st.markdown(f"""
-            <div style="background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px;">
-                <div style="font-size: 11px; font-weight: 700; color: #8b949e; text-transform: uppercase;">🔀 Workflow Routing Directive</div>
-                <div style="font-size: 13px; font-weight: 600; color: #58a6ff; margin-top: 3px;">{active_skill['route']}</div>
-                <div style="font-size: 11px; color: #8b949e; margin-top: 2px;">Evidence: {active_telemetry['evidence']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Monospace Live Terminal Audit Log
-        st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="ctrad-terminal-log">
-            <span style="color: #8b949e;">[CT-RAD AUDIT TELEMETRY · PATIENT: {slice_title} · SLICE: z={selected_z}]</span><br>
-            <span style="color: #58a6ff;">&gt;</span> {active_telemetry['log']}<br>
-            <span style="color: #3fb950;">&gt;</span> [system] State validated · Provenance recorded with cryptographic hash 0x7f9a2b
-        </div>
-        """, unsafe_allow_html=True)
-
-    # 5. Direct Clinical Action Bar (Contextual Dialog Triggers)
-    st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 8px;'>🎯 Contextual Clinical Action Triggers</div>", unsafe_allow_html=True)
-    
-    act_c1, act_c2, act_c3, act_c4, act_c5 = st.columns(5)
-    with act_c1:
-        if st.button("📊 6 Model Cards", use_container_width=True, help="Skill 02: Open detailed segmentation cards for all 6 individual models"):
-            show_models_dialog(MODEL_METADATA, predictions, img_gray, gt_mask)
-            
-    with act_c2:
-        if st.button("📈 Correlation Matrix", use_container_width=True, help="Skill 01: Open feature correlation matrix and spatial agreement heatmaps"):
-            show_correlation_dialog(MODEL_METADATA, predictions)
-            
-    with act_c3:
-        if st.button("⚠️ Risk Flags Table", use_container_width=True, help="Skill 06: Open per-slice lesion diameter checklist and WHO risk classification"):
-            show_risk_flags_dialog(risk_metrics)
-            
-    with act_c4:
-        if st.button("✏️ Margin & Sign-off", use_container_width=True, type="primary", help="Skill 04: Open interactive clinician correction tools (Brush & Margin) and PACS validation"):
-            show_margin_editor_dialog(
-                img_gray, active_consensus_mask, ensemble_data["ensemble_mask"],
-                slice_title, selected_z, st.session_state.get("reviewer_name", "Dr. XXXXX"),
-                is_clinician_edited, consensus_meas
-            )
-            
-    with act_c5:
-        if st.button("ℹ️ Protocol & SOTA", use_container_width=True, help="Open dataset protocol specification and CT-SE(2) group equivariance benchmark"):
-            show_protocol_dialog(selected_dataset_name, current_cfg)
-
-    # 6. Formal 6-Skill Contract Library Reference Drawer
-    with st.expander("📚 CT-RAD Domain Skill Contract Library (Skills 01 – 06 Formal Schema)"):
-        st.markdown("<div style='font-size: 13px; color: #8b949e; margin-bottom: 12px;'>Formal contract catalog for the 6 Domain Skills. Click any button below to inspect contracts and evaluation rules:</div>", unsafe_allow_html=True)
-        lib_c1, lib_c2, lib_c3 = st.columns(3)
-        skill_ids_ordered = [1, 2, 3, 4, 5, 6]
-        for l_idx, s_id in enumerate(skill_ids_ordered):
-            target_col = [lib_c1, lib_c2, lib_c3][l_idx % 3]
-            s_obj = ctrad_skills[s_id]
-            with target_col:
-                st.markdown(f"""
-                <div class="ctrad-lib-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                        <span style="font-weight: 700; color: {s_obj['color']}; font-size: 13px;">Skill 0{s_id}: {s_obj['name']}</span>
-                        <span style="font-size: 10px; background: #21262d; padding: 2px 6px; border-radius: 4px; color: #8b949e;">{s_obj['agent']}</span>
-                    </div>
-                    <div style="font-size: 11.5px; color: #c9d1d9; margin-bottom: 6px;">{s_obj['purpose']}</div>
-                    <div style="font-size: 11px; color: #8b949e;"><b>Rule:</b> <i>{s_obj['decision']}</i></div>
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button(f"🔍 Inspect Skill 0{s_id}", key=f"lib_inspect_{s_id}", use_container_width=True):
-                    # Find corresponding step in pipeline
-                    matching_step = next((step_idx for step_idx, step in enumerate(ctrad_steps) if step["skill_id"] == s_id), 0)
-                    st.session_state["ctrad_current_step"] = matching_step
-                    st.session_state["ctrad_selected_skill"] = s_id
-                    st.session_state["ctrad_is_playing"] = False
-                    st.rerun()
-
-    # ── Simulation Auto-Play Continuous Runner ──
-    if st.session_state.get("ctrad_is_playing", False):
-        if st.session_state["ctrad_current_step"] < 8:
-            time.sleep(1.8)
-            st.session_state["ctrad_current_step"] += 1
-            st.session_state["ctrad_selected_skill"] = None
-            st.rerun()
-        else:
-            st.session_state["ctrad_is_playing"] = False
-            st.rerun()
-
-    # Word Report (.docx) Download Button
-    model_rows_data = []
+                model_name = meta.get("name", m_key)
+                if is_deep_gpu:
+                    weight = find_first_existing(current_cfg["weights"].get(m_key, []))
+                    if weight and (not meta["is_se2"] or HAS_ESCNN):
+                        try:
+                            model = load_cached_model(m_key, weight, device_opt)
+                            prob = run_single_inference(model, active_tensor, device_opt)
+                            if prob is not None:
+                                predictions_raw[m_key] = prob
+                                continue
+                        except Exception as exc:
+                            model_errors.append(f"{model_name}: {exc}")
+                predictions_raw[m_key] = generate_mock_prediction(active_slice_mask, active_slice_img, seed_offset=idx * 2)
+                simulated_models.append(model_name)
+        prediction_cache[cache_key] = (predictions_raw, simulated_models, model_errors)
+        st.session_state["force_deep_gpu"] = False
+    predictions_raw, simulated_models, model_errors = prediction_cache[cache_key]
+    img_gray = align_for_clinical_display(active_slice_img, crop=CROP_MARGIN, rot_k=active_rot_k)
+    gt_mask = align_for_clinical_display(active_slice_mask, crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True)
+    predictions = {}
     for meta in MODEL_METADATA:
         m_key = meta["key"]
-        p = predictions[m_key]
-        d, iou = (None, None)
-        if gt_mask is not None:
-            d, iou = compute_dice_iou(p["mask"], gt_mask)
-        model_rows_data.append({
-            "name": meta["name"],
-            "type": meta["type"],
-            "dice": d,
-            "iou": iou,
-            "area_px": p["area"],
-            "area_mm2": p["area"] * PIXEL_AREA_MM2
-        })
+        prob = align_for_clinical_display(predictions_raw[m_key], crop=CROP_MARGIN, rot_k=active_rot_k)
+        mask = (prob >= 0.5).astype(np.uint8)
+        predictions[m_key] = {"prob": prob, "mask": mask, "area": int(mask.sum())}
+    v_thresh = 3
+    strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
+    ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, 0.5)
+    edited_masks = st.session_state.setdefault("clinician_edited_masks", {})
+    slice_edit_key = f"{slice_title}_{selected_z}"
+    is_clinician_edited = slice_edit_key in edited_masks
+    active_consensus_mask = edited_masks.get(slice_edit_key, ensemble_data["ensemble_mask"])
+    consensus_meas = compute_physical_measurements(active_consensus_mask)
+    # Convert the displayed contour back to volume coordinates before updating its slice.
+    if is_clinician_edited:
+        native_mask = np.rot90(active_consensus_mask, -active_rot_k)
+        height, width = mask_3d.shape[1:]
+        margin = CROP_MARGIN if min(height, width) > 2 * CROP_MARGIN else 0
+        restored = np.zeros((height, width), dtype=np.uint8)
+        cropped_mask = cv2.resize(native_mask, (width - 2 * margin, height - 2 * margin), interpolation=cv2.INTER_NEAREST)
+        restored[margin:height - margin, margin:width - margin] = cropped_mask
+        mask_3d = mask_3d.copy()
+        mask_3d[selected_z] = restored
+    risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+    with findings_col:
+        if simulated_models:
+            st.warning("Preview contour · simulated output", icon=":material/info:")
+            st.caption("Measurements below are illustrative. Analyze this slice to use available model weights.")
+        else:
+            st.caption("Model contour · awaiting clinician review")
+        st.metric("Volume estimate", f"{risk_metrics['total_volume_ml']:.1f} mL")
+        st.caption("Derived from the current volume mask. Confirm contour and scan geometry before use.")
+        st.write("**Contour status**")
+        st.write("Clinician edited" if is_clinician_edited else "Not yet reviewed")
+        if st.button("Review / edit contour", type="primary", icon=":material/edit:", width="stretch"):
+            show_margin_editor_dialog(img_gray, active_consensus_mask, ensemble_data["ensemble_mask"], slice_title, selected_z,
+                st.session_state.get("reviewer_name", "Clinician"), is_clinician_edited, consensus_meas)
+        with st.expander("Measurement details"):
+            st.metric("Area on this slice", f"{consensus_meas['area_mm2']:.1f} mm²")
+            st.write(f"Major × minor diameter: {consensus_meas['major_diam_mm']:.1f} × {consensus_meas['minor_diam_mm']:.1f} mm")
+            st.caption(f"Configured pixel spacing: {PIXEL_SPACING_MM} mm · slice thickness: {SLICE_THICKNESS_MM} mm")
+        with st.expander("Why this contour needs review"):
+            st.write(f"Model agreement: {ensemble_data['consensus_ratio'] * 100:.1f}%")
+            st.caption("Agreement measures consistency between masks; it does not establish that a contour is correct.")
+            if simulated_models:
+                st.write("Independent model verification is unavailable for this preview.")
+            if is_clinician_edited:
+                st.write("The contour was changed manually. Inspect the change against the CT and adjacent slices.")
+            st.write("Review the highlighted boundary and compare neighboring slices before accepting the contour.")
+        with st.expander("Technical review"):
+            if st.button("Compare model contours", width="stretch"):
+                show_models_dialog(MODEL_METADATA, predictions, img_gray, gt_mask)
+            if st.button("Model correlation", width="stretch"):
+                show_correlation_dialog(MODEL_METADATA, predictions)
+            if simulated_models:
+                st.write("Simulated outputs: " + ", ".join(simulated_models))
+            for error in model_errors:
+                st.caption(error)
+            skills, _ = get_ctrad_definitions()
+            st.caption("Design contracts below describe the intended checks. A contract is not evidence that its tools ran.")
+            for skill_id in [1, 3, 2, 4, 5, 6]:
+                skill = skills[skill_id]
+                with st.expander(skill["name"]):
+                    st.write(skill["purpose"])
+                    st.write("Decision: " + skill["decision"])
+                    st.write("Next step: " + skill["route"])
 
-    ens_dice_str = f"{ens_dice:.4f} (IoU: {ens_iou:.4f})" if 'ens_dice' in locals() and gt_mask is not None else "N/A"
-    consensus_metrics_dict = {
-        "volume_ml": risk_metrics["total_volume_ml"],
-        "spread_min": risk_metrics["spread_min_ml"],
-        "spread_max": risk_metrics["spread_max_ml"],
-        "tumor_px": consensus_meas["pixels"],
-        "tumor_mm2": consensus_meas["area_mm2"],
-        "tumor_cm2": consensus_meas["area_cm2"],
-        "strategy": voting_mode,
-        "concordance_pct": ensemble_data["consensus_ratio"] * 100.0,
-        "dice_str": ens_dice_str
-    }
+    with image_slot:
+        view = st.segmented_control("View", ["Axial", "Coronal", "Sagittal", "3D"], default="Axial", key="review_view")
+        mpr = generate_mpr_visualizations(vol_3d, mask_3d, selected_z, rot_k=active_rot_k, crop=CROP_MARGIN,
+            agreement_counts=ensemble_data["agreement_counts"], v_thresh=v_thresh,
+            show_agreement=show_agr_toggle, show_disagreement=show_dis_toggle,
+            show_heatmap=show_heat_toggle, cmap_name=cmap_choice, heatmap_alpha=heatmap_alpha)
+        view_key = {"Axial": "ax_view", "Coronal": "cor_view", "Sagittal": "sag_view", "3D": "bbox_view"}.get(view, "ax_view")
+        st.image(mpr[view_key], width=560)
+        st.caption(f"Slice {selected_z + 1} / {len(vol_3d)} · Green: contour agreement · Amber: differing boundary")
+        if view == "3D" and HAS_PLOTLY:
+            with st.expander("Rotate 3D volume"):
+                st.plotly_chart(create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=selected_z), width="stretch")
+    init_progress_placeholder.empty()
+    loading_note.empty()
+    st.session_state["app_initialized"] = True
 
-    docx_report_bytes = generate_clinical_docx_report(
-        case_name=slice_title,
-        modality_name=selected_dataset_name,
-        active_z=selected_z,
-        reviewer_name=st.session_state.get("reviewer_name", "Dr. XXXXX"),
-        consensus_metrics=consensus_metrics_dict,
-        risk_flags=risk_metrics,
-        model_rows=model_rows_data,
-        outline_accepted=st.session_state.get("outline_accepted", False),
-        safety_margin_mm=st.session_state.get("safety_margin_mm", 0.0),
-        pacs_dispatched=st.session_state.get("pacs_sent", False),
-        clinician_edited=is_clinician_edited
-    )
+    with st.expander("Report and export", icon=":material/description:"):
+        # Word Report (.docx) Download Button
+        model_rows_data = []
+        for meta in MODEL_METADATA:
+            m_key = meta["key"]
+            p = predictions[m_key]
+            d, iou = (None, None)
+            if gt_mask is not None:
+                d, iou = compute_dice_iou(p["mask"], gt_mask)
+            model_rows_data.append({
+                "name": meta["name"],
+                "type": meta["type"],
+                "dice": d,
+                "iou": iou,
+                "area_px": p["area"],
+                "area_mm2": p["area"] * PIXEL_AREA_MM2
+            })
 
-    clean_file_name = f"Brain_CT_Clinical_Report_{slice_title.replace(' ', '_').replace('/', '_')}.docx"
-    st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
-    st.download_button(
-        label="📥 Download Clinical Decision Report (.docx)",
-        data=docx_report_bytes,
-        file_name=clean_file_name,
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        use_container_width=True
-    )
+        ens_dice_str = f"{ens_dice:.4f} (IoU: {ens_iou:.4f})" if 'ens_dice' in locals() and gt_mask is not None else "N/A"
+        consensus_metrics_dict = {
+            "volume_ml": risk_metrics["total_volume_ml"],
+            "spread_min": risk_metrics["spread_min_ml"],
+            "spread_max": risk_metrics["spread_max_ml"],
+            "tumor_px": consensus_meas["pixels"],
+            "tumor_mm2": consensus_meas["area_mm2"],
+            "tumor_cm2": consensus_meas["area_cm2"],
+            "strategy": voting_mode,
+            "concordance_pct": ensemble_data["consensus_ratio"] * 100.0,
+            "dice_str": ens_dice_str
+        }
 
-    # ── Footer ──
-    st.markdown("""
-    <div style="text-align: center; color: #8b949e; padding: 24px; font-size: 12px; border-top: 1px solid #30363d; margin-top: 30px;">
-        🧠 Multi-Model Equivariant Brain CT Segmentation Benchmark Platform — Research & Clinical Decision Support
-    </div>
-    """, unsafe_allow_html=True)
+        docx_report_bytes = generate_clinical_docx_report(
+            case_name=slice_title,
+            modality_name=selected_dataset_name,
+            active_z=selected_z,
+            reviewer_name=st.session_state.get("reviewer_name", "Dr. XXXXX"),
+            consensus_metrics=consensus_metrics_dict,
+            risk_flags=risk_metrics,
+            model_rows=model_rows_data,
+            outline_accepted=st.session_state.get("outline_accepted", False),
+            safety_margin_mm=st.session_state.get("safety_margin_mm", 0.0),
+            pacs_dispatched=st.session_state.get("pacs_sent", False),
+            clinician_edited=is_clinician_edited
+        )
+
+        clean_file_name = f"Brain_CT_Clinical_Report_{slice_title.replace(' ', '_').replace('/', '_')}.docx"
+        st.markdown("<div style='margin-top: 14px;'></div>", unsafe_allow_html=True)
+        st.download_button(
+            label="Download review report (.docx)",
+            data=docx_report_bytes,
+            file_name=clean_file_name,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            width="stretch"
+        )
+
 
 
 if __name__ == "__main__":
