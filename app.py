@@ -55,6 +55,7 @@ except ImportError:
 
 import streamlit as st
 from src.services.review_skills import SKILLS, fingerprint, run_review_skill
+from src.services.review_orchestrator import POLICY_VERSION, run_review, serializable_report
 
 # ─────────────────────────────────────────────────────────────────
 # 1. STREAMLIT APP CONFIG & CLINICAL DESIGN SYSTEM
@@ -3537,8 +3538,9 @@ def main():
     prediction_cache = st.session_state.setdefault("review_prediction_cache", {})
     with findings_col:
         st.subheader("Finding")
-        if st.button("Analyze this slice", icon=":material/play_arrow:", width="stretch"):
+        if st.button("Run review", icon=":material/play_arrow:", width="stretch"):
             st.session_state["force_deep_gpu"] = True
+            st.session_state["pending_review"] = f"{cache_key}:{active_rot_k}:{voting_mode}"
             prediction_cache.pop(cache_key, None)
             st.rerun()
 
@@ -3591,10 +3593,46 @@ def main():
         mask_3d = mask_3d.copy()
         mask_3d[selected_z] = restored
     risk_metrics = calculate_multi_slice_risk_metrics(mask_3d, pixel_spacing=PIXEL_SPACING_MM, slice_thickness=SLICE_THICKNESS_MM)
+    probabilities = {k: p["prob"] for k, p in predictions.items()}
+    simulated_keys = [m["key"] for m in MODEL_METADATA if m.get("name", m["key"]) in simulated_models]
+    source_hash = fingerprint(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask, probabilities)
+    review_context = f"{cache_key}:{active_rot_k}:{strat_key}:{','.join(sorted(simulated_keys))}:{source_hash}"
+    skill_runs = st.session_state.setdefault("review_skill_runs", {})
+    runs = skill_runs.setdefault(review_context, {})
+    volume_hash = fingerprint(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask, {"volume": mask_3d})
+    workflow_context = f"{review_context}:{volume_hash}:{PIXEL_SPACING_MM}:{SLICE_THICKNESS_MM}:{POLICY_VERSION}"
+    workflows = st.session_state.setdefault("review_workflows", {})
+    request = st.session_state.pop("pending_review", None)
+    if request == f"{cache_key}:{active_rot_k}:{voting_mode}":
+        with st.spinner("Reviewing contour evidence and selecting the next checks…"):
+            workflow = run_review(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask,
+                probabilities, simulated_keys, PIXEL_SPACING_MM, mask_3d, SLICE_THICKNESS_MM,
+                [m["key"] for m in MODEL_METADATA])
+        workflow["source_hash"] = source_hash
+        workflow["context"] = review_context
+        workflows[workflow_context] = workflow
+        # Replace the manual result set so an earlier proposal cannot survive a blocked run.
+        runs.clear()
+        for skill_id, result in workflow["skills"].items():
+            result["source_hash"] = source_hash
+            runs[skill_id] = result
+        st.session_state.setdefault("review_workflow_audit", []).append(serializable_report(workflow))
+    workflow = workflows.get(workflow_context)
     with findings_col:
+        if workflow:
+            st.write(f"**{workflow['status']}**")
+            st.write(workflow["summary"])
+            st.caption(workflow["next_action"])
+            with st.expander("Review results and routing"):
+                st.caption(f"Rule-based workflow · {workflow['policy']} · {workflow['time']}")
+                for step in workflow["steps"]:
+                    st.write(f"**{step['stage']} · {step['status']}**")
+                    st.caption(step["reason"])
+                st.download_button("Download review evidence", data=json.dumps(serializable_report(workflow), indent=2),
+                    file_name="review_workflow.json", mime="application/json", width="stretch")
         if simulated_models:
             st.warning("Preview contour · simulated output", icon=":material/info:")
-            st.caption("Measurements below are illustrative. Analyze this slice to use available model weights.")
+            st.caption("Measurements below are illustrative. Run review to analyze this slice with available model weights.")
         else:
             st.caption("Model contour · awaiting clinician review")
         st.metric("Volume estimate", f"{risk_metrics['total_volume_ml']:.1f} mL")
@@ -3626,7 +3664,7 @@ def main():
             for error in model_errors:
                 st.caption(error)
 
-        with st.expander("Run a review check", expanded=False, icon=":material/fact_check:"):
+        with st.expander("Checks and proposed changes", expanded=False, icon=":material/fact_check:"):
             skill_names = {i: f"{SKILLS[i]} · S{i:02d}" for i in [1, 3, 2, 4, 5, 6]}
             selected_skill = st.selectbox("Check to run", list(skill_names), format_func=skill_names.get, key="selected_review_skill")
             check_descriptions = {
@@ -3638,18 +3676,12 @@ def main():
                 6: "Calculate mask measurements and the spread of available real model areas.",
             }
             st.caption(check_descriptions[selected_skill])
-            probabilities = {k: p["prob"] for k, p in predictions.items()}
-            simulated_keys = [m["key"] for m in MODEL_METADATA if m.get("name", m["key"]) in simulated_models]
-            source_hash = fingerprint(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask, probabilities)
-            review_context = f"{cache_key}:{active_rot_k}:{strat_key}:{','.join(sorted(simulated_keys))}:{source_hash}"
-            skill_runs = st.session_state.setdefault("review_skill_runs", {})
-            # Changing case, slice, orientation, predictions or edits selects a fresh result set.
-            runs = skill_runs.setdefault(review_context, {})
             proposal_run = runs.get(4)
             proposed_mask = proposal_run.get("candidate") if proposal_run else None
             if selected_skill == 5 and proposed_mask is not None:
                 st.caption("This check will compare the pending cleanup proposal with the current contour.")
             if st.button("Run check", icon=":material/play_arrow:", width="stretch"):
+                workflows.pop(workflow_context, None)
                 baseline = active_consensus_mask if selected_skill == 5 and proposed_mask is not None else ensemble_data["ensemble_mask"]
                 target = proposed_mask if selected_skill == 5 and proposed_mask is not None else active_consensus_mask
                 with st.spinner("Running review check…"):
@@ -3687,11 +3719,13 @@ def main():
                 st.caption("Run S05 to check the proposal before applying it. Geometric checks do not replace clinician review.")
                 confirm_proposal = st.checkbox("I reviewed the proposed contour on the CT", key=f"confirm_proposal_{review_context}")
                 if st.button("Apply reviewed proposal", disabled=not (verified and confirm_proposal), width="stretch"):
+                    workflows.pop(workflow_context, None)
                     edited_masks[slice_edit_key] = proposed_mask.copy()
                     st.session_state["outline_accepted"] = False
                     st.session_state.setdefault("review_skill_audit", []).append({"context": review_context, "event": "clinician_applied_proposal"})
                     st.rerun()
                 if st.button("Discard proposal", width="stretch"):
+                    workflows.pop(workflow_context, None)
                     runs.pop(4, None)
                     runs.pop(5, None)
                     st.rerun()
