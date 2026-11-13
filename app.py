@@ -17,6 +17,7 @@ import sys
 import glob
 import time
 import math
+import json
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -53,6 +54,7 @@ except ImportError:
     HAS_DOCX = False
 
 import streamlit as st
+from src.services.review_skills import SKILLS, fingerprint, run_review_skill
 
 # ─────────────────────────────────────────────────────────────────
 # 1. STREAMLIT APP CONFIG & CLINICAL DESIGN SYSTEM
@@ -3623,25 +3625,93 @@ def main():
                 st.write("Simulated outputs: " + ", ".join(simulated_models))
             for error in model_errors:
                 st.caption(error)
-            skills, _ = get_ctrad_definitions()
-            st.caption("Design contracts below describe the intended checks. A contract is not evidence that its tools ran.")
-            for skill_id in [1, 3, 2, 4, 5, 6]:
-                skill = skills[skill_id]
-                with st.expander(skill["name"]):
-                    st.write(skill["purpose"])
-                    st.write("Decision: " + skill["decision"])
-                    st.write("Next step: " + skill["route"])
+
+        with st.expander("Run a review check", expanded=False, icon=":material/fact_check:"):
+            skill_names = {i: f"{SKILLS[i]} · S{i:02d}" for i in [1, 3, 2, 4, 5, 6]}
+            selected_skill = st.selectbox("Check to run", list(skill_names), format_func=skill_names.get, key="selected_review_skill")
+            check_descriptions = {
+                1: "Sample image edges along the current contour. This cannot establish lesion presence.",
+                2: "Inspect real versus simulated model outputs. Adaptive ranking requires additional validated tools.",
+                3: "Calculate local contrast and contour fragmentation for review.",
+                4: "Create a small morphological cleanup proposal while preserving the current contour.",
+                5: "Compare a pending proposal or manual edit with its baseline using geometric checks.",
+                6: "Calculate mask measurements and the spread of available real model areas.",
+            }
+            st.caption(check_descriptions[selected_skill])
+            probabilities = {k: p["prob"] for k, p in predictions.items()}
+            simulated_keys = [m["key"] for m in MODEL_METADATA if m.get("name", m["key"]) in simulated_models]
+            source_hash = fingerprint(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask, probabilities)
+            review_context = f"{cache_key}:{active_rot_k}:{strat_key}:{','.join(sorted(simulated_keys))}:{source_hash}"
+            skill_runs = st.session_state.setdefault("review_skill_runs", {})
+            # Changing case, slice, orientation, predictions or edits selects a fresh result set.
+            runs = skill_runs.setdefault(review_context, {})
+            proposal_run = runs.get(4)
+            proposed_mask = proposal_run.get("candidate") if proposal_run else None
+            if selected_skill == 5 and proposed_mask is not None:
+                st.caption("This check will compare the pending cleanup proposal with the current contour.")
+            if st.button("Run check", icon=":material/play_arrow:", width="stretch"):
+                baseline = active_consensus_mask if selected_skill == 5 and proposed_mask is not None else ensemble_data["ensemble_mask"]
+                target = proposed_mask if selected_skill == 5 and proposed_mask is not None else active_consensus_mask
+                with st.spinner("Running review check…"):
+                    result = run_review_skill(selected_skill, img_gray, baseline, target, probabilities,
+                        simulated_keys, PIXEL_SPACING_MM, mask_3d, SLICE_THICKNESS_MM)
+                result["source_hash"] = source_hash
+                runs[selected_skill] = result
+                if selected_skill == 4:
+                    runs.pop(5, None)
+                st.session_state.setdefault("review_skill_audit", []).append({
+                    "context": review_context, **{k: v for k, v in result.items() if k != "candidate"}})
+                st.rerun()
+            result = runs.get(selected_skill)
+            if result:
+                st.write(f"**{result['status']}**")
+                st.write(result["summary"])
+                st.caption(f"Executed at {result['time']} · Slice {selected_z + 1}")
+                st.json(result["evidence"], expanded=True)
+                st.write("**Next action**")
+                st.write(result["next_action"])
+                for limitation in result["limitations"]:
+                    st.caption(limitation)
+                with st.expander("Execution details"):
+                    st.write("Tools executed: " + ", ".join(result["tools"]))
+                    st.code(result["source_hash"], language=None)
+            if proposed_mask is not None:
+                st.write("**Pending contour proposal**")
+                before_col, after_col = st.columns(2)
+                with before_col:
+                    st.image(overlay_mask(img_gray, active_consensus_mask), caption="Current", width="stretch")
+                with after_col:
+                    st.image(overlay_mask(img_gray, proposed_mask), caption="Proposed cleanup", width="stretch")
+                verification = runs.get(5)
+                verified = verification is not None and verification["status"] == "Checks passed"
+                st.caption("Run S05 to check the proposal before applying it. Geometric checks do not replace clinician review.")
+                confirm_proposal = st.checkbox("I reviewed the proposed contour on the CT", key=f"confirm_proposal_{review_context}")
+                if st.button("Apply reviewed proposal", disabled=not (verified and confirm_proposal), width="stretch"):
+                    edited_masks[slice_edit_key] = proposed_mask.copy()
+                    st.session_state["outline_accepted"] = False
+                    st.session_state.setdefault("review_skill_audit", []).append({"context": review_context, "event": "clinician_applied_proposal"})
+                    st.rerun()
+                if st.button("Discard proposal", width="stretch"):
+                    runs.pop(4, None)
+                    runs.pop(5, None)
+                    st.rerun()
+            if st.session_state.get("review_skill_audit"):
+                st.download_button("Download check history", data=json.dumps(st.session_state["review_skill_audit"], indent=2),
+                    file_name="review_checks.json", mime="application/json", width="stretch")
 
     with image_slot:
-        view = st.segmented_control("View", ["Axial", "Coronal", "Sagittal", "3D"], default="Axial", key="review_view")
         mpr = generate_mpr_visualizations(vol_3d, mask_3d, selected_z, rot_k=active_rot_k, crop=CROP_MARGIN,
             agreement_counts=ensemble_data["agreement_counts"], v_thresh=v_thresh,
             show_agreement=show_agr_toggle, show_disagreement=show_dis_toggle,
             show_heatmap=show_heat_toggle, cmap_name=cmap_choice, heatmap_alpha=heatmap_alpha)
-        view_key = {"Axial": "ax_view", "Coronal": "cor_view", "Sagittal": "sag_view", "3D": "bbox_view"}.get(view, "ax_view")
-        st.image(mpr[view_key], width=560)
+        for row in [[("Axial", "ax_view"), ("3D volume", "bbox_view")], [("Coronal", "cor_view"), ("Sagittal", "sag_view")]]:
+            left_view, right_view = st.columns(2)
+            for view_col, (label, view_key) in zip([left_view, right_view], row):
+                with view_col:
+                    st.caption(label)
+                    st.image(mpr[view_key], width="stretch")
         st.caption(f"Slice {selected_z + 1} / {len(vol_3d)} · Green: contour agreement · Amber: differing boundary")
-        if view == "3D" and HAS_PLOTLY:
+        if HAS_PLOTLY:
             with st.expander("Rotate 3D volume"):
                 st.plotly_chart(create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=selected_z), width="stretch")
     init_progress_placeholder.empty()
