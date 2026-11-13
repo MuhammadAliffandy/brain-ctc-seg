@@ -37,7 +37,7 @@ def geometry(mask):
 
 
 def run_review_skill(skill_id, image, original, active, probabilities, simulated_keys,
-                     pixel_spacing, volume, slice_thickness):
+                     pixel_spacing, volume, slice_thickness, fusion_policy=None):
     image = np.asarray(image, dtype=np.float32)
     original = (original > 0).astype(np.uint8)
     active = (active > 0).astype(np.uint8)
@@ -81,6 +81,10 @@ def run_review_skill(skill_id, image, original, active, probabilities, simulated
         result.update(status="Blocked", summary="Model availability checked. Adaptive expert selection is not configured.",
                       next_action="Use available model comparisons or supply patient-disjoint model utility evidence before adaptive selection.")
         result["limitations"].append("No validated utility predictor or OOD detector is connected; this procedure does not invent model rankings.")
+        if fusion_policy:
+            result["evidence"]["fusion_policy"] = fusion_policy
+            result.update(status="Inspected", summary="Model availability and the configured fusion policy were inspected.",
+                          next_action="Use the recorded fixed coefficients; adaptive per-scan ranking remains unavailable.")
     elif skill_id == 3:
         result["tools"] = ["Local contrast-to-noise calculation", "Connected-component analysis"]
         result["evidence"] = {**shape, "local_contrast_to_noise": cnr, "inside_samples": int(inside.size), "outside_samples": int(ring.size)}

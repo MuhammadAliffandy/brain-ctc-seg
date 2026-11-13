@@ -56,6 +56,7 @@ except ImportError:
 import streamlit as st
 from src.services.review_skills import SKILLS, fingerprint, run_review_skill
 from src.services.review_orchestrator import POLICY_VERSION, run_review, serializable_report
+from src.services.ensemble_weights import resolve_weights, weighted_probability
 
 # ─────────────────────────────────────────────────────────────────
 # 1. STREAMLIT APP CONFIG & CLINICAL DESIGN SYSTEM
@@ -1249,7 +1250,7 @@ def compute_dice_iou(pred, gt):
     return float(dice), float(iou)
 
 
-def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_threshold):
+def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_threshold, weights=None):
     valid_keys = [k for k, v in predictions.items() if v is not None and "mask" in v]
     num_models = len(valid_keys)
     if num_models == 0: return None
@@ -1266,11 +1267,16 @@ def build_ensemble_results(predictions, voting_mode, vote_threshold, conf_thresh
 
     avg_prob = prob_sum / num_models
 
-    if voting_mode == "Majority Voting":
-        ensemble_mask = (agreement_counts >= vote_threshold).astype(np.uint8)
-    elif voting_mode == "Soft Voting (Average Probability)":
+    if voting_mode == "Weighted Soft Voting":
+        if weights is None:
+            raise ValueError("Weighted soft voting requires explicit coefficients")
+        avg_prob = weighted_probability({k: predictions[k]["prob"] for k in valid_keys}, {k: weights[k] for k in valid_keys})
         ensemble_mask = (avg_prob >= conf_threshold).astype(np.uint8)
-    elif voting_mode == "Safe-Fail (High Sensitivity)":
+    elif voting_mode in ("Majority Voting", "Majority Voting (Threshold: 3/6)"):
+        ensemble_mask = (agreement_counts >= vote_threshold).astype(np.uint8)
+    elif voting_mode in ("Soft Voting", "Soft Voting (Average Probability)"):
+        ensemble_mask = (avg_prob >= conf_threshold).astype(np.uint8)
+    elif voting_mode in ("Safe-Fail", "Safe-Fail (High Sensitivity)"):
         se2_mask = predictions.get("se2", {}).get("mask", np.zeros_like(agreement_counts))
         ensemble_mask = ((agreement_counts >= 2) | (se2_mask > 0)).astype(np.uint8)
     else:
@@ -3225,9 +3231,20 @@ def main():
             cmap_choice = st.selectbox("Heatmap palette", ["viridis", "turbo", "plasma", "inferno"])
             orientation = st.selectbox("Orientation", ["Standard", "180°", "270°", "Native"])
             active_rot_k = {"Standard": 1, "180°": 2, "270°": 3, "Native": 0}[orientation]
-            voting_mode = st.selectbox("Contour method", ["Majority Voting (Threshold: 3/6)", "Soft Voting (Average Probability)", "Safe-Fail (High Sensitivity)"])
+            voting_mode = st.selectbox("Contour method", ["Weighted Soft Voting", "Majority Voting (Threshold: 3/6)", "Soft Voting (Average Probability)", "Safe-Fail (High Sensitivity)"], key="contour_method")
+            manual_weights = None
+            if voting_mode == "Weighted Soft Voting":
+                manual_enabled = st.toggle("Experimental manual coefficients", value=False)
+                if manual_enabled:
+                    manual_weights = {m["key"]: st.number_input(m["name"], min_value=0.0, value=1.0, step=0.1, key=f"coefficient_{m['key']}") for m in MODEL_METADATA}
+                    if sum(manual_weights.values()) == 0:
+                        st.error("At least one coefficient must be greater than zero.")
+                        st.stop()
             st.caption("Technical settings apply to this review session.")
     device_opt = "cuda" if torch.cuda.is_available() else "cpu"
+    coefficient_path = os.getenv("BRAIN_ENSEMBLE_WEIGHTS", os.path.join(os.path.dirname(__file__), "config", "ensemble_weights.json"))
+    coefficient_profile = resolve_weights(coefficient_path, current_cfg["key"],
+        [m["key"] for m in MODEL_METADATA], manual=manual_weights)
     min_agreement_filter = 1
     is_deep_gpu = bool(st.session_state.get("force_deep_gpu", False))
 
@@ -3575,8 +3592,9 @@ def main():
         mask = (prob >= 0.5).astype(np.uint8)
         predictions[m_key] = {"prob": prob, "mask": mask, "area": int(mask.sum())}
     v_thresh = 3
-    strat_key = "Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail")
-    ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, 0.5)
+    strat_key = "Weighted Soft Voting" if voting_mode == "Weighted Soft Voting" else ("Majority Voting" if "Majority" in voting_mode else ("Soft Voting" if "Soft" in voting_mode else "Safe-Fail"))
+    fusion_policy = {"fusion": strat_key, **coefficient_profile} if strat_key == "Weighted Soft Voting" else {"fusion": strat_key}
+    ensemble_data = build_ensemble_results(predictions, strat_key, v_thresh, 0.5, coefficient_profile["weights"])
     edited_masks = st.session_state.setdefault("clinician_edited_masks", {})
     slice_edit_key = f"{slice_title}_{selected_z}"
     is_clinician_edited = slice_edit_key in edited_masks
@@ -3596,7 +3614,7 @@ def main():
     probabilities = {k: p["prob"] for k, p in predictions.items()}
     simulated_keys = [m["key"] for m in MODEL_METADATA if m.get("name", m["key"]) in simulated_models]
     source_hash = fingerprint(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask, probabilities)
-    review_context = f"{cache_key}:{active_rot_k}:{strat_key}:{','.join(sorted(simulated_keys))}:{source_hash}"
+    review_context = f"{cache_key}:{active_rot_k}:{json.dumps(fusion_policy, sort_keys=True)}:{','.join(sorted(simulated_keys))}:{source_hash}"
     skill_runs = st.session_state.setdefault("review_skill_runs", {})
     runs = skill_runs.setdefault(review_context, {})
     volume_hash = fingerprint(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask, {"volume": mask_3d})
@@ -3607,7 +3625,7 @@ def main():
         with st.spinner("Reviewing contour evidence and selecting the next checks…"):
             workflow = run_review(img_gray, ensemble_data["ensemble_mask"], active_consensus_mask,
                 probabilities, simulated_keys, PIXEL_SPACING_MM, mask_3d, SLICE_THICKNESS_MM,
-                [m["key"] for m in MODEL_METADATA])
+                [m["key"] for m in MODEL_METADATA], fusion_policy=fusion_policy)
         workflow["source_hash"] = source_hash
         workflow["context"] = review_context
         workflows[workflow_context] = workflow
@@ -3655,6 +3673,11 @@ def main():
                 st.write("The contour was changed manually. Inspect the change against the CT and adjacent slices.")
             st.write("Review the highlighted boundary and compare neighboring slices before accepting the contour.")
         with st.expander("Technical review"):
+            st.write("Contour method: " + strat_key)
+            if strat_key == "Weighted Soft Voting":
+                st.write("Coefficient profile: " + coefficient_profile["mode"])
+                st.caption(coefficient_profile["reason"])
+                st.json(coefficient_profile["weights"])
             if st.button("Compare model contours", width="stretch"):
                 show_models_dialog(MODEL_METADATA, predictions, img_gray, gt_mask)
             if st.button("Model correlation", width="stretch"):
@@ -3669,7 +3692,7 @@ def main():
             selected_skill = st.selectbox("Check to run", list(skill_names), format_func=skill_names.get, key="selected_review_skill")
             check_descriptions = {
                 1: "Sample image edges along the current contour. This cannot establish lesion presence.",
-                2: "Inspect real versus simulated model outputs. Adaptive ranking requires additional validated tools.",
+                2: "Inspect model outputs and the selected fixed fusion coefficients. Adaptive per-scan ranking is a separate capability.",
                 3: "Calculate local contrast and contour fragmentation for review.",
                 4: "Create a small morphological cleanup proposal while preserving the current contour.",
                 5: "Compare a pending proposal or manual edit with its baseline using geometric checks.",
@@ -3686,7 +3709,7 @@ def main():
                 target = proposed_mask if selected_skill == 5 and proposed_mask is not None else active_consensus_mask
                 with st.spinner("Running review check…"):
                     result = run_review_skill(selected_skill, img_gray, baseline, target, probabilities,
-                        simulated_keys, PIXEL_SPACING_MM, mask_3d, SLICE_THICKNESS_MM)
+                        simulated_keys, PIXEL_SPACING_MM, mask_3d, SLICE_THICKNESS_MM, fusion_policy=fusion_policy)
                 result["source_hash"] = source_hash
                 runs[selected_skill] = result
                 if selected_skill == 4:

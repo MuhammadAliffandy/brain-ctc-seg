@@ -8,15 +8,15 @@ import numpy as np
 from .review_skills import run_review_skill
 
 
-POLICY_VERSION = "review-workflow-1"
+POLICY_VERSION = "review-workflow-2"
 
 
 def run_review(image, original, active, probabilities, simulated_keys, pixel_spacing,
-               volume, slice_thickness, expected_models):
+               volume, slice_thickness, expected_models, fusion_policy=None):
     report = {"policy": POLICY_VERSION, "time": datetime.now(timezone.utc).isoformat(),
               "status": "Blocked", "summary": "Review could not start.", "steps": [],
               "skills": {}, "next_action": "Inspect the scan and model status.",
-              "clinician_approval_required": True}
+              "clinician_approval_required": True, "fusion_policy": fusion_policy}
 
     def event(stage, status, reason):
         report["steps"].append({"stage": stage, "status": status, "reason": reason})
@@ -24,7 +24,8 @@ def run_review(image, original, active, probabilities, simulated_keys, pixel_spa
     def execute(skill_id, baseline=original, target=active):
         try:
             result = run_review_skill(skill_id, image, baseline, target, probabilities,
-                                      simulated_keys, pixel_spacing, volume, slice_thickness)
+                                      simulated_keys, pixel_spacing, volume, slice_thickness,
+                                      **({"fusion_policy": fusion_policy} if fusion_policy else {}))
         except Exception as exc:
             event(f"S{skill_id:02d}", "Failed", f"{type(exc).__name__}: {exc}")
             report["summary"] = "A review procedure failed; the original contour was retained."
@@ -55,7 +56,7 @@ def run_review(image, original, active, probabilities, simulated_keys, pixel_spa
         report["summary"] = "Real model outputs are required before automatic review can continue."
         report["next_action"] = "Resolve missing model weights or inference errors, then run review again. Manual contour review remains available."
         return report
-    event("Model gate", "Checked", "All configured probability maps are real, finite and in range. Adaptive expert ranking remains unavailable.")
+    event("Model gate", "Checked", "All configured probability maps are real, finite and in range. The recorded fusion policy is fixed; adaptive expert ranking remains unavailable.")
     evidence = execute(1)
     ambiguity = execute(3)
     if evidence is None or ambiguity is None or evidence["status"] == "Blocked" or ambiguity["status"] == "Blocked":
