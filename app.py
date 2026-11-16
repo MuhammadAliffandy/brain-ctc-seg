@@ -2041,46 +2041,71 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             hoverinfo='skip'
         ))
         
-    # Real 3D Cranial Anatomy (Skull & Brain Parenchyma from vol_3d)
-    skull_pos = np.argwhere(vol_3d > 0.78)
-    if len(skull_pos) > 0:
-        step_s = max(1, len(skull_pos) // 1800)
-        sub_s = skull_pos[::step_s]
-        fig.add_trace(go.Scatter3d(
-            x=sub_s[:, 2] * px,
-            y=sub_s[:, 1] * px,
-            z=sub_s[:, 0] * pz,
-            mode='markers',
-            marker=dict(size=2.2, color='#cbd5e1', opacity=0.14),
-            name='3D Cranial Skull (Input Volume)'
+    # Real 3D Volumetric Isosurface from the 3D NIfTI / NPZ / DICOM Volume
+    # Downsample spatially to <= 48x48x48 for smooth real-time WebGL 3D rotation
+    step_z = max(1, D // 44)
+    z_idx = np.arange(0, D, step_z)
+    ds_size = 48
+    vol_sub = np.stack([
+        cv2.resize(vol_3d[z].astype(np.float32), (ds_size, ds_size), interpolation=cv2.INTER_AREA)
+        for z in z_idx
+    ], axis=0)
+    mask_sub = np.stack([
+        cv2.resize((mask_3d[z] > 0).astype(np.float32), (ds_size, ds_size), interpolation=cv2.INTER_NEAREST)
+        for z in z_idx
+    ], axis=0)
+
+    sx_scale = (W * px) / float(ds_size - 1)
+    sy_scale = (H * px) / float(ds_size - 1)
+    zg, yg, xg = np.meshgrid(
+        z_idx.astype(np.float32) * pz,
+        np.arange(ds_size, dtype=np.float32) * sy_scale,
+        np.arange(ds_size, dtype=np.float32) * sx_scale,
+        indexing='ij'
+    )
+    xf, yf, zf = xg.flatten(), yg.flatten(), zg.flatten()
+    vf = vol_sub.flatten()
+    mf = mask_sub.flatten()
+
+    # 1. Translucent 3D Cranial Skull Surface
+    if np.max(vf) > 0.72:
+        fig.add_trace(go.Isosurface(
+            x=xf, y=yf, z=zf, value=vf,
+            isomin=0.72, isomax=1.0,
+            surface_count=1,
+            opacity=0.22,
+            colorscale=[[0, '#cbd5e1'], [1, '#f8fafc']],
+            showscale=False,
+            caps=dict(x_show=False, y_show=False, z_show=False),
+            name='3D Cranial Skull'
         ))
 
-    brain_pos = np.argwhere((vol_3d > 0.22) & (vol_3d <= 0.78))
-    if len(brain_pos) > 0:
-        step_b = max(1, len(brain_pos) // 1600)
-        sub_b = brain_pos[::step_b]
-        fig.add_trace(go.Scatter3d(
-            x=sub_b[:, 2] * px,
-            y=sub_b[:, 1] * px,
-            z=sub_b[:, 0] * pz,
-            mode='markers',
-            marker=dict(size=2.5, color='#64748b', opacity=0.10),
-            name='3D Brain Parenchyma (Input Volume)'
+    # 2. Translucent 3D Brain Parenchyma Surface
+    if np.max(vf) > 0.28:
+        fig.add_trace(go.Isosurface(
+            x=xf, y=yf, z=zf, value=vf,
+            isomin=0.28, isomax=0.68,
+            surface_count=1,
+            opacity=0.14,
+            colorscale=[[0, '#475569'], [1, '#94a3b8']],
+            showscale=False,
+            caps=dict(x_show=False, y_show=False, z_show=False),
+            name='3D Brain Parenchyma'
         ))
 
-    pos = np.argwhere(mask_3d > 0)
-    if len(pos) > 0:
-        step = max(1, len(pos) // 800)
-        sub_pos = pos[::step]
-        fig.add_trace(go.Scatter3d(
-            x=sub_pos[:, 2] * px,
-            y=sub_pos[:, 1] * px,
-            z=sub_pos[:, 0] * pz,
-            mode='markers',
-            marker=dict(size=5.5, color='#22c55e', opacity=0.92),
+    # 3. Solid 3D Detected Lesion / Flek Surface
+    if np.max(mf) > 0.45:
+        fig.add_trace(go.Isosurface(
+            x=xf, y=yf, z=zf, value=mf,
+            isomin=0.45, isomax=1.0,
+            surface_count=1,
+            opacity=0.92,
+            colorscale=[[0, '#22c55e'], [1, '#4ade80']],
+            showscale=False,
+            caps=dict(x_show=True, y_show=True, z_show=True),
             name='Detected 3D Lesion / Flek'
         ))
-        
+
     if current_z is not None and 0 <= current_z < D:
         fig.add_trace(go.Mesh3d(
             x=[x_min, x_max, x_max, x_min],
@@ -2088,10 +2113,10 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             z=[current_z * pz] * 4,
             i=[0, 0], j=[1, 2], k=[2, 3],
             color='#38bdf8',
-            opacity=0.25,
+            opacity=0.22,
             name=f'Active Slice Ax {current_z}'
         ))
-        
+
     fig.update_layout(
         template='plotly_dark',
         scene=dict(
@@ -2100,9 +2125,9 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             zaxis=dict(showbackground=False, visible=False),
             aspectmode='data'
         ),
-        paper_bgcolor='#272138',
+        paper_bgcolor='#0c0f14',
         height=380,
-        margin=dict(l=10, r=10, t=10, b=10)
+        margin=dict(l=0, r=0, t=0, b=0)
     )
     return fig
 
@@ -3829,16 +3854,23 @@ def main():
             agreement_counts=ensemble_data["agreement_counts"], v_thresh=v_thresh,
             show_agreement=show_agr_toggle, show_disagreement=show_dis_toggle,
             show_heatmap=show_heat_toggle, cmap_name=cmap_choice, heatmap_alpha=heatmap_alpha)
+        vol_3d_disp = np.stack([align_for_clinical_display(vol_3d[z], crop=CROP_MARGIN, rot_k=active_rot_k) for z in range(len(vol_3d))], axis=0)
+        mask_3d_disp = np.stack([align_for_clinical_display(mask_3d[z], crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True) for z in range(len(mask_3d))], axis=0)
+        fig_3d_real = create_plotly_3d_cranial_bbox(vol_3d_disp, mask_3d_disp, current_z=selected_z) if HAS_PLOTLY else None
+
         for row in [[("Axial", "ax_view"), ("3D volume", "bbox_view")], [("Coronal", "cor_view"), ("Sagittal", "sag_view")]]:
             left_view, right_view = st.columns(2)
             for view_col, (label, view_key) in zip([left_view, right_view], row):
                 with view_col:
                     st.caption(label)
-                    st.image(mpr[view_key], width="stretch")
+                    if view_key == "bbox_view" and fig_3d_real is not None:
+                        st.plotly_chart(fig_3d_real, width="stretch", key="mpr_3d_vol_main", config={"displayModeBar": False})
+                    else:
+                        st.image(mpr[view_key], width="stretch")
         st.caption(f"Slice {selected_z + 1} / {len(vol_3d)} · Green: contour agreement · Amber: differing boundary")
-        if HAS_PLOTLY:
-            with st.expander("Rotate 3D volume"):
-                st.plotly_chart(create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=selected_z), width="stretch")
+        if fig_3d_real is not None:
+            with st.expander("Rotate 3D volume (Full-width)"):
+                st.plotly_chart(fig_3d_real, width="stretch", key="mpr_3d_vol_expanded")
     init_progress_placeholder.empty()
     loading_note.empty()
     st.session_state["app_initialized"] = True
