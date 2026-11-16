@@ -2020,7 +2020,7 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     return out_u8
 
 
-def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None, phys_dims_mm=None):
+def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None, phys_dims_mm=None, height=495):
     """
     Renders the intact 3D cranial anatomy directly from the 3D NIfTI / NPZ / CT volume
     with true physical head proportions (no forced vertical stretching) and clearly marks
@@ -2039,8 +2039,8 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None, phys_dims_mm=
 
     fig = go.Figure()
 
-    # Smooth isotropic 3D resampling of the intact 3D volume (48 x 60 x 60)
-    tD, tH, tW = 48, 60, 60
+    # Smooth isotropic 3D resampling of the intact 3D volume (52 x 68 x 68)
+    tD, tH, tW = 52, 68, 68
     vol_iso = ndi.zoom(vol_3d.astype(np.float32), (tD / max(1, D), tH / max(1, H), tW / max(1, W)), order=1)
     vol_iso = ndi.gaussian_filter(vol_iso, sigma=0.55)
     mask_iso = ndi.zoom((mask_3d > 0).astype(np.float32), (tD / max(1, D), tH / max(1, H), tW / max(1, W)), order=0)
@@ -2144,11 +2144,11 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None, phys_dims_mm=
             yaxis=dict(showbackground=False, visible=False),
             zaxis=dict(showbackground=False, visible=False),
             aspectmode='data',
-            camera=dict(eye=dict(x=1.45, y=-1.45, z=0.75))
+            camera=dict(eye=dict(x=1.12, y=-1.12, z=0.58))
         ),
         showlegend=False,
         paper_bgcolor='#0c0f14',
-        height=380,
+        height=height,
         margin=dict(l=0, r=0, t=0, b=0)
     )
     return fig
@@ -3888,7 +3888,7 @@ def main():
             show_heatmap=show_heat_toggle, cmap_name=cmap_choice, heatmap_alpha=heatmap_alpha)
         vol_3d_intact = np.stack([align_for_clinical_display(vol_3d[z], crop=0, rot_k=active_rot_k) for z in range(len(vol_3d))], axis=0)
         mask_3d_intact = np.stack([align_for_clinical_display(mask_3d[z], crop=0, rot_k=active_rot_k, is_mask=True) for z in range(len(mask_3d))], axis=0)
-        fig_3d_real = create_plotly_3d_cranial_bbox(vol_3d_intact, mask_3d_intact, current_z=selected_z, phys_dims_mm=vol_phys_dims) if HAS_PLOTLY else None
+        fig_3d_real = create_plotly_3d_cranial_bbox(vol_3d_intact, mask_3d_intact, current_z=selected_z, phys_dims_mm=vol_phys_dims, height=495) if HAS_PLOTLY else None
 
         for row in [[("Axial", "ax_view"), ("3D volume", "bbox_view")], [("Coronal", "cor_view"), ("Sagittal", "sag_view")]]:
             left_view, right_view = st.columns(2)
@@ -3902,7 +3902,8 @@ def main():
         st.caption(f"Slice {selected_z + 1} / {len(vol_3d)} · Green: contour agreement · Amber: differing boundary")
         if fig_3d_real is not None:
             with st.expander("Rotate 3D volume (Full-width)"):
-                st.plotly_chart(fig_3d_real, width="stretch", key="mpr_3d_vol_expanded")
+                fig_3d_large = create_plotly_3d_cranial_bbox(vol_3d_intact, mask_3d_intact, current_z=selected_z, phys_dims_mm=vol_phys_dims, height=640)
+                st.plotly_chart(fig_3d_large, width="stretch", key="mpr_3d_vol_expanded")
     init_progress_placeholder.empty()
     loading_note.empty()
     st.session_state["app_initialized"] = True
