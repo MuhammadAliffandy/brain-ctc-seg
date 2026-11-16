@@ -552,6 +552,33 @@ if HAS_ESCNN:
             x  = self.up3(x, x2);  x = self.up4(x, x1)
             return self.outc(x).tensor
 
+    class _EqConv(nn.Module):
+        def __init__(self, in_t, out_t, mid_t=None):
+            super().__init__()
+            if mid_t is None: mid_t = out_t
+            self.seq = enn.SequentialModule(
+                enn.R2Conv(in_t, mid_t, 3, padding=1, bias=False),
+                enn.InnerBatchNorm(mid_t), enn.ReLU(mid_t, inplace=True),
+                enn.R2Conv(mid_t, out_t, 3, padding=1, bias=False),
+                enn.InnerBatchNorm(out_t), enn.ReLU(out_t, inplace=True),
+            )
+        def forward(self, x): return self.seq(x)
+
+    class _EqDown(nn.Module):
+        def __init__(self, a, b):
+            super().__init__()
+            self.pool = enn.PointwiseMaxPool(a, 2)
+            self.conv = _EqConv(a, b)
+        def forward(self, x): return self.conv(self.pool(x))
+
+    class _EqUp(nn.Module):
+        def __init__(self, a, b):
+            super().__init__()
+            self.up   = enn.R2Upsampling(a, scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = _EqConv(a + b, b)
+        def forward(self, x1, x2):
+            return self.conv(enn.tensor_directsum([x2, self.up(x1)]))
+
     class HarmonicNet(nn.Module):
         """HarmonicNet (C4 Equivariant Baseline): N=4 Discrete Rotations (5-stage U-Net)."""
         def __init__(self, n_channels=3, n_classes=2, N=4, base_channels=32):
@@ -561,9 +588,9 @@ if HAS_ESCNN:
             def ft(n): return enn.FieldType(self.act, n * [self.act.regular_repr])
             self.fin = enn.FieldType(self.act, n_channels * [self.act.trivial_repr])
             f1, f2, f3, f4, f5 = ft(c), ft(c*2), ft(c*4), ft(c*8), ft(c*16)
-            self.inc   = DoubleEquivariantConv(self.fin, f1)
-            self.d1, self.d2, self.d3, self.d4 = Down(f1, f2), Down(f2, f3), Down(f3, f4), Down(f4, f5)
-            self.u1, self.u2, self.u3, self.u4 = Up(f5, f4), Up(f4, f3), Up(f3, f2), Up(f2, f1)
+            self.inc   = _EqConv(self.fin, f1)
+            self.d1, self.d2, self.d3, self.d4 = _EqDown(f1, f2), _EqDown(f2, f3), _EqDown(f3, f4), _EqDown(f4, f5)
+            self.u1, self.u2, self.u3, self.u4 = _EqUp(f5, f4), _EqUp(f4, f3), _EqUp(f3, f2), _EqUp(f2, f1)
             out_t = enn.FieldType(self.act, n_classes * [self.act.trivial_repr])
             self.outc = enn.R2Conv(f1, out_t, 1)
 
@@ -578,6 +605,9 @@ else:
     Up = None
     OutConv = None
     SE2_CNNET = None
+    _EqConv = None
+    _EqDown = None
+    _EqUp = None
     HarmonicNet = None
 
 
@@ -1148,16 +1178,16 @@ def run_single_inference(model, tensor, device_str):
     if model is None: return None
     device = torch.device(device_str)
     try:
+        orig_h, orig_w = tensor.shape[-2], tensor.shape[-1]
         with torch.no_grad():
             t = tensor.to(device)
-            if device.type == 'cuda':
-                with torch.amp.autocast('cuda'):
-                    logits = model(t)
-            else:
-                logits = model(t)
-
+            if orig_h != 512 or orig_w != 512:
+                t = F.interpolate(t, size=(512, 512), mode='bilinear', align_corners=False)
+            logits = model(t)
             probs = F.softmax(logits, dim=1) # [1, 2, H, W]
             tumor_prob = probs[0, 1].squeeze(0).cpu().numpy().astype(np.float32)
+            if tumor_prob.shape != (orig_h, orig_w):
+                tumor_prob = cv2.resize(tumor_prob, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
             return tumor_prob
     except Exception as e:
         print(f"Inference error: {e}")
@@ -3550,7 +3580,13 @@ def main():
 
     active_slice_img = vol_3d[selected_z]
     active_slice_mask = mask_3d[selected_z]
-    active_tensor = torch.from_numpy(np.stack([active_slice_img] * 3, axis=0)).unsqueeze(0).float()
+    z_prev = max(0, selected_z - 1)
+    z_next = min(len(vol_3d) - 1, selected_z + 1)
+    img_25d = np.stack([vol_3d[z_prev], active_slice_img, vol_3d[z_next]], axis=0).astype(np.float32)
+    img_min, img_max = float(img_25d.min()), float(img_25d.max())
+    if img_max > img_min:
+        img_25d = (img_25d - img_min) / (img_max - img_min)
+    active_tensor = torch.from_numpy(img_25d).unsqueeze(0).float()
     cache_key = f"{selected_dataset_name}_{slice_title}_z{selected_z}"
     prediction_cache = st.session_state.setdefault("review_prediction_cache", {})
     with findings_col:
