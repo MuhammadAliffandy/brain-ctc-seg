@@ -1891,144 +1891,92 @@ def create_3d_bounding_box_canvas(vol_3d, mask_3d, rot_k=1, crop=40):
 
 def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     """
-    Renders 3D Slicer-style 3D Bounding Box View matching reference screenshot:
-    - Purple/Slate gradient background (top lavender to bottom slate/purple)
-    - 3D perspective wireframe bounding box with magenta/purple edges
-    - Anatomical orientation labels: S (Superior), I (Inferior), R (Right), L (Left)
-    - 3D organic solid green tumor model with surface lighting, highlights, and depth inside the box
-    - Active slice cutting plane indicator at current_z
+    Renders a real 3D volumetric representation of the input CT volume (`vol_3d`)
+    together with the detected 3D lesion/flek (`mask_3d`) in its true anatomical
+    position — no fake/synthetic tumor blobs.
     """
     H, W = size, size
-    canvas = np.zeros((H, W, 3), dtype=np.uint8)
-    
-    # 1. 3D Slicer-style purple/slate gradient background
-    for y in range(H):
-        ratio = y / float(H)
-        r = int(126 * (1.0 - ratio) + 38 * ratio)
-        g = int(118 * (1.0 - ratio) + 32 * ratio)
-        b = int(158 * (1.0 - ratio) + 52 * ratio)
-        canvas[y, :] = (b, g, r) # OpenCV BGR
-        
-    # 2. 3D Perspective Bounding Box matching Image 1
-    # Front face (large outer rectangle)
-    fx0, fx1 = 44, 212
-    fy0, fy1 = 36, 220
-    # Back face (smaller inner rectangle in perspective)
-    bx0, bx1 = 82, 174
-    by0, by1 = 64, 192
-    
-    bbox_color = (205, 40, 190)      # Magenta/purple in BGR
-    bbox_back_color = (165, 30, 150) # Slightly darker for depth
-    
-    # Draw back face rectangle
-    cv2.rectangle(canvas, (bx0, by0), (bx1, by1), bbox_back_color, 1, cv2.LINE_AA)
-    
-    # Draw 4 corner depth connector lines (front to back)
-    cv2.line(canvas, (fx0, fy0), (bx0, by0), bbox_color, 2, cv2.LINE_AA)
-    cv2.line(canvas, (fx1, fy0), (bx1, by0), bbox_color, 2, cv2.LINE_AA)
-    cv2.line(canvas, (fx1, fy1), (bx1, by1), bbox_color, 2, cv2.LINE_AA)
-    cv2.line(canvas, (fx0, fy1), (bx0, by1), bbox_color, 2, cv2.LINE_AA)
-    
-    # Draw front face rectangle
-    cv2.rectangle(canvas, (fx0, fy0), (fx1, fy1), bbox_color, 2, cv2.LINE_AA)
-    
-    # 3. Orientation Letters directly matching Image 1
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.52
-    txt_col = (255, 255, 255)
-    thick = 2
-    
-    # 'S' centered above top edge
-    cv2.putText(canvas, 'S', (123, 26), font, font_scale, txt_col, thick, cv2.LINE_AA)
-    # 'I' centered below bottom edge
-    cv2.putText(canvas, 'I', (125, 240), font, font_scale, txt_col, thick, cv2.LINE_AA)
-    # 'R' centered to left of left edge
-    cv2.putText(canvas, 'R', (20, 134), font, font_scale, txt_col, thick, cv2.LINE_AA)
-    # 'L' centered to right of right edge
-    cv2.putText(canvas, 'L', (224, 134), font, font_scale, txt_col, thick, cv2.LINE_AA)
-    
-    # 4. Realistic 3D Green Tumor Model in the center of the box
-    D, vH, vW = vol_3d.shape
-    pos = np.argwhere(mask_3d > 0)
-    
-    # If full volume has no non-zero mask (e.g. initial upload of raw scan), generate a candidate lesion ellipsoid
-    if len(pos) == 0 and current_z is not None:
-        cz = int(np.clip(current_z, 0, D - 1))
-        # Derive lesion candidate from current slice brightest tissue or center-right parenchyma
-        sl = vol_3d[cz]
-        bright_y, bright_x = np.where((sl > 0.40) & (sl < 0.75))
-        if len(bright_x) > 20:
-            tc_y, tc_x = int(np.median(bright_y)), int(np.median(bright_x))
-        else:
-            tc_y, tc_x = 120, 140
-        syn_pos = []
-        for dz in range(-5, 6):
-            rz_scale = np.sqrt(max(0.0, 1.0 - (dz / 6.0)**2))
-            r_pts = int(14 * rz_scale)
-            for dy in range(-r_pts, r_pts + 1, 2):
-                for dx in range(-r_pts, r_pts + 1, 2):
-                    if dy**2 + dx**2 <= r_pts**2:
-                        syn_pos.append([cz + dz, tc_y + dy, tc_x + dx])
-        pos = np.array(syn_pos)
+    canvas = np.zeros((H, W, 3), dtype=np.float32)
+    canvas[:, :] = (20.0, 15.0, 12.0)  # BGR (#0c0f14)
 
-    if len(pos) > 0:
-        zc, yc, xc = np.mean(pos, axis=0)
-        min_z, min_y, min_x = np.min(pos, axis=0)
-        max_z, max_y, max_x = np.max(pos, axis=0)
-        span_x = max(1, max_x - min_x)
-        span_y = max(1, max_y - min_y)
-        span_z = max(1, max_z - min_z)
-        
-        target_radius = 32.0
-        step = max(1, len(pos) // 900)
-        sub_pts = pos[::step]
-        
-        light = np.array([0.4, -0.6, 0.7])
-        light = light / np.linalg.norm(light)
-        
-        rendered_pts = []
-        for p in sub_pts:
-            zv, yv, xv = p
-            rx = (xv - xc) / (span_x / 2.0 + 1e-5)
-            ry = (yv - yc) / (span_y / 2.0 + 1e-5)
-            rz = (zv - zc) / (span_z / 2.0 + 1e-5)
-            
-            depth_factor = 1.0 - 0.22 * rz
-            sx = int(128 + rx * target_radius * depth_factor)
-            sy = int(128 + ry * target_radius * depth_factor * 0.95 - rz * 8.0)
-            depth_sort = rz * 0.7 + ry * 0.3
-            rendered_pts.append((depth_sort, sx, sy, rx, ry, rz))
-            
-        rendered_pts.sort(key=lambda x: x[0])
-        
-        tumor_layer = canvas.copy()
-        for depth_sort, sx, sy, rx, ry, rz in rendered_pts:
-            if 10 <= sx < W - 10 and 10 <= sy < H - 10:
-                norm = np.array([rx, ry, rz]) + np.random.normal(0, 0.12, 3)
-                norm = norm / (np.linalg.norm(norm) + 1e-5)
-                
-                diff = max(0.25, float(np.dot(norm, light)))
-                refl = 2.0 * diff * norm - light
-                spec = max(0.0, float(refl[2])) ** 8
-                
-                g = int(np.clip(55 + 150 * diff + 60 * spec, 35, 250))
-                r = int(np.clip(20 + 80 * diff + 80 * spec, 15, 170))
-                b = int(np.clip(25 + 75 * diff + 70 * spec, 15, 165))
-                
-                rad = int(np.clip(4 * (1.0 + 0.15 * rz), 2, 6))
-                cv2.circle(tumor_layer, (sx, sy), rad, (b, g, r), -1)
-                
-        cv2.addWeighted(tumor_layer, 0.96, canvas, 0.04, 0, canvas)
-        
-    # 5. Active slice depth indicator
+    D, vH, vW = vol_3d.shape
+    if D == 0:
+        return canvas.astype(np.uint8)
+
+    step_z = max(1, D // 48)
+    z_indices = list(range(0, D, step_z))
+    if current_z is not None and 0 <= current_z < D and current_z not in z_indices:
+        z_indices.append(int(current_z))
+        z_indices.sort()
+
+    scale_x = 0.72
+    scale_y = 0.42
+    shear_x = -0.14
+    z_span_px = min(110.0, max(52.0, D * 2.2))
+    cx_out, cy_out = W * 0.50, H * 0.54
+
+    brain_acc = np.zeros((H, W, 3), dtype=np.float32)
+    lesion_acc = np.zeros((H, W, 3), dtype=np.float32)
+    lesion_alpha_acc = np.zeros((H, W), dtype=np.float32)
+
+    for z in z_indices:
+        nz = (z / float(max(1, D - 1))) - 0.5
+        y_shift = -nz * z_span_px
+        M = np.array([
+            [scale_x, shear_x, cx_out - (vW * 0.5 * scale_x) - (vH * 0.5 * shear_x)],
+            [0.0,     scale_y, cy_out + y_shift - (vH * 0.5 * scale_y)]
+        ], dtype=np.float32)
+
+        sl = cv2.warpAffine(vol_3d[z].astype(np.float32), M, (W, H), flags=cv2.INTER_LINEAR, borderValue=0.0)
+        msk = cv2.warpAffine(mask_3d[z].astype(np.float32), M, (W, H), flags=cv2.INTER_NEAREST, borderValue=0.0)
+
+        depth_shade = 0.65 + 0.35 * (nz + 0.5)
+        parenchyma = np.clip((sl - 0.12) / 0.68, 0.0, 1.0)
+        skull = np.clip((sl - 0.78) / 0.22, 0.0, 1.0)
+
+        sl_b = (parenchyma * 95.0 + skull * 155.0) * depth_shade
+        sl_g = (parenchyma * 88.0 + skull * 165.0) * depth_shade
+        sl_r = (parenchyma * 82.0 + skull * 175.0) * depth_shade
+
+        alpha_vol = np.clip(parenchyma * 0.14 + skull * 0.24, 0.0, 0.35)
+        brain_acc[:, :, 0] = brain_acc[:, :, 0] * (1.0 - alpha_vol) + sl_b * alpha_vol
+        brain_acc[:, :, 1] = brain_acc[:, :, 1] * (1.0 - alpha_vol) + sl_g * alpha_vol
+        brain_acc[:, :, 2] = brain_acc[:, :, 2] * (1.0 - alpha_vol) + sl_r * alpha_vol
+
+        if current_z is not None and z == int(current_z):
+            edge = cv2.Canny((sl > 0.15).astype(np.uint8) * 255, 50, 150)
+            brain_acc[edge > 0] = (235.0, 185.0, 90.0)
+
+        fg = msk > 0.5
+        if np.any(fg):
+            lesion_shade = 0.55 + 0.45 * (nz + 0.5)
+            lesion_acc[fg, 0] = 65.0 * lesion_shade
+            lesion_acc[fg, 1] = 220.0 * lesion_shade
+            lesion_acc[fg, 2] = 55.0 * lesion_shade
+            lesion_alpha_acc[fg] = 0.88
+
+    out = np.clip(canvas + brain_acc * 1.45, 0, 255)
+    la = lesion_alpha_acc[..., None]
+    out = out * (1.0 - la) + lesion_acc * la
+    out_u8 = np.clip(out, 0, 255).astype(np.uint8)
+
+    fx0, fx1 = 36, W - 36
+    fy0, fy1 = 28, H - 28
+    cv2.rectangle(out_u8, (fx0, fy0), (fx1, fy1), (75, 65, 90), 1, cv2.LINE_AA)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    txt_col = (210, 220, 235)
+    cv2.putText(out_u8, 'S', (W // 2 - 5, 20), font, 0.45, txt_col, 1, cv2.LINE_AA)
+    cv2.putText(out_u8, 'I', (W // 2 - 3, H - 10), font, 0.45, txt_col, 1, cv2.LINE_AA)
+    cv2.putText(out_u8, 'R', (14, H // 2 + 4), font, 0.45, txt_col, 1, cv2.LINE_AA)
+    cv2.putText(out_u8, 'L', (W - 24, H // 2 + 4), font, 0.45, txt_col, 1, cv2.LINE_AA)
+
     if current_z is not None and 0 <= current_z < D:
-        z_ratio = current_z / float(max(1, D - 1))
-        py_slice = int(fy1 - z_ratio * (fy1 - fy0))
-        cv2.line(canvas, (fx0, py_slice), (fx1, py_slice), (255, 220, 100), 1, cv2.LINE_AA)
-        cv2.putText(canvas, f"Ax {current_z}", (fx0 + 4, max(fy0 + 12, py_slice - 4)),
-                    font, 0.32, (255, 220, 100), 1, cv2.LINE_AA)
-        
-    return canvas
+        nz_cur = (current_z / float(max(1, D - 1))) - 0.5
+        py_slice = int(np.clip(cy_out - nz_cur * z_span_px, fy0 + 12, fy1 - 6))
+        cv2.putText(out_u8, f"Ax {current_z}", (fx0 + 6, py_slice), font, 0.34, (235, 195, 100), 1, cv2.LINE_AA)
+
+    return out_u8
 
 
 def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
@@ -2093,9 +2041,36 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             hoverinfo='skip'
         ))
         
+    # Real 3D Cranial Anatomy (Skull & Brain Parenchyma from vol_3d)
+    skull_pos = np.argwhere(vol_3d > 0.78)
+    if len(skull_pos) > 0:
+        step_s = max(1, len(skull_pos) // 1800)
+        sub_s = skull_pos[::step_s]
+        fig.add_trace(go.Scatter3d(
+            x=sub_s[:, 2] * px,
+            y=sub_s[:, 1] * px,
+            z=sub_s[:, 0] * pz,
+            mode='markers',
+            marker=dict(size=2.2, color='#cbd5e1', opacity=0.14),
+            name='3D Cranial Skull (Input Volume)'
+        ))
+
+    brain_pos = np.argwhere((vol_3d > 0.22) & (vol_3d <= 0.78))
+    if len(brain_pos) > 0:
+        step_b = max(1, len(brain_pos) // 1600)
+        sub_b = brain_pos[::step_b]
+        fig.add_trace(go.Scatter3d(
+            x=sub_b[:, 2] * px,
+            y=sub_b[:, 1] * px,
+            z=sub_b[:, 0] * pz,
+            mode='markers',
+            marker=dict(size=2.5, color='#64748b', opacity=0.10),
+            name='3D Brain Parenchyma (Input Volume)'
+        ))
+
     pos = np.argwhere(mask_3d > 0)
     if len(pos) > 0:
-        step = max(1, len(pos) // 600)
+        step = max(1, len(pos) // 800)
         sub_pos = pos[::step]
         fig.add_trace(go.Scatter3d(
             x=sub_pos[:, 2] * px,
@@ -2103,7 +2078,7 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             z=sub_pos[:, 0] * pz,
             mode='markers',
             marker=dict(size=5.5, color='#22c55e', opacity=0.92),
-            name='3D Green Tumor Model'
+            name='Detected 3D Lesion / Flek'
         ))
         
     if current_z is not None and 0 <= current_z < D:
@@ -3364,8 +3339,8 @@ def main():
 
     elif input_source == "📤 Upload Custom Scan":
         uploaded_file = st.file_uploader(
-            "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPY / PNG)",
-            type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy"]
+            "Upload Brain CT Scan (NIfTI .nii/.nii.gz / DICOM .dcm / Series .zip / NPZ / NPY / PNG)",
+            type=["dcm", "zip", "nii", "gz", "png", "jpg", "jpeg", "npy", "npz"]
         )
         if uploaded_file is not None:
             slice_title = uploaded_file.name
@@ -3504,6 +3479,63 @@ def main():
                 else:
                     img_raw = arr.astype(np.float32)
                     tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+            elif fname_lower.endswith(".npz"):
+                try:
+                    npz_obj = np.load(uploaded_file)
+                    npz_keys = list(npz_obj.files)
+                    img_key = next((k for k in ["image", "img", "vol", "volume", "data", "x", "ct"] if k in npz_keys), npz_keys[0])
+                    msk_key = next((k for k in ["mask", "label", "seg", "y", "gt"] if k in npz_keys and k != img_key), None)
+                    arr = npz_obj[img_key].astype(np.float32)
+                    if arr.ndim == 4:
+                        arr = arr[..., 0]
+                    if arr.ndim == 3 and arr.shape[-1] == 3 and min(arr.shape[0], arr.shape[1]) > 16:
+                        if arr.max() > arr.min():
+                            arr = (arr - arr.min()) / (arr.max() - arr.min())
+                        img_raw = arr[..., 1]
+                        if img_raw.shape != (256, 256):
+                            img_raw = cv2.resize(img_raw, (256, 256), interpolation=cv2.INTER_LINEAR)
+                        tensor_native = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).float()
+                    elif arr.ndim == 3:
+                        if arr.shape[2] < arr.shape[0] and arr.shape[2] < arr.shape[1]:
+                            arr = np.transpose(arr, (2, 0, 1))
+                        if np.nanmin(arr) < -100 or np.nanmax(arr) > 200:
+                            w_min, w_max = 40.0 - 40.0, 40.0 + 40.0
+                            norm_data = np.clip((arr - w_min) / (w_max - w_min + 1e-5), 0.0, 1.0)
+                        elif arr.max() > 1.0 or arr.min() < 0.0:
+                            dmin, dmax = float(np.nanmin(arr)), float(np.nanmax(arr))
+                            norm_data = (arr - dmin) / (dmax - dmin + 1e-5) if dmax > dmin else np.clip(arr, 0.0, 1.0)
+                        else:
+                            norm_data = np.clip(arr, 0.0, 1.0)
+                        vol_3d = np.stack([
+                            cv2.resize(norm_data[s], (256, 256), interpolation=cv2.INTER_LINEAR)
+                            if norm_data[s].shape != (256, 256) else norm_data[s]
+                            for s in range(len(norm_data))
+                        ], axis=0).astype(np.float32)
+                        if msk_key is not None:
+                            m_arr = npz_obj[msk_key]
+                            if m_arr.ndim == 4: m_arr = m_arr[..., 0]
+                            if m_arr.ndim == 3 and m_arr.shape[2] < m_arr.shape[0] and m_arr.shape[2] < m_arr.shape[1]:
+                                m_arr = np.transpose(m_arr, (2, 0, 1))
+                            mask_3d = np.stack([
+                                (cv2.resize((m_arr[s] > 0).astype(np.uint8), (256, 256), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8)
+                                for s in range(min(len(vol_3d), len(m_arr)))
+                            ], axis=0)
+                            s_sums = mask_3d.reshape(len(mask_3d), -1).sum(axis=1)
+                            patient_z_active = int(np.argmax(s_sums)) if s_sums.max() > 0 else len(vol_3d) // 2
+                        else:
+                            mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
+                            patient_z_active = len(vol_3d) // 2
+                        img_raw = vol_3d[patient_z_active]
+                        mask_raw = mask_3d[patient_z_active]
+                        tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                        st.success(f"📦 3D NPZ Volume Loaded: **{vol_3d.shape[0]} slices** (key: `{img_key}`)")
+                    else:
+                        if arr.max() > arr.min():
+                            arr = (arr - arr.min()) / (arr.max() - arr.min())
+                        img_raw = cv2.resize(arr, (256, 256), interpolation=cv2.INTER_LINEAR) if arr.shape != (256, 256) else arr
+                        tensor_native = torch.from_numpy(np.stack([img_raw]*3, axis=0)).unsqueeze(0).float()
+                except Exception as e:
+                    st.error(f"Error reading NPZ file: {e}")
             else:
                 pil_img = Image.open(uploaded_file).convert("L")
                 img_raw = np.array(pil_img).astype(np.float32) / 255.0
@@ -3636,8 +3668,8 @@ def main():
     is_clinician_edited = slice_edit_key in edited_masks
     active_consensus_mask = edited_masks.get(slice_edit_key, ensemble_data["ensemble_mask"])
     consensus_meas = compute_physical_measurements(active_consensus_mask)
-    # Convert the displayed contour back to volume coordinates before updating its slice.
-    if is_clinician_edited:
+    # Convert the displayed/detected contour back to volume coordinates before updating its slice.
+    if is_clinician_edited or (np.sum(active_consensus_mask) > 0 and np.sum(mask_3d[selected_z]) == 0):
         native_mask = np.rot90(active_consensus_mask, -active_rot_k)
         height, width = mask_3d.shape[1:]
         margin = CROP_MARGIN if min(height, width) > 2 * CROP_MARGIN else 0
