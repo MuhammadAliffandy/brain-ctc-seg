@@ -928,21 +928,58 @@ def discover_dgx_nifti_cases(max_samples=1):
     return cases
 
 
+def extract_nifti_phys_dims(nii_obj, shape_before_resize):
+    """Computes real physical (Lx, Ly, Lz) in mm from NIfTI header zooms."""
+    try:
+        zooms = [float(z) for z in nii_obj.header.get_zooms()[:3]]
+        # shape_before_resize is (D, H, W) after transposing Z to axis 0
+        # Map zooms accordingly: assume in-plane zooms are the two smaller dims or first two
+        z_sorted = sorted(zooms)
+        dx = zooms[0] if zooms[0] > 0 else 0.5
+        dy = zooms[1] if zooms[1] > 0 else 0.5
+        dz = zooms[2] if zooms[2] > 0 else 5.0
+        D, H, W = shape_before_resize
+        lx = float(np.clip(W * dx, 150.0, 280.0))
+        ly = float(np.clip(H * dy, 150.0, 280.0))
+        lz = float(np.clip(D * dz, 100.0, 220.0))
+        return (lx, ly, lz)
+    except Exception:
+        return (220.0, 220.0, 150.0)
+
+
 @st.cache_data(show_spinner=False)
 def load_dgx_nifti_3d_volume(img_path, mask_path=None):
     """
-    Loads full 3D NIfTI volume from DGX server path, applies standard CT brain windowing,
-    and returns (vol_3d, mask_3d, best_z).
+    Loads full 3D NIfTI volume from DGX server path, applies canonical orientation
+    and standard CT brain windowing, and returns (vol_3d, mask_3d, best_z).
     """
     try:
         import nibabel as nib
-        nii_obj = nib.load(img_path)
+        raw_nii = nib.load(img_path)
+        try:
+            nii_obj = nib.as_closest_canonical(raw_nii)
+        except Exception:
+            nii_obj = raw_nii
         data = nii_obj.get_fdata().astype(np.float32)
         if data.ndim == 4:
             data = data[..., 0]
+        zooms = [float(z) for z in nii_obj.header.get_zooms()[:3]]
         if data.ndim == 3:
-            if not (data.shape[0] < data.shape[1] and data.shape[0] < data.shape[2]):
-                data = np.transpose(data, (2, 0, 1))
+            if data.shape[0] < data.shape[1] and data.shape[0] < data.shape[2]:
+                # Already (D, H, W)
+                dx, dy, dz = zooms[1], zooms[2], zooms[0]
+            else:
+                # Standard NIfTI (X, Y, Z) -> transpose to (Z, Y, X)
+                data = np.transpose(data, (2, 1, 0))
+                dx, dy, dz = zooms[0], zooms[1], zooms[2]
+        else:
+            dx, dy, dz = 0.5, 0.5, 5.0
+
+        phys_dims = (
+            float(np.clip(data.shape[2] * dx, 150.0, 280.0)),
+            float(np.clip(data.shape[1] * dy, 150.0, 280.0)),
+            float(np.clip(data.shape[0] * dz, 100.0, 220.0))
+        )
 
         # CT HU windowing: Brain window (WL=40, WW=80)
         if np.nanmin(data) < -100 or np.nanmax(data) > 200:
@@ -959,12 +996,16 @@ def load_dgx_nifti_3d_volume(img_path, mask_path=None):
 
         mask_3d = np.zeros_like(vol_3d, dtype=np.uint8)
         if mask_path and os.path.exists(mask_path):
-            m_obj = nib.load(mask_path)
+            raw_m = nib.load(mask_path)
+            try:
+                m_obj = nib.as_closest_canonical(raw_m)
+            except Exception:
+                m_obj = raw_m
             m_data = m_obj.get_fdata()
             if m_data.ndim == 4: m_data = m_data[..., 0]
             if m_data.ndim == 3:
                 if not (m_data.shape[0] < m_data.shape[1] and m_data.shape[0] < m_data.shape[2]):
-                    m_data = np.transpose(m_data, (2, 0, 1))
+                    m_data = np.transpose(m_data, (2, 1, 0))
             for s in range(min(mask_3d.shape[0], m_data.shape[0])):
                 resized_m = cv2.resize((m_data[s] > 0).astype(np.uint8), (256, 256), interpolation=cv2.INTER_NEAREST)
                 mask_3d[s] = (resized_m > 0).astype(np.uint8)
@@ -975,10 +1016,10 @@ def load_dgx_nifti_3d_volume(img_path, mask_path=None):
         else:
             best_z = len(vol_3d) // 2
 
-        return vol_3d, mask_3d, best_z
+        return vol_3d, mask_3d, best_z, phys_dims
     except Exception as e:
         print(f"Error loading DGX NIfTI: {e}")
-        return None, None, 0
+        return None, None, 0, (220.0, 220.0, 150.0)
 
 
 @st.cache_data(show_spinner=False)
@@ -1979,142 +2020,121 @@ def render_3d_brain_whole(vol_3d, mask_3d, current_z=None, size=256):
     return out_u8
 
 
-def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
+def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None, phys_dims_mm=None):
     """
-    Creates an interactive 3D Slicer-style orbital figure:
-    - 3D magenta/purple bounding box wireframe
-    - S, I, R, L anatomical orientation markers
-    - Full 3D green tumor surface
-    - Active slice plane
+    Renders the intact 3D cranial anatomy directly from the 3D NIfTI / NPZ / CT volume
+    with true physical head proportions (no forced vertical stretching) and clearly marks
+    the 3D segmented lesion/flek inside the brain.
     """
-    D, H, W = vol_3d.shape
-    px = PIXEL_SPACING_MM
-    pz = SLICE_THICKNESS_MM
-    
-    fig = go.Figure()
-    
-    x_min, x_max = 0, W * px
-    y_min, y_max = 0, H * px
-    z_min, z_max = 0, D * pz
-    
-    # 12 edges of the 3D bounding box
-    cube_edges = [
-        ([x_min, x_max], [y_min, y_min], [z_min, z_min]),
-        ([x_max, x_max], [y_min, y_max], [z_min, z_min]),
-        ([x_max, x_min], [y_max, y_max], [z_min, z_min]),
-        ([x_min, x_min], [y_max, y_min], [z_min, z_min]),
-        ([x_min, x_max], [y_min, y_min], [z_max, z_max]),
-        ([x_max, x_max], [y_min, y_max], [z_max, z_max]),
-        ([x_max, x_min], [y_max, y_max], [z_max, z_max]),
-        ([x_min, x_min], [y_max, y_min], [z_max, z_max]),
-        ([x_min, x_min], [y_min, y_min], [z_min, z_max]),
-        ([x_max, x_max], [y_min, y_min], [z_min, z_max]),
-        ([x_max, x_max], [y_max, y_max], [z_min, z_max]),
-        ([x_min, x_min], [y_max, y_max], [z_min, z_max]),
-    ]
-    for ex, ey, ez in cube_edges:
-        fig.add_trace(go.Scatter3d(
-            x=ex, y=ey, z=ez,
-            mode='lines',
-            line=dict(color='#d946ef', width=4),
-            showlegend=False,
-            hoverinfo='skip'
-        ))
-        
-    mid_x = (x_min + x_max) / 2.0
-    mid_y = (y_min + y_max) / 2.0
-    mid_z = (z_min + z_max) / 2.0
-    
-    labels_pos = [
-        ("S", mid_x, mid_y, z_max + 12),
-        ("I", mid_x, mid_y, z_min - 12),
-        ("R", x_min - 15, mid_y, mid_z),
-        ("L", x_max + 15, mid_y, mid_z),
-    ]
-    for lbl, lx, ly, lz in labels_pos:
-        fig.add_trace(go.Scatter3d(
-            x=[lx], y=[ly], z=[lz],
-            mode='text',
-            text=[f"<b>{lbl}</b>"],
-            textfont=dict(size=16, color='white'),
-            showlegend=False,
-            hoverinfo='skip'
-        ))
-        
-    # Real 3D Volumetric Isosurface from the 3D NIfTI / NPZ / DICOM Volume
-    # Downsample spatially to <= 48x48x48 for smooth real-time WebGL 3D rotation
-    step_z = max(1, D // 44)
-    z_idx = np.arange(0, D, step_z)
-    ds_size = 48
-    vol_sub = np.stack([
-        cv2.resize(vol_3d[z].astype(np.float32), (ds_size, ds_size), interpolation=cv2.INTER_AREA)
-        for z in z_idx
-    ], axis=0)
-    mask_sub = np.stack([
-        cv2.resize((mask_3d[z] > 0).astype(np.float32), (ds_size, ds_size), interpolation=cv2.INTER_NEAREST)
-        for z in z_idx
-    ], axis=0)
+    import scipy.ndimage as ndi
 
-    sx_scale = (W * px) / float(ds_size - 1)
-    sy_scale = (H * px) / float(ds_size - 1)
+    D, H, W = vol_3d.shape
+    if phys_dims_mm is not None and len(phys_dims_mm) == 3:
+        Lx, Ly, Lz = [float(v) for v in phys_dims_mm]
+    else:
+        # Realistic cranial proportions (220mm L-R x 220mm A-P x ~150mm S-I)
+        Lx = 220.0
+        Ly = 220.0
+        Lz = float(np.clip(D * SLICE_THICKNESS_MM, 120.0, 175.0))
+
+    fig = go.Figure()
+
+    # Smooth isotropic 3D resampling of the intact 3D volume (48 x 60 x 60)
+    tD, tH, tW = 48, 60, 60
+    vol_iso = ndi.zoom(vol_3d.astype(np.float32), (tD / max(1, D), tH / max(1, H), tW / max(1, W)), order=1)
+    vol_iso = ndi.gaussian_filter(vol_iso, sigma=0.55)
+    mask_iso = ndi.zoom((mask_3d > 0).astype(np.float32), (tD / max(1, D), tH / max(1, H), tW / max(1, W)), order=0)
+    mask_iso = ndi.gaussian_filter(mask_iso, sigma=0.35)
+
     zg, yg, xg = np.meshgrid(
-        z_idx.astype(np.float32) * pz,
-        np.arange(ds_size, dtype=np.float32) * sy_scale,
-        np.arange(ds_size, dtype=np.float32) * sx_scale,
+        np.linspace(0.0, Lz, tD, dtype=np.float32),
+        np.linspace(0.0, Ly, tH, dtype=np.float32),
+        np.linspace(0.0, Lx, tW, dtype=np.float32),
         indexing='ij'
     )
     xf, yf, zf = xg.flatten(), yg.flatten(), zg.flatten()
-    vf = vol_sub.flatten()
-    mf = mask_sub.flatten()
+    vf = vol_iso.flatten()
+    mf = mask_iso.flatten()
 
-    # 1. Translucent 3D Cranial Skull Surface
-    if np.max(vf) > 0.72:
+    # 1. Intact 3D Cranial Skull Surface (from NIfTI/CT input)
+    if np.max(vf) > 0.62:
         fig.add_trace(go.Isosurface(
             x=xf, y=yf, z=zf, value=vf,
-            isomin=0.72, isomax=1.0,
+            isomin=0.62, isomax=1.0,
             surface_count=1,
-            opacity=0.22,
+            opacity=0.20,
             colorscale=[[0, '#cbd5e1'], [1, '#f8fafc']],
             showscale=False,
-            caps=dict(x_show=False, y_show=False, z_show=False),
-            name='3D Cranial Skull'
+            caps=dict(x_show=True, y_show=True, z_show=True),
+            name='3D Cranial Skull (NIfTI)'
         ))
 
-    # 2. Translucent 3D Brain Parenchyma Surface
-    if np.max(vf) > 0.28:
+    # 2. Intact 3D Brain Parenchyma / Head Surface
+    if np.max(vf) > 0.20:
         fig.add_trace(go.Isosurface(
             x=xf, y=yf, z=zf, value=vf,
-            isomin=0.28, isomax=0.68,
+            isomin=0.20, isomax=0.60,
             surface_count=1,
-            opacity=0.14,
+            opacity=0.10,
             colorscale=[[0, '#475569'], [1, '#94a3b8']],
             showscale=False,
-            caps=dict(x_show=False, y_show=False, z_show=False),
-            name='3D Brain Parenchyma'
+            caps=dict(x_show=True, y_show=True, z_show=True),
+            name='3D Brain Tissue (NIfTI)'
         ))
 
-    # 3. Solid 3D Detected Lesion / Flek Surface
-    if np.max(mf) > 0.45:
+    # 3. Marked 3D Segmented Lesion / Flek + Highlight Marker Box
+    if np.max(mf) > 0.38:
         fig.add_trace(go.Isosurface(
             x=xf, y=yf, z=zf, value=mf,
-            isomin=0.45, isomax=1.0,
+            isomin=0.38, isomax=1.0,
             surface_count=1,
-            opacity=0.92,
-            colorscale=[[0, '#22c55e'], [1, '#4ade80']],
+            opacity=0.95,
+            colorscale=[[0, '#16a34a'], [1, '#4ade80']],
             showscale=False,
             caps=dict(x_show=True, y_show=True, z_show=True),
-            name='Detected 3D Lesion / Flek'
+            name='Segmented Lesion'
         ))
 
+        # Tight 3D marker wireframe around the segmented lesion so it stands out clearly
+        l_pos = np.argwhere(mask_iso > 0.38)
+        if len(l_pos) > 0:
+            z0, y0, x0 = np.min(l_pos, axis=0)
+            z1, y1, x1 = np.max(l_pos, axis=0)
+            pad = 1.5
+            bx0 = max(0.0, (x0 - pad) * (Lx / max(1, tW - 1)))
+            bx1 = min(Lx,  (x1 + pad) * (Lx / max(1, tW - 1)))
+            by0 = max(0.0, (y0 - pad) * (Ly / max(1, tH - 1)))
+            by1 = min(Ly,  (y1 + pad) * (Ly / max(1, tH - 1)))
+            bz0 = max(0.0, (z0 - pad) * (Lz / max(1, tD - 1)))
+            bz1 = min(Lz,  (z1 + pad) * (Lz / max(1, tD - 1)))
+            lesion_box = [
+                ([bx0, bx1], [by0, by0], [bz0, bz0]), ([bx1, bx1], [by0, by1], [bz0, bz0]),
+                ([bx1, bx0], [by1, by1], [bz0, bz0]), ([bx0, bx0], [by1, by0], [bz0, bz0]),
+                ([bx0, bx1], [by0, by0], [bz1, bz1]), ([bx1, bx1], [by0, by1], [bz1, bz1]),
+                ([bx1, bx0], [by1, by1], [bz1, bz1]), ([bx0, bx0], [by1, by0], [bz1, bz1]),
+                ([bx0, bx0], [by0, by0], [bz0, bz1]), ([bx1, bx1], [by0, by0], [bz0, bz1]),
+                ([bx1, bx1], [by1, by1], [bz0, bz1]), ([bx0, bx0], [by1, by1], [bz0, bz1]),
+            ]
+            for ex, ey, ez in lesion_box:
+                fig.add_trace(go.Scatter3d(
+                    x=ex, y=ey, z=ez,
+                    mode='lines',
+                    line=dict(color='#f59e0b', width=3),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+
+    # 4. Active Axial Slice Plane Indicator
     if current_z is not None and 0 <= current_z < D:
+        z_cur_mm = (current_z / float(max(1, D - 1))) * Lz
         fig.add_trace(go.Mesh3d(
-            x=[x_min, x_max, x_max, x_min],
-            y=[y_min, y_min, y_max, y_max],
-            z=[current_z * pz] * 4,
+            x=[0.0, Lx, Lx, 0.0],
+            y=[0.0, 0.0, Ly, Ly],
+            z=[z_cur_mm] * 4,
             i=[0, 0], j=[1, 2], k=[2, 3],
             color='#38bdf8',
-            opacity=0.22,
-            name=f'Active Slice Ax {current_z}'
+            opacity=0.14,
+            name=f'Slice z={current_z}'
         ))
 
     fig.update_layout(
@@ -2123,8 +2143,10 @@ def create_plotly_3d_cranial_bbox(vol_3d, mask_3d, current_z=None):
             xaxis=dict(showbackground=False, visible=False),
             yaxis=dict(showbackground=False, visible=False),
             zaxis=dict(showbackground=False, visible=False),
-            aspectmode='data'
+            aspectmode='data',
+            camera=dict(eye=dict(x=1.45, y=-1.45, z=0.75))
         ),
+        showlegend=False,
         paper_bgcolor='#0c0f14',
         height=380,
         margin=dict(l=0, r=0, t=0, b=0)
@@ -3308,6 +3330,7 @@ def main():
 
     img_raw, tensor_native, mask_raw = None, None, None
     vol_3d, mask_3d = None, None
+    vol_phys_dims = None
     slice_title = "Reference Case"
     patient_z_active = 12
 
@@ -3316,7 +3339,7 @@ def main():
             nii_options = [c["label"] for c in discovered_nifti_cases]
             chosen_label = st.selectbox("Select DGX Server 3D NIfTI Volume:", nii_options, index=0)
             chosen_nii = next(c for c in discovered_nifti_cases if c["label"] == chosen_label)
-            vol_3d, mask_3d, patient_z_active = load_dgx_nifti_3d_volume(chosen_nii["img_path"], chosen_nii["mask_path"])
+            vol_3d, mask_3d, patient_z_active, vol_phys_dims = load_dgx_nifti_3d_volume(chosen_nii["img_path"], chosen_nii["mask_path"])
             if vol_3d is not None and len(vol_3d) > 0:
                 patient_z_active = min(max(0, patient_z_active), len(vol_3d) - 1)
                 img_raw = vol_3d[patient_z_active]
@@ -3379,8 +3402,13 @@ def main():
                         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
                             tmp.write(uploaded_file.getbuffer())
                             tmp_path = tmp.name
-                        nii_obj = nib.load(tmp_path)
+                        raw_nii = nib.load(tmp_path)
+                        try:
+                            nii_obj = nib.as_closest_canonical(raw_nii)
+                        except Exception:
+                            nii_obj = raw_nii
                         nii_data = nii_obj.get_fdata().astype(np.float32)
+                        zooms = [float(z) for z in nii_obj.header.get_zooms()[:3]]
                         try:
                             os.unlink(tmp_path)
                         except Exception:
@@ -3391,11 +3419,15 @@ def main():
                         
                         if nii_data.ndim == 3:
                             if nii_data.shape[0] < nii_data.shape[2] and nii_data.shape[0] < nii_data.shape[1]:
-                                pass
-                            elif nii_data.shape[2] < nii_data.shape[0] and nii_data.shape[2] < nii_data.shape[1]:
-                                nii_data = np.transpose(nii_data, (2, 0, 1))
+                                dx, dy, dz = zooms[1], zooms[2], zooms[0]
                             else:
-                                nii_data = np.transpose(nii_data, (2, 0, 1))
+                                nii_data = np.transpose(nii_data, (2, 1, 0))
+                                dx, dy, dz = zooms[0], zooms[1], zooms[2]
+                            vol_phys_dims = (
+                                float(np.clip(nii_data.shape[2] * dx, 150.0, 280.0)),
+                                float(np.clip(nii_data.shape[1] * dy, 150.0, 280.0)),
+                                float(np.clip(nii_data.shape[0] * dz, 100.0, 220.0))
+                            )
 
                             if np.nanmin(nii_data) < -100 or np.nanmax(nii_data) > 200:
                                 wc, ww = 40.0, 80.0
@@ -3854,9 +3886,9 @@ def main():
             agreement_counts=ensemble_data["agreement_counts"], v_thresh=v_thresh,
             show_agreement=show_agr_toggle, show_disagreement=show_dis_toggle,
             show_heatmap=show_heat_toggle, cmap_name=cmap_choice, heatmap_alpha=heatmap_alpha)
-        vol_3d_disp = np.stack([align_for_clinical_display(vol_3d[z], crop=CROP_MARGIN, rot_k=active_rot_k) for z in range(len(vol_3d))], axis=0)
-        mask_3d_disp = np.stack([align_for_clinical_display(mask_3d[z], crop=CROP_MARGIN, rot_k=active_rot_k, is_mask=True) for z in range(len(mask_3d))], axis=0)
-        fig_3d_real = create_plotly_3d_cranial_bbox(vol_3d_disp, mask_3d_disp, current_z=selected_z) if HAS_PLOTLY else None
+        vol_3d_intact = np.stack([align_for_clinical_display(vol_3d[z], crop=0, rot_k=active_rot_k) for z in range(len(vol_3d))], axis=0)
+        mask_3d_intact = np.stack([align_for_clinical_display(mask_3d[z], crop=0, rot_k=active_rot_k, is_mask=True) for z in range(len(mask_3d))], axis=0)
+        fig_3d_real = create_plotly_3d_cranial_bbox(vol_3d_intact, mask_3d_intact, current_z=selected_z, phys_dims_mm=vol_phys_dims) if HAS_PLOTLY else None
 
         for row in [[("Axial", "ax_view"), ("3D volume", "bbox_view")], [("Coronal", "cor_view"), ("Sagittal", "sag_view")]]:
             left_view, right_view = st.columns(2)
